@@ -21,11 +21,54 @@ accurate, because the cross-references, comparisons, and contradiction flags are
 | Wiki pages | `wiki/` | The LLM |
 | Operating schema | `CLAUDE.md` | Defined once, evolved carefully |
 
+## Setup
+
+### Install the client
+
+The wiki is driven by `tools/wiki.py` — a provider-agnostic Python client that works with any
+OpenAI-compatible API. One dependency, no lock-in.
+
+```sh
+pip install openai
+```
+
+Configure your provider via environment variables (put these in `~/.profile` or a local `.env`
+file you source):
+
+| Provider | Config |
+|----------|--------|
+| **Gemini** (free tier) | `WIKI_PROVIDER=gemini` `WIKI_API_KEY=your-key` |
+| **Ollama** (local, free) | `WIKI_PROVIDER=ollama` — no key needed |
+| **OpenRouter** (free models) | `WIKI_PROVIDER=openrouter` `WIKI_API_KEY=your-key` |
+| **OpenAI** | `WIKI_PROVIDER=openai` `WIKI_API_KEY=your-key` |
+
+Override model or base URL:
+
+```sh
+export WIKI_MODEL=gemini-2.5-pro      # override model
+export WIKI_API_BASE=http://...       # override base URL entirely
+```
+
+**Gemini free API key**: get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+
+**Ollama on FreeBSD**:
+
+```sh
+pkg install ollama
+ollama pull llama3.2
+export WIKI_PROVIDER=ollama
+```
+
 ## Usage
 
 ### Start a session
 
-Open Claude Code in this directory. The LLM will read `CLAUDE.md` and orient itself automatically.
+```sh
+python3 tools/wiki.py
+```
+
+The client loads `CLAUDE.md` as the system prompt and orients itself from the current wiki state
+automatically. Works with any configured provider.
 
 ### Ingest a source
 
@@ -153,8 +196,9 @@ wiki/
   concepts/             Ideas, techniques, frameworks
   synthesis/            Cross-source analyses and comparisons
 tools/
-  search.py             Keyword search CLI
-  tasks.py              Task filter CLI
+  wiki.py               AI-agnostic interactive client (primary interface)
+  search.py             Keyword search CLI (no LLM needed)
+  tasks.py              Task filter CLI (no LLM needed)
   build.sh              MkDocs build / serve wrapper
 mkdocs.yml              MkDocs configuration
 CLAUDE.md               LLM operating instructions (the schema)
