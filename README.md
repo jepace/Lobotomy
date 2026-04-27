@@ -80,6 +80,57 @@ python3 tools/tasks.py --overdue          # past their due date
 python3 tools/tasks.py --project name     # tasks in a specific project
 ```
 
+### Browse as a website
+
+The wiki is served as a static site via [MkDocs](https://www.mkdocs.org/) with the
+[Material theme](https://squidfunk.github.io/mkdocs-material/). Install once, build after
+ingesting new sources, then serve with nginx.
+
+**Install (FreeBSD):**
+
+```sh
+pkg install py311-mkdocs py311-mkdocs-material
+```
+
+**Build the static site:**
+
+```sh
+sh tools/build.sh
+# Output: site/  (gitignored)
+```
+
+**Quick local preview:**
+
+```sh
+sh tools/build.sh --serve
+# Opens at http://127.0.0.1:8000
+```
+
+**Deploy on a VPS jail:**
+
+1. Build the site: `sh tools/build.sh`
+2. Copy `site/` to your nginx document root:
+
+```sh
+cp -r site/ /usr/local/www/wiki/
+```
+
+3. Configure nginx to serve it (example — adjust paths and server_name for your setup):
+
+```nginx
+server {
+    listen 80;
+    server_name wiki.example.com;
+    root /usr/local/www/wiki;
+    index index.html;
+    location / {
+        try_files $uri $uri/ $uri.html =404;
+    }
+}
+```
+
+Rebuild and redeploy the site after each session where you ingest new sources.
+
 ### Health check
 
 Say: `Lint the wiki` — checks for broken links, orphan pages, stale content, contradictions, and
@@ -104,12 +155,14 @@ wiki/
 tools/
   search.py             Keyword search CLI
   tasks.py              Task filter CLI
+  build.sh              MkDocs build / serve wrapper
+mkdocs.yml              MkDocs configuration
 CLAUDE.md               LLM operating instructions (the schema)
 ```
 
 ## On FreeBSD
 
-Both tools require only Python 3 (no additional packages):
+All CLI tools require only Python 3 (no additional packages):
 
 ```sh
 pkg install python3
@@ -117,10 +170,17 @@ python3 tools/search.py "keyword"
 python3 tools/tasks.py --due-today
 ```
 
-For reading the wiki in a terminal, consider:
+For the web front end:
+
+```sh
+pkg install py311-mkdocs py311-mkdocs-material
+sh tools/build.sh        # build once
+sh tools/build.sh --serve  # or run a local dev server
+```
+
+For reading the wiki in a terminal without the web front end:
 - [`glow`](https://github.com/charmbracelet/glow): `pkg install glow`, then `glow wiki/overview.md`
 - [`mdcat`](https://github.com/swsnr/mdcat): terminal markdown renderer with image support
-- Any web browser with a local markdown extension (e.g. Firefox + Markdown Viewer)
 
 ## Design Principles
 
