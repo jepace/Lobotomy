@@ -26,12 +26,14 @@ accurate, because the cross-references, comparisons, and contradiction flags are
 ### Install dependencies
 
 ```sh
-# FreeBSD
-pkg install py311-flask py311-markdown
-pip install openai
+pip install -r requirements.txt
+```
 
-# Other systems
-pip install flask markdown openai
+On FreeBSD, flask and markdown are available as packages (faster, no compiler needed):
+
+```sh
+pkg install py311-flask py311-markdown
+pip install openai resend
 ```
 
 ### Configure your AI provider
@@ -281,7 +283,7 @@ python3 tools/search.py "keyword"
 python3 tools/tasks.py --due-today
 ```
 
-For the web front end:
+For MkDocs static site building (optional):
 
 ```sh
 pkg install py311-mkdocs py311-mkdocs-material
