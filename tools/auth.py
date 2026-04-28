@@ -8,16 +8,9 @@ Files (all gitignored):
   wiki/.tokens.json      Active verification and reset tokens
   wiki/.login_log.json   Recent login attempts (for rate limiting)
 
-Account is provisioned from environment variables on first run:
-  WIKI_ADMIN_EMAIL     Your email address
-  WIKI_ADMIN_PASSWORD  Initial password (plaintext here, hashed on first write, then ignored)
-
-Email (optional — Resend):
-  RESEND_API_KEY       Resend API key (https://resend.com)
-  WIKI_FROM_EMAIL      Verified from-address in Resend (e.g. wiki@yourdomain.com)
-  WIKI_BASE_URL        Public URL of the server (e.g. https://wiki.example.com)
-
-Without RESEND_API_KEY: accounts are auto-verified on creation, password reset unavailable.
+Configuration: set admin.email and admin.password in config.json.
+Email verification requires email.resend_api_key in config.json.
+Without it, accounts are auto-verified on creation.
 """
 
 import hashlib
