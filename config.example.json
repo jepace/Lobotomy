@@ -14,7 +14,9 @@
     "provider": "gemini",
     "api_key": "your-gemini-api-key",
     "model": "gemini-2.5-flash-lite",
-    "api_base": ""
+    "api_base": "",
+    "max_retries": 6,
+    "retry_base_delay": 5
   },
   "email": {
     "resend_api_key": "",

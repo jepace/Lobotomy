@@ -353,12 +353,14 @@ def orientation_message() -> str:
 # API error classification
 # ---------------------------------------------------------------------------
 
-_MAX_RETRIES = 4  # delays: 2s, 4s, 8s, 16s
+def _max_retries() -> int:
+    return int(cfg_get("llm", "max_retries", default=6))
 
 
 def _retry_delay(attempt: int, exc) -> float:
     """Return seconds to wait before retry attempt (1-based). Respects Retry-After header."""
-    delay = 2.0 ** attempt  # 2, 4, 8, 16
+    base  = float(cfg_get("llm", "retry_base_delay", default=5))
+    delay = base * (2.0 ** (attempt - 1))  # 5, 10, 20, 40, 80, 160
     try:
         ra = exc.response.headers.get("retry-after") if exc.response else None
         if ra:
@@ -406,11 +408,12 @@ def _create(client, messages, system):
         tools=TOOL_DEFS,
         max_tokens=4096,
     )
-    for attempt in range(_MAX_RETRIES + 1):
+    max_r = _max_retries()
+    for attempt in range(max_r + 1):
         try:
             return client.chat.completions.create(**kwargs)
         except Exception as e:
-            if not _is_retryable(e) or attempt == _MAX_RETRIES:
+            if not _is_retryable(e) or attempt == max_r:
                 raise
             time.sleep(_retry_delay(attempt + 1, e))
 
@@ -469,18 +472,20 @@ def stream_agent_turn(client, model: str, messages: list, system: str) -> Genera
     while True:
         kwargs["messages"] = [{"role": "system", "content": system}] + messages
 
-        resp = None
-        for attempt in range(_MAX_RETRIES + 1):
+        resp  = None
+        max_r = _max_retries()
+        for attempt in range(max_r + 1):
             try:
                 resp = client.chat.completions.create(**kwargs)
                 break
             except Exception as e:
-                if not _is_retryable(e) or attempt == _MAX_RETRIES:
+                if not _is_retryable(e) or attempt == max_r:
                     yield json.dumps({"type": "error", "content": _error_message(e)}) + "\n"
                     yield json.dumps({"type": "done"}) + "\n"
                     return
                 delay = _retry_delay(attempt + 1, e)
-                yield json.dumps({"type": "retrying", "attempt": attempt + 1, "delay": int(delay)}) + "\n"
+                yield json.dumps({"type": "retrying", "attempt": attempt + 1,
+                                  "delay": int(delay), "max": max_r}) + "\n"
                 time.sleep(delay)
 
         msg = resp.choices[0].message

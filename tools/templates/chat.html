@@ -303,12 +303,18 @@ async function sendMessage() {
   var tools    = [];
 
   try {
-    var resp = await fetch('/chat/send', {
+    var sendResp = await fetch('/chat/send', {
       method:  'POST',
       headers: {'Content-Type': 'application/json'},
       body:    JSON.stringify({message: text}),
     });
+    if (!sendResp.ok) {
+      var err = await sendResp.json().catch(function(){ return {}; });
+      throw new Error(err.error || 'HTTP ' + sendResp.status);
+    }
+    var job = await sendResp.json();
 
+    var resp    = await fetch('/chat/stream/' + job.job_id);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
 
     var reader  = resp.body.getReader();
@@ -335,7 +341,7 @@ async function sendMessage() {
             fullText += ev.content;
             bubbleEl.innerHTML = md(fullText);
           } else if (ev.type === 'retrying') {
-            tools.push('⏳ AI busy — retrying in ' + ev.delay + 's (attempt ' + ev.attempt + '/' + 4 + ')');
+            tools.push('⏳ AI busy — retrying in ' + ev.delay + 's (attempt ' + ev.attempt + '/' + ev.max + ')');
             toolsEl.style.display = 'block';
             toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">' + escHtml(t) + '</div>'; }).join('');
           } else if (ev.type === 'error') {

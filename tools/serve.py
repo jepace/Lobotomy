@@ -50,6 +50,7 @@ from config import cfg_get, cfg_bool, cfg_int
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, system_prompt)
+from job_queue import JobQueue
 from auth  import (init_auth, authenticate, get_user, update_password, set_verified,
                    create_token, consume_token, record_attempt, is_locked_out,
                    send_verification_email, send_reset_email,
@@ -431,10 +432,7 @@ def chat_send():
 
     client, model, error = get_client_and_model()
     if error:
-        def err_stream():
-            yield json.dumps({"type": "error", "content": error}) + "\n"
-            yield json.dumps({"type": "done"}) + "\n"
-        return Response(stream_with_context(err_stream()), mimetype="application/x-ndjson")
+        return {"error": error}, 503
 
     sys_prompt = system_prompt()
     history    = load_history()
@@ -445,10 +443,16 @@ def chat_send():
         ]
     history.append({"role": "user", "content": message})
 
-    def generate():
-        yield from stream_agent_turn(client, model, history, sys_prompt)
-        save_history(history)
+    job_id = job_queue.submit(client, model, history, sys_prompt,
+                              on_done=save_history)
+    return {"job_id": job_id}
 
+
+@app.route("/chat/stream/<job_id>")
+@require_login
+def chat_stream(job_id):
+    def generate():
+        yield from job_queue.tail(job_id)
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
 
 
@@ -563,6 +567,9 @@ def inbox_delete():
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+job_queue = JobQueue(WIKI_DIR / ".jobs")
+
 
 if __name__ == "__main__":
     host = cfg_get("server", "host", "127.0.0.1")
