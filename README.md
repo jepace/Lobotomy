@@ -36,19 +36,6 @@ pkg install py311-flask py311-markdown
 pip install openai resend
 ```
 
-### Configure your AI provider
-
-Set these in `~/.profile` (or a `.env` file you `source`):
-
-| Provider | Config |
-|----------|--------|
-| **Gemini** (free tier) | `WIKI_PROVIDER=gemini` `WIKI_API_KEY=your-key` |
-| **Ollama** (local, free) | `WIKI_PROVIDER=ollama` — no key needed |
-| **OpenRouter** (free models) | `WIKI_PROVIDER=openrouter` `WIKI_API_KEY=your-key` |
-| **OpenAI** | `WIKI_PROVIDER=openai` `WIKI_API_KEY=your-key` |
-
-**Gemini free API key**: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
-
 ### Configure
 
 Copy the example config and edit it:
@@ -74,7 +61,8 @@ $EDITOR config.json
   },
   "llm": {
     "provider": "gemini",
-    "api_key": "your-gemini-api-key"
+    "api_key": "your-gemini-api-key",
+    "model": "gemini-2.5-flash-lite"
   },
   "email": {
     "resend_api_key": "",
@@ -83,7 +71,14 @@ $EDITOR config.json
 }
 ```
 
-**`llm.provider`** options: `gemini`, `openai`, `ollama`, `openrouter`
+**`llm.provider` / `llm.model`** options:
+
+| Provider | `provider` | Example `model` | Key needed |
+|----------|-----------|-----------------|------------|
+| Gemini (free tier) | `gemini` | `gemini-2.5-flash-lite` | [aistudio.google.com](https://aistudio.google.com/apikey) |
+| OpenAI | `openai` | `gpt-4o-mini` | platform.openai.com |
+| OpenRouter (free models) | `openrouter` | `google/gemini-2.0-flash-exp:free` | openrouter.ai |
+| Ollama (local) | `ollama` | `llama3.2` | none |
 
 **Email verification** (optional): fill in `email.resend_api_key` and `email.from_address`
 with your [Resend](https://resend.com) credentials. Without it, accounts are auto-verified.
@@ -138,8 +133,8 @@ python3 tools/wiki.py "ingest raw/file.md" # one-shot
 
 ### Ingest a source
 
-1. Save the document to `raw/` as a `.txt` or `.md` file
-2. Say: `Ingest raw/your-document.md`
+1. Save the document to `raw/` as a `.txt`, `.md`, or `.pdf` file
+2. Say: `Ingest raw/your-document.pdf`
 
 The LLM will read the source, create a summary page, update entity and concept pages, and maintain
 the index and log.
@@ -189,57 +184,6 @@ python3 tools/tasks.py --overdue          # past their due date
 python3 tools/tasks.py --project name     # tasks in a specific project
 ```
 
-### Browse as a website
-
-The wiki is served as a static site via [MkDocs](https://www.mkdocs.org/) with the
-[Material theme](https://squidfunk.github.io/mkdocs-material/). Install once, build after
-ingesting new sources, then serve with nginx.
-
-**Install (FreeBSD):**
-
-```sh
-pkg install py311-mkdocs py311-mkdocs-material
-```
-
-**Build the static site:**
-
-```sh
-sh tools/build.sh
-# Output: site/  (gitignored)
-```
-
-**Quick local preview:**
-
-```sh
-sh tools/build.sh --serve
-# Opens at http://127.0.0.1:8000
-```
-
-**Deploy on a VPS jail:**
-
-1. Build the site: `sh tools/build.sh`
-2. Copy `site/` to your nginx document root:
-
-```sh
-cp -r site/ /usr/local/www/wiki/
-```
-
-3. Configure nginx to serve it (example — adjust paths and server_name for your setup):
-
-```nginx
-server {
-    listen 80;
-    server_name wiki.example.com;
-    root /usr/local/www/wiki;
-    index index.html;
-    location / {
-        try_files $uri $uri/ $uri.html =404;
-    }
-}
-```
-
-Rebuild and redeploy the site after each session where you ingest new sources.
-
 ### Health check
 
 Say: `Lint the wiki` — checks for broken links, orphan pages, stale content, contradictions, and
@@ -267,9 +211,7 @@ tools/
   wiki.py               CLI client (optional alternative to the web server)
   search.py             Keyword search CLI (no LLM needed)
   tasks.py              Task filter CLI (no LLM needed)
-  build.sh              MkDocs static site builder (optional)
   templates/            HTML templates for the web server
-mkdocs.yml              MkDocs configuration
 CLAUDE.md               LLM operating instructions (the schema)
 ```
 
@@ -281,14 +223,6 @@ All CLI tools require only Python 3 (no additional packages):
 pkg install python3
 python3 tools/search.py "keyword"
 python3 tools/tasks.py --due-today
-```
-
-For MkDocs static site building (optional):
-
-```sh
-pkg install py311-mkdocs py311-mkdocs-material
-sh tools/build.sh        # build once
-sh tools/build.sh --serve  # or run a local dev server
 ```
 
 For reading the wiki in a terminal without the web front end:

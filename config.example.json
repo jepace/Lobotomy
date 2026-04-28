@@ -13,7 +13,7 @@
   "llm": {
     "provider": "gemini",
     "api_key": "your-gemini-api-key",
-    "model": "",
+    "model": "gemini-2.5-flash-lite",
     "api_base": ""
   },
   "email": {

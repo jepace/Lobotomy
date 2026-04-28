@@ -74,6 +74,17 @@ def _read_file(path: str) -> str:
         return f"Error: not found: {path}"
     if not p.is_file():
         return f"Error: not a file: {path}"
+    if p.suffix.lower() == ".pdf":
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(str(p))
+            pages = [page.extract_text() or "" for page in reader.pages]
+            text = "\n\n".join(pages).strip()
+            return text if text else "Error: no extractable text in PDF (may be scanned/image-only)"
+        except ImportError:
+            return "Error: pypdf not installed — run: pip install pypdf"
+        except Exception as e:
+            return f"Error reading PDF: {e}"
     return p.read_text(encoding="utf-8", errors="replace")
 
 
