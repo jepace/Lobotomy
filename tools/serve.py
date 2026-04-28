@@ -9,30 +9,10 @@ Requirements:
   -- or on FreeBSD --
   pkg install py311-flask py311-markdown && pip install openai resend
 
-Account configuration (set before first run):
-  WIKI_ADMIN_EMAIL     Your email address (the single admin account)
-  WIKI_ADMIN_PASSWORD  Initial password — plaintext here, hashed on first write
-  WIKI_BASE_URL        Public URL, e.g. https://wiki.example.com (for email links)
-
-Email verification + password reset (Resend — https://resend.com):
-  RESEND_API_KEY       Resend API key
-  WIKI_FROM_EMAIL      From address (must be verified in Resend, e.g. wiki@yourdomain.com)
-
-Server configuration:
-  WIKI_HOST            Bind address (default: 127.0.0.1)
-  WIKI_PORT            Port (default: 8080)
-  WIKI_SECRET          Flask session secret (auto-generated + persisted if not set)
-  WIKI_HTTPS           Set to '1' when running behind HTTPS (enables Secure cookie flag)
-
-LLM configuration:
-  WIKI_PROVIDER        gemini | openai | ollama | openrouter  (default: openai)
-  WIKI_API_KEY         LLM API key
-  WIKI_MODEL           Override model name
-  WIKI_API_BASE        Override API base URL
+Configuration: copy config.example.json to config.json and edit it.
 
 Usage:
   python3 tools/serve.py
-  WIKI_HOST=0.0.0.0 WIKI_PORT=8080 python3 tools/serve.py
 """
 
 import datetime
@@ -66,6 +46,7 @@ if missing:
     sys.exit(1)
 
 sys.path.insert(0, str(Path(__file__).parent))
+from config import cfg_get, cfg_bool, cfg_int
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, system_prompt)
@@ -81,8 +62,9 @@ from auth  import (init_auth, authenticate, get_user, update_password, set_verif
 app = Flask(__name__, template_folder="templates")
 
 _secret_file = WIKI_DIR / ".secret"
-if os.environ.get("WIKI_SECRET"):
-    app.secret_key = os.environ["WIKI_SECRET"]
+_secret = cfg_get("server", "secret", "WIKI_SECRET")
+if _secret:
+    app.secret_key = _secret
 elif _secret_file.exists():
     app.secret_key = _secret_file.read_text().strip()
 else:
@@ -93,7 +75,7 @@ else:
 app.config.update(
     SESSION_COOKIE_HTTPONLY = True,
     SESSION_COOKIE_SAMESITE = "Lax",
-    SESSION_COOKIE_SECURE   = os.environ.get("WIKI_HTTPS", "").lower() in ("1", "true", "yes"),
+    SESSION_COOKIE_SECURE   = cfg_bool("server", "https", "WIKI_HTTPS", False),
 )
 
 # ---------------------------------------------------------------------------
@@ -528,18 +510,18 @@ def inbox_delete():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    host = os.environ.get("WIKI_HOST", "127.0.0.1")
-    port = int(os.environ.get("WIKI_PORT", "8080"))
+    host = cfg_get("server", "host", "WIKI_HOST", "127.0.0.1")
+    port = cfg_int("server", "port", "WIKI_PORT", 8080)
 
     init_auth()
 
-    if not os.environ.get("WIKI_ADMIN_EMAIL"):
-        print("WARNING: WIKI_ADMIN_EMAIL is not set. You won't be able to log in.")
-    if not os.environ.get("WIKI_ADMIN_PASSWORD"):
-        print("WARNING: WIKI_ADMIN_PASSWORD is not set. You won't be able to log in.")
+    if not cfg_get("admin", "email", "WIKI_ADMIN_EMAIL"):
+        print("WARNING: admin.email not set in config.json. You won't be able to log in.")
+    if not cfg_get("admin", "password", "WIKI_ADMIN_PASSWORD"):
+        print("WARNING: admin.password not set in config.json. You won't be able to log in.")
     if not _resend_ready():
-        print("NOTE: RESEND_API_KEY not set — email verification disabled, accounts auto-verified.")
+        print("NOTE: email.resend_api_key not set — email verification disabled, accounts auto-verified.")
 
-    provider = os.environ.get("WIKI_PROVIDER", "openai")
+    provider = cfg_get("llm", "provider", "WIKI_PROVIDER", "openai")
     print(f"\nLLM Wiki  http://{host}:{port}  (provider: {provider})\n")
     app.run(host=host, port=port, debug=False, threaded=True)

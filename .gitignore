@@ -1,5 +1,6 @@
 site/
 .env
+config.json
 wiki/.chat_history.json
 wiki/.secret
 wiki/.user.json

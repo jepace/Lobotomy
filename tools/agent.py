@@ -3,6 +3,7 @@
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Generator
 
@@ -10,6 +11,9 @@ try:
     from openai import OpenAI
 except ImportError:
     OpenAI = None  # checked at call time
+
+sys.path.insert(0, str(Path(__file__).parent))
+from config import cfg_get
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WIKI_DIR  = REPO_ROOT / "wiki"
@@ -45,18 +49,17 @@ def get_client_and_model():
     if OpenAI is None:
         return None, None, "openai package not installed — run: pip install openai"
 
-    provider_name = os.environ.get("WIKI_PROVIDER", "openai").lower()
+    provider_name = cfg_get("llm", "provider", "WIKI_PROVIDER", "openai").lower()
     preset        = PROVIDERS.get(provider_name, PROVIDERS["openai"])
 
-    api_key  = os.environ.get("WIKI_API_KEY")  or preset.get("api_key", "")
-    base_url = os.environ.get("WIKI_API_BASE") or preset.get("base_url")
-    model    = os.environ.get("WIKI_MODEL")    or preset["default_model"]
+    api_key  = cfg_get("llm", "api_key",  "WIKI_API_KEY")  or preset.get("api_key", "")
+    base_url = cfg_get("llm", "api_base", "WIKI_API_BASE") or preset.get("base_url")
+    model    = cfg_get("llm", "model",    "WIKI_MODEL")    or preset["default_model"]
 
     if not api_key:
         return None, None, (
-            f"WIKI_API_KEY is not set for provider '{provider_name}'.\n"
-            f"  export WIKI_PROVIDER={provider_name}\n"
-            f"  export WIKI_API_KEY=your-key"
+            f"No API key for provider '{provider_name}'.\n"
+            f"  Set llm.api_key in config.json, or: export WIKI_API_KEY=your-key"
         )
 
     return OpenAI(api_key=api_key, base_url=base_url), model, None

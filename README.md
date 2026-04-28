@@ -47,49 +47,59 @@ Set these in `~/.profile` (or a `.env` file you `source`):
 
 **Gemini free API key**: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
 
-### Create your account
+### Configure
 
-The server uses a single admin account provisioned from environment variables on first run.
-Set these before starting the server for the first time:
+Copy the example config and edit it:
 
 ```sh
-export WIKI_ADMIN_EMAIL=you@example.com
-export WIKI_ADMIN_PASSWORD=a-strong-password
+cp config.example.json config.json
+$EDITOR config.json
 ```
 
-The password is hashed with scrypt on first write; the plaintext env var is never stored.
+`config.json` is gitignored. All settings in one place:
 
-**Email verification (optional — [Resend](https://resend.com)):**
+```json
+{
+  "admin": {
+    "email": "you@example.com",
+    "password": "your-login-password"
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "https": false,
+    "base_url": "https://wiki.example.com"
+  },
+  "llm": {
+    "provider": "gemini",
+    "api_key": "your-gemini-api-key"
+  },
+  "email": {
+    "resend_api_key": "",
+    "from_address": "wiki@yourdomain.com"
+  }
+}
+```
 
-If you set `RESEND_API_KEY`, the account will require email verification and password reset will
-work via email. Without it, the account is auto-verified and password reset is unavailable.
+**`llm.provider`** options: `gemini`, `openai`, `ollama`, `openrouter`
 
-| Variable | Description |
-|----------|-------------|
-| `WIKI_ADMIN_EMAIL` | Your login email address |
-| `WIKI_ADMIN_PASSWORD` | Initial password (plaintext — hashed on first run) |
-| `RESEND_API_KEY` | Resend API key (optional — enables email verification) |
-| `WIKI_FROM_EMAIL` | Verified from-address in Resend, e.g. `wiki@yourdomain.com` |
-| `WIKI_BASE_URL` | Public URL, e.g. `https://wiki.example.com` (used in email links) |
-| `WIKI_HTTPS` | Set to `1` when running behind HTTPS (enables Secure cookie flag) |
+**Email verification** (optional): fill in `email.resend_api_key` and `email.from_address`
+with your [Resend](https://resend.com) credentials. Without it, accounts are auto-verified.
+
+**Behind HTTPS?** Set `"https": true` and `"base_url"` to your public URL so email links work.
+
+The admin password is hashed with scrypt on first run; the plaintext in `config.json` is only
+read once and never stored directly.
 
 ### Start the web server
 
 ```sh
-export WIKI_ADMIN_EMAIL=you@example.com
-export WIKI_ADMIN_PASSWORD=your-password
-export WIKI_PROVIDER=gemini
-export WIKI_API_KEY=your-key
 python3 tools/serve.py
 ```
 
 Open `http://your-vps-ip:8080` in any browser — including your iPhone.
 
-**VPS jail setup** — bind to all interfaces and run on boot:
-
-```sh
-WIKI_HOST=0.0.0.0 WIKI_PORT=8080 python3 tools/serve.py
-```
+**VPS jail setup** — bind to all interfaces: set `"host": "0.0.0.0"` in `config.json`.
 
 For a reverse proxy via nginx (recommended — handles TLS):
 

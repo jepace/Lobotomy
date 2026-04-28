@@ -1,0 +1,23 @@
+{
+  "admin": {
+    "email": "you@example.com",
+    "password": "change-this-password"
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "https": false,
+    "base_url": "http://localhost:8080",
+    "secret": ""
+  },
+  "llm": {
+    "provider": "gemini",
+    "api_key": "your-gemini-api-key",
+    "model": "",
+    "api_base": ""
+  },
+  "email": {
+    "resend_api_key": "",
+    "from_address": "wiki@yourdomain.com"
+  }
+}
