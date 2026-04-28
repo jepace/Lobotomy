@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LLM Wiki — Web server
+Lobotomy — Web server
 
 Mobile-friendly web app: chat with AI, browse wiki, manage tasks, capture articles.
 
@@ -654,9 +654,9 @@ def blog_rss():
 
     rss  = ET.Element("rss", attrib={"version": "2.0"})
     chan = ET.SubElement(rss, "channel")
-    ET.SubElement(chan, "title").text       = "LLM Wiki Blog"
+    ET.SubElement(chan, "title").text       = "Lobotomy Blog"
     ET.SubElement(chan, "link").text        = f"{base}/blog/"
-    ET.SubElement(chan, "description").text = "Posts from the LLM Wiki"
+    ET.SubElement(chan, "description").text = "Posts from Lobotomy"
     ET.SubElement(chan, "language").text    = "en"
 
     for p in posts[:20]:
@@ -780,5 +780,5 @@ if __name__ == "__main__":
         print("NOTE: email.resend_api_key not set — email verification disabled, accounts auto-verified.")
 
     provider = cfg_get("llm", "provider", "openai")
-    print(f"\nLLM Wiki  http://{host}:{port}  (provider: {provider})\n")
+    print(f"\nLobotomy  http://{host}:{port}  (provider: {provider})\n")
     app.run(host=host, port=port, debug=False, threaded=True)

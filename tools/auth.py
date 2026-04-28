@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Single-user authentication for LLM Wiki.
+Single-user authentication for Lobotomy.
 All state is stored as JSON files in wiki/ — no database.
 
 Files (all gitignored):

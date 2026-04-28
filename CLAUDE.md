@@ -1,4 +1,4 @@
-# LLM Wiki — Operating Schema
+# Lobotomy — Operating Schema
 
 Read this file completely before doing anything else. It is the authoritative guide for every
 operation in this wiki. If you are an LLM session that has just been pointed at this repository,
