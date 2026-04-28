@@ -68,24 +68,50 @@ def get_client_and_model():
 # Tool implementations
 # ---------------------------------------------------------------------------
 
-def _read_file(path: str) -> str:
+def _read_file(path: str) -> "str | list":
+    """Return a string, or a list of OpenAI content blocks for image-only PDFs."""
     p = REPO_ROOT / path
     if not p.exists():
         return f"Error: not found: {path}"
     if not p.is_file():
         return f"Error: not a file: {path}"
     if p.suffix.lower() == ".pdf":
-        try:
-            import pypdf
-            reader = pypdf.PdfReader(str(p))
-            pages = [page.extract_text() or "" for page in reader.pages]
-            text = "\n\n".join(pages).strip()
-            return text if text else "Error: no extractable text in PDF (may be scanned/image-only)"
-        except ImportError:
-            return "Error: pypdf not installed — run: pip install pypdf"
-        except Exception as e:
-            return f"Error reading PDF: {e}"
+        return _read_pdf(p)
     return p.read_text(encoding="utf-8", errors="replace")
+
+
+def _read_pdf(p) -> "str | list":
+    import base64
+    # Try text extraction first (fast, works for PDFs with a text layer)
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(str(p))
+        pages  = [page.extract_text() or "" for page in reader.pages]
+        text   = "\n\n".join(pages).strip()
+        if text:
+            return text
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # No text layer — render pages as images for vision
+    try:
+        import fitz  # pymupdf
+    except ImportError:
+        return "Error: PDF has no text layer and pymupdf is not installed (pip install pymupdf)"
+
+    doc    = fitz.open(str(p))
+    blocks = [{"type": "text", "text": f"PDF '{p.name}' rendered as images ({len(doc)} page(s)):"}]
+    limit  = 20  # avoid overwhelming the context window
+    for i, page in enumerate(doc):
+        if i >= limit:
+            blocks.append({"type": "text", "text": f"(truncated — showing first {limit} of {len(doc)} pages)"})
+            break
+        png   = page.get_pixmap(dpi=150).tobytes("png")
+        b64   = base64.b64encode(png).decode()
+        blocks.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
+    return blocks
 
 
 def _write_file(path: str, content: str) -> str:
@@ -266,6 +292,7 @@ def run_agent_turn(client, model: str, messages: list, system: str) -> list:
                 result = fn(args) if fn else f"Unknown tool: {tc.function.name}"
             except Exception as e:
                 result = f"Error: {e}"
+            # result may be a str or a list of content blocks (e.g. rendered PDF pages)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     return messages
@@ -320,6 +347,7 @@ def stream_agent_turn(client, model: str, messages: list, system: str) -> Genera
                 result      = f"Error: {e}"
 
             yield json.dumps({"type": "tool", "name": tc.function.name, "arg": arg_preview}) + "\n"
+            # result may be a str or a list of content blocks (e.g. rendered PDF pages)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     yield json.dumps({"type": "done"}) + "\n"

@@ -1,5 +1,6 @@
 flask
 markdown
 openai
+pymupdf
 pypdf
 resend
