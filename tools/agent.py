@@ -68,8 +68,11 @@ def get_client_and_model():
 # Tool implementations
 # ---------------------------------------------------------------------------
 
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+
+
 def _read_file(path: str) -> "str | list":
-    """Return a string, or a list of OpenAI content blocks for image-only PDFs."""
+    """Return a string, or a list of OpenAI content blocks for image/image-only PDF."""
     p = REPO_ROOT / path
     if not p.exists():
         return f"Error: not found: {path}"
@@ -77,7 +80,19 @@ def _read_file(path: str) -> "str | list":
         return f"Error: not a file: {path}"
     if p.suffix.lower() == ".pdf":
         return _read_pdf(p)
+    if p.suffix.lower() in _IMAGE_EXTS:
+        return _read_image(p)
     return p.read_text(encoding="utf-8", errors="replace")
+
+
+def _read_image(p) -> list:
+    import base64, mimetypes
+    mime = mimetypes.guess_type(str(p))[0] or "image/png"
+    b64  = base64.b64encode(p.read_bytes()).decode()
+    return [
+        {"type": "text", "text": f"Image: {p.name}"},
+        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+    ]
 
 
 def _read_pdf(p) -> "str | list":
@@ -141,6 +156,44 @@ def _list_dir(directory: str) -> str:
     )
 
 
+def _fetch_url(url: str) -> str:
+    import urllib.request, urllib.error
+    from html.parser import HTMLParser
+
+    class _Stripper(HTMLParser):
+        _SKIP = {"script", "style", "noscript", "template"}
+        def __init__(self):
+            super().__init__()
+            self._depth = 0
+            self.chunks = []
+        def handle_starttag(self, tag, attrs):
+            if tag in self._SKIP: self._depth += 1
+        def handle_endtag(self, tag):
+            if tag in self._SKIP and self._depth: self._depth -= 1
+        def handle_data(self, data):
+            if not self._depth: self.chunks.append(data)
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            ct  = resp.headers.get("Content-Type", "")
+            raw = resp.read(2_000_000)
+    except urllib.error.URLError as e:
+        return f"Error fetching {url}: {e}"
+    except Exception as e:
+        return f"Error: {e}"
+
+    if "html" in ct.lower():
+        import re as _re
+        p = _Stripper()
+        try: p.feed(raw.decode("utf-8", errors="replace"))
+        except Exception: pass
+        text = _re.sub(r"\s+", " ", "".join(p.chunks)).strip()
+    else:
+        text = raw.decode("utf-8", errors="replace")
+    return text[:50_000]
+
+
 def _move_file(src: str, dst: str) -> str:
     s = REPO_ROOT / src
     d = REPO_ROOT / dst
@@ -164,6 +217,7 @@ TOOL_FNS = {
     "write_file": lambda a: _write_file(a["path"], a["content"]),
     "list_dir":   lambda a: _list_dir(a["directory"]),
     "move_file":  lambda a: _move_file(a["src"], a["dst"]),
+    "fetch_url":  lambda a: _fetch_url(a["url"]),
 }
 
 TOOL_DEFS = [
@@ -221,6 +275,18 @@ TOOL_DEFS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name":        "fetch_url",
+            "description": "Fetch a web page or URL and return its text content. Use for ingesting articles from URLs.",
+            "parameters":  {
+                "type": "object",
+                "properties": {"url": {"type": "string", "description": "Full URL to fetch"}},
+                "required": ["url"],
+            },
+        },
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -232,7 +298,7 @@ def system_prompt() -> str:
     return (
         base
         + "\n\n---\n\n"
-        "Tools available: read_file, write_file, list_dir, move_file.\n"
+        "Tools available: read_file, write_file, list_dir, move_file, fetch_url.\n"
         "raw/ is immutable — write_file refuses writes there.\n"
         "Follow the workflows in CLAUDE.md exactly."
     )

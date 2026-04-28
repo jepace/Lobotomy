@@ -258,6 +258,7 @@ def parse_tasks() -> list:
     lines        = tasks_file.read_text(encoding="utf-8").splitlines()
     tasks        = []
     current_sect = "Inbox"
+    today        = datetime.date.today().isoformat()
     for i, line in enumerate(lines):
         if line.startswith("## "):
             current_sect = line[3:].strip()
@@ -266,9 +267,17 @@ def parse_tasks() -> list:
         if not m:
             continue
         indent, checked, text = m.groups()
-        p = re.search(r"#p:(\w+)", text)
-        d = re.search(r"#due:(\S+)", text)
-        c = re.search(r"#ctx:(\w+)", text)
+        p   = re.search(r"#p:(\w+)",     text)
+        d   = re.search(r"#due:(\S+)",   text)
+        c   = re.search(r"#ctx:(\w+)",   text)
+        s   = re.search(r"#s:(\w+)",     text)
+        st  = re.search(r"#start:(\S+)", text)
+        lg  = re.search(r"#len:(\S+)",   text)
+        rep = re.search(r"#rep:(\S+)",   text)
+        start = st.group(1) if st else ""
+        # Hide tasks whose start date is in the future
+        if start and start > today and checked != "x":
+            continue
         tasks.append({
             "line":     i,
             "done":     checked == "x",
@@ -278,8 +287,42 @@ def parse_tasks() -> list:
             "priority": p.group(1) if p else "",
             "due":      d.group(1) if d else "",
             "context":  c.group(1) if c else "",
+            "status":   s.group(1) if s else "",
+            "start":    start,
+            "length":   lg.group(1) if lg else "",
+            "repeat":   rep.group(1) if rep else "",
+            "star":     bool(re.search(r"#star\b", text)),
         })
     return tasks
+
+
+def _next_due(rep: str, current_due: str, done_date: str) -> str:
+    import calendar
+    m = re.match(r"^(\d+)([dwmy])(\+?)$", rep.lower())
+    if not m:
+        return ""
+    n, unit, after = int(m.group(1)), m.group(2), m.group(3) == "+"
+    base_str = done_date if after else current_due
+    try:
+        base = datetime.date.fromisoformat(base_str)
+    except (ValueError, TypeError):
+        return ""
+    if unit == "d":
+        return (base + datetime.timedelta(days=n)).isoformat()
+    if unit == "w":
+        return (base + datetime.timedelta(weeks=n)).isoformat()
+    if unit == "m":
+        mo = base.month - 1 + n
+        yr = base.year + mo // 12
+        mo = mo % 12 + 1
+        dy = min(base.day, calendar.monthrange(yr, mo)[1])
+        return datetime.date(yr, mo, dy).isoformat()
+    if unit == "y":
+        try:
+            return base.replace(year=base.year + n).isoformat()
+        except ValueError:
+            return base.replace(year=base.year + n, day=28).isoformat()
+    return ""
 
 
 def _toggle_task(line_num: int, action: str) -> bool:
@@ -291,6 +334,18 @@ def _toggle_task(line_num: int, action: str) -> bool:
     if action == "complete" and "- [ ]" in line:
         today = datetime.date.today().isoformat()
         lines[line_num] = line.replace("- [ ]", "- [x]") + f" #done:{today}"
+        rep_m = re.search(r"#rep:(\S+)", line)
+        if rep_m:
+            due_m    = re.search(r"#due:(\S+)", line)
+            due      = due_m.group(1) if due_m else today
+            next_due = _next_due(rep_m.group(1), due, today)
+            if next_due:
+                new_line = re.sub(r"\s*#done:\S+", "", line)
+                if due_m:
+                    new_line = re.sub(r"#due:\S+", f"#due:{next_due}", new_line)
+                else:
+                    new_line += f" #due:{next_due}"
+                lines.insert(line_num + 1, new_line)
     elif action == "reopen" and "- [x]" in line:
         lines[line_num] = re.sub(r"\s*#done:\S+", "", line).replace("- [x]", "- [ ]")
     else:
