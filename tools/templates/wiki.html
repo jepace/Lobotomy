@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Wiki{% endblock %}
+
+{% block head %}
+<style>
+  .wiki-topbar {
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 100;
+  }
+  .wiki-topbar h1 {
+    font-size: 17px;
+    font-weight: 600;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .wiki-sections {
+    display: flex;
+    gap: 6px;
+    padding: 8px 16px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .wiki-sections::-webkit-scrollbar { display: none; }
+  .wiki-pill {
+    flex-shrink: 0;
+    padding: 5px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    font-size: 13px;
+    color: var(--text);
+    text-decoration: none;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .wiki-pill.current { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* chat-about button */
+  .chat-about {
+    flex-shrink: 0;
+    padding: 6px 12px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="page">
+  <div class="wiki-topbar">
+    <a href="/wiki/" style="color:var(--accent); text-decoration:none; font-size:22px; line-height:1;">‹</a>
+    <h1>{{ title }}</h1>
+    <a class="chat-about" href="/chat" onclick="setChatPrompt('Tell me about {{ title }}')">Ask AI</a>
+  </div>
+
+  <div class="wiki-sections">
+    {% for s in sections %}
+    <a class="wiki-pill {% if current_path == s.path or current_path.startswith(s.path) %}current{% endif %}"
+       href="/wiki/{{ s.path }}">{{ s.label }}</a>
+    {% endfor %}
+  </div>
+
+  <div class="wiki-content">
+    {{ content | safe }}
+  </div>
+</div>
+
+<script>
+function setChatPrompt(text) {
+  sessionStorage.setItem('chatPrompt', text);
+}
+window.addEventListener('load', function() {
+  var p = sessionStorage.getItem('chatPrompt');
+  if (p) {
+    sessionStorage.removeItem('chatPrompt');
+    // Pre-fill chat if we just navigated there
+  }
+});
+</script>
+{% endblock %}

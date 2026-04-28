@@ -1,0 +1,367 @@
+{% extends "base.html" %}
+{% block title %}Chat — Wiki{% endblock %}
+
+{% block head %}
+<style>
+  body { overflow: hidden; }
+
+  .chat-wrap {
+    position: fixed;
+    top: var(--safe-top);
+    bottom: calc(var(--nav-h) + var(--safe-bottom));
+    left: 0; right: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Top bar ── */
+  .chat-topbar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .chat-topbar h1 { font-size: 17px; font-weight: 600; }
+
+  /* ── Messages ── */
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 12px 12px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .msg { display: flex; flex-direction: column; }
+  .msg.user  { align-items: flex-end; }
+  .msg.assistant { align-items: flex-start; }
+
+  .bubble {
+    max-width: 82%;
+    padding: 10px 14px;
+    border-radius: 18px;
+    font-size: 15px;
+    line-height: 1.45;
+    word-wrap: break-word;
+  }
+  .msg.user      .bubble { background: var(--user-bg); color: var(--user-fg); border-bottom-right-radius: 5px; }
+  .msg.assistant .bubble { background: var(--ai-bg);   color: var(--ai-fg);   border-bottom-left-radius: 5px; }
+
+  /* markdown inside bubbles */
+  .bubble p    { margin-bottom: 8px; }
+  .bubble p:last-child { margin-bottom: 0; }
+  .bubble ul, .bubble ol { padding-left: 18px; margin-bottom: 8px; }
+  .bubble li   { margin-bottom: 2px; }
+  .bubble h1, .bubble h2, .bubble h3 { font-weight: 600; margin-bottom: 6px; }
+  .bubble code {
+    background: rgba(0,0,0,0.12);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 13px;
+    font-family: "SF Mono", monospace;
+  }
+  .msg.user .bubble code { background: rgba(255,255,255,0.25); }
+  .bubble pre { background: rgba(0,0,0,0.12); border-radius: 8px; padding: 10px; overflow-x: auto; margin-bottom: 8px; }
+  .bubble pre code { background: none; padding: 0; }
+  .bubble a { color: inherit; text-decoration: underline; }
+  .bubble table { border-collapse: collapse; font-size: 13px; margin-bottom: 8px; }
+  .bubble th, .bubble td { border: 1px solid rgba(0,0,0,0.2); padding: 4px 8px; }
+
+  /* tool activity */
+  .tool-list {
+    margin-top: 5px;
+    padding: 7px 10px;
+    background: var(--tool-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 12px;
+    color: var(--text2);
+    max-width: 82%;
+  }
+  .tool-item { padding: 1px 0; font-family: "SF Mono", monospace; }
+
+  /* typing indicator */
+  .typing span {
+    display: inline-block;
+    width: 7px; height: 7px;
+    background: var(--text2);
+    border-radius: 50%;
+    margin: 0 2px;
+    animation: bounce 1s infinite;
+  }
+  .typing span:nth-child(2) { animation-delay: .15s; }
+  .typing span:nth-child(3) { animation-delay: .30s; }
+  @keyframes bounce {
+    0%, 80%, 100% { transform: translateY(0); }
+    40%           { transform: translateY(-5px); }
+  }
+
+  /* ── Input bar ── */
+  .input-bar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .input-bar textarea {
+    flex: 1;
+    border-radius: 20px;
+    padding: 9px 14px;
+    resize: none;
+    max-height: 130px;
+    font-size: 16px;
+    line-height: 1.4;
+  }
+  .send-btn {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .send-btn:disabled { background: var(--bg3); }
+  .send-btn svg { width: 18px; height: 18px; }
+
+  /* quick prompts */
+  .quick-prompts {
+    display: flex;
+    gap: 6px;
+    padding: 6px 12px 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .quick-prompts::-webkit-scrollbar { display: none; }
+  .qp {
+    flex-shrink: 0;
+    padding: 5px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="chat-wrap">
+  <div class="chat-topbar">
+    <h1>Chat</h1>
+    <button class="btn btn-ghost btn-sm" onclick="clearChat()">Clear</button>
+  </div>
+
+  <div class="messages" id="messages">
+    {% if not history %}
+    <div style="text-align:center; padding: 40px 20px; color: var(--text2); font-size:14px;">
+      <div style="font-size:32px; margin-bottom:12px;">🧠</div>
+      <div style="font-weight:600; margin-bottom:6px;">LLM Wiki</div>
+      <div>Ask a question, ingest a source, or manage your knowledge base.</div>
+    </div>
+    {% endif %}
+
+    {% for msg in history %}
+    <div class="msg {{ msg.role }}">
+      <div class="bubble" {% if msg.role == 'assistant' %}id="bubble-static-{{ loop.index }}"{% endif %}>
+        {% if msg.role == 'assistant' %}
+          <span class="md-content">{{ msg.content }}</span>
+        {% else %}
+          {{ msg.content }}
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="quick-prompts" id="quick-prompts">
+    <div class="qp" onclick="usePrompt('Process inbox')">Process inbox</div>
+    <div class="qp" onclick="usePrompt('Lint the wiki')">Lint wiki</div>
+    <div class="qp" onclick="usePrompt('Show open tasks')">Show tasks</div>
+    <div class="qp" onclick="usePrompt('What does the wiki currently cover?')">Wiki overview</div>
+  </div>
+
+  <div class="input-bar">
+    <textarea id="msg-input" placeholder="Ask anything or give a command…" rows="1"
+              onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+    <button class="send-btn" id="send-btn" onclick="sendMessage()">
+      <svg viewBox="0 0 24 24" fill="currentColor">
+        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<script>
+// Load marked.js for markdown rendering in chat bubbles
+(function(){
+  var s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/marked@12/marked.min.js';
+  s.onload = function() {
+    marked.setOptions({ breaks: true, gfm: true });
+    // Render any pre-loaded assistant messages
+    document.querySelectorAll('.md-content').forEach(function(el) {
+      el.innerHTML = marked.parse(el.textContent || '');
+    });
+  };
+  document.head.appendChild(s);
+})();
+
+function md(text) {
+  return (typeof marked !== 'undefined') ? marked.parse(text) : escHtml(text).replace(/\n/g, '<br>');
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+var sending = false;
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 130) + 'px';
+}
+
+function handleKey(e) {
+  // Send on Enter (not Shift+Enter) on non-mobile
+  if (e.key === 'Enter' && !e.shiftKey && window.innerWidth > 600) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+function usePrompt(text) {
+  document.getElementById('msg-input').value = text;
+  document.getElementById('msg-input').focus();
+}
+
+function scrollToBottom() {
+  var m = document.getElementById('messages');
+  m.scrollTop = m.scrollHeight;
+}
+
+function appendUserMsg(text) {
+  var msgs = document.getElementById('messages');
+  // Remove empty state if present
+  var empty = msgs.querySelector('div[style*="text-align:center"]');
+  if (empty) empty.remove();
+
+  var div = document.createElement('div');
+  div.className = 'msg user';
+  div.innerHTML = '<div class="bubble">' + escHtml(text) + '</div>';
+  msgs.appendChild(div);
+  scrollToBottom();
+}
+
+function appendAssistantMsg() {
+  var msgs = document.getElementById('messages');
+  var id   = 'ai-' + Date.now();
+  var div  = document.createElement('div');
+  div.className = 'msg assistant';
+  div.innerHTML =
+    '<div class="tool-list" id="tools-' + id + '" style="display:none"></div>' +
+    '<div class="bubble" id="bubble-' + id + '">' +
+      '<div class="typing"><span></span><span></span><span></span></div>' +
+    '</div>';
+  msgs.appendChild(div);
+  scrollToBottom();
+  return id;
+}
+
+async function sendMessage() {
+  var input = document.getElementById('msg-input');
+  var text  = input.value.trim();
+  if (!text || sending) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  sending = true;
+  document.getElementById('send-btn').disabled = true;
+
+  appendUserMsg(text);
+  var id      = appendAssistantMsg();
+  var toolsEl = document.getElementById('tools-' + id);
+  var bubbleEl = document.getElementById('bubble-' + id);
+
+  var fullText = '';
+  var tools    = [];
+
+  try {
+    var resp = await fetch('/chat/send', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify({message: text}),
+    });
+
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+    var reader  = resp.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer  = '';
+
+    while (true) {
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, {stream: true});
+      var lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (!line) continue;
+        try {
+          var ev = JSON.parse(line);
+          if (ev.type === 'tool') {
+            tools.push(ev.name + '  ' + ev.arg);
+            toolsEl.style.display = 'block';
+            toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">⚙ ' + escHtml(t) + '</div>'; }).join('');
+          } else if (ev.type === 'text') {
+            fullText += ev.content;
+            bubbleEl.innerHTML = md(fullText);
+          } else if (ev.type === 'error') {
+            bubbleEl.innerHTML = '<span style="color:var(--danger)">Error: ' + escHtml(ev.content) + '</span>';
+          }
+          scrollToBottom();
+        } catch(e) {}
+      }
+    }
+  } catch(e) {
+    bubbleEl.innerHTML = '<span style="color:var(--danger)">Error: ' + escHtml(e.message) + '</span>';
+  } finally {
+    if (!fullText && bubbleEl.querySelector('.typing')) {
+      bubbleEl.innerHTML = '<span style="color:var(--text2)">No response.</span>';
+    }
+    sending = false;
+    document.getElementById('send-btn').disabled = false;
+    scrollToBottom();
+  }
+}
+
+async function clearChat() {
+  if (!confirm('Clear conversation history?')) return;
+  await fetch('/chat/clear', {method: 'POST'});
+  location.reload();
+}
+
+// Scroll to bottom on load
+window.addEventListener('load', scrollToBottom);
+// Keep bottom visible when iOS keyboard appears
+window.addEventListener('resize', scrollToBottom);
+</script>
+{% endblock %}

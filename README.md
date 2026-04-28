@@ -23,17 +23,20 @@ accurate, because the cross-references, comparisons, and contradiction flags are
 
 ## Setup
 
-### Install the client
-
-The wiki is driven by `tools/wiki.py` — a provider-agnostic Python client that works with any
-OpenAI-compatible API. One dependency, no lock-in.
+### Install dependencies
 
 ```sh
+# FreeBSD
+pkg install py311-flask py311-markdown
 pip install openai
+
+# Other systems
+pip install flask markdown openai
 ```
 
-Configure your provider via environment variables (put these in `~/.profile` or a local `.env`
-file you source):
+### Configure your AI provider
+
+Set these in `~/.profile` (or a `.env` file you `source`):
 
 | Provider | Config |
 |----------|--------|
@@ -42,33 +45,57 @@ file you source):
 | **OpenRouter** (free models) | `WIKI_PROVIDER=openrouter` `WIKI_API_KEY=your-key` |
 | **OpenAI** | `WIKI_PROVIDER=openai` `WIKI_API_KEY=your-key` |
 
-Override model or base URL:
+**Gemini free API key**: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+
+### Start the web server
 
 ```sh
-export WIKI_MODEL=gemini-2.5-pro      # override model
-export WIKI_API_BASE=http://...       # override base URL entirely
+export WIKI_PASSWORD=your-password   # required before exposing to internet
+export WIKI_PROVIDER=gemini
+export WIKI_API_KEY=your-key
+python3 tools/serve.py
 ```
 
-**Gemini free API key**: get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+Open `http://your-vps-ip:8080` in any browser — including your iPhone.
 
-**Ollama on FreeBSD**:
+**VPS jail setup** — bind to all interfaces and run on boot:
 
 ```sh
-pkg install ollama
-ollama pull llama3.2
-export WIKI_PROVIDER=ollama
+WIKI_HOST=0.0.0.0 WIKI_PORT=8080 python3 tools/serve.py
+```
+
+For a reverse proxy via nginx (recommended — handles TLS):
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name wiki.example.com;
+    # ... ssl config ...
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_buffering off;        # required for streaming chat
+    }
+}
 ```
 
 ## Usage
 
-### Start a session
+### Web interface (primary)
+
+Browse to the server URL. Four tabs:
+
+- **Chat** — talk to the AI: ingest sources, query the wiki, lint, manage tasks via AI
+- **Wiki** — browse all pages with rendered markdown and working links
+- **Tasks** — view, add, and check off tasks without needing the AI
+- **Inbox** — paste articles or URLs to save for later; tap "Process with AI" to ingest them
+
+### Command line (optional)
 
 ```sh
-python3 tools/wiki.py
+python3 tools/wiki.py                      # interactive REPL
+python3 tools/wiki.py "ingest raw/file.md" # one-shot
 ```
-
-The client loads `CLAUDE.md` as the system prompt and orients itself from the current wiki state
-automatically. Works with any configured provider.
 
 ### Ingest a source
 
@@ -196,10 +223,13 @@ wiki/
   concepts/             Ideas, techniques, frameworks
   synthesis/            Cross-source analyses and comparisons
 tools/
-  wiki.py               AI-agnostic interactive client (primary interface)
+  serve.py              Web server — primary interface (chat, wiki, tasks, inbox)
+  agent.py              Shared AI agent logic (provider config, tools, streaming)
+  wiki.py               CLI client (optional alternative to the web server)
   search.py             Keyword search CLI (no LLM needed)
   tasks.py              Task filter CLI (no LLM needed)
-  build.sh              MkDocs build / serve wrapper
+  build.sh              MkDocs static site builder (optional)
+  templates/            HTML templates for the web server
 mkdocs.yml              MkDocs configuration
 CLAUDE.md               LLM operating instructions (the schema)
 ```

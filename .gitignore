@@ -1,2 +1,4 @@
 site/
 .env
+wiki/.chat_history.json
+wiki/.secret
