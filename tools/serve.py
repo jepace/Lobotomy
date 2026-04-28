@@ -62,7 +62,7 @@ from auth  import (init_auth, authenticate, get_user, update_password, set_verif
 app = Flask(__name__, template_folder="templates")
 
 _secret_file = WIKI_DIR / ".secret"
-_secret = cfg_get("server", "secret", "WIKI_SECRET")
+_secret = cfg_get("server", "secret")
 if _secret:
     app.secret_key = _secret
 elif _secret_file.exists():
@@ -75,7 +75,7 @@ else:
 app.config.update(
     SESSION_COOKIE_HTTPONLY = True,
     SESSION_COOKIE_SAMESITE = "Lax",
-    SESSION_COOKIE_SECURE   = cfg_bool("server", "https", "WIKI_HTTPS", False),
+    SESSION_COOKIE_SECURE   = cfg_bool("server", "https"),
 )
 
 # ---------------------------------------------------------------------------
@@ -510,18 +510,18 @@ def inbox_delete():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    host = cfg_get("server", "host", "WIKI_HOST", "127.0.0.1")
-    port = cfg_int("server", "port", "WIKI_PORT", 8080)
+    host = cfg_get("server", "host", "127.0.0.1")
+    port = cfg_int("server", "port", default=8080)
 
     init_auth()
 
-    if not cfg_get("admin", "email", "WIKI_ADMIN_EMAIL"):
+    if not cfg_get("admin", "email"):
         print("WARNING: admin.email not set in config.json. You won't be able to log in.")
-    if not cfg_get("admin", "password", "WIKI_ADMIN_PASSWORD"):
+    if not cfg_get("admin", "password"):
         print("WARNING: admin.password not set in config.json. You won't be able to log in.")
     if not _resend_ready():
         print("NOTE: email.resend_api_key not set — email verification disabled, accounts auto-verified.")
 
-    provider = cfg_get("llm", "provider", "WIKI_PROVIDER", "openai")
+    provider = cfg_get("llm", "provider", "openai")
     print(f"\nLLM Wiki  http://{host}:{port}  (provider: {provider})\n")
     app.run(host=host, port=port, debug=False, threaded=True)

@@ -2,17 +2,11 @@
 """
 Load config.json from the repo root.
 
-Priority (highest first):
-  1. config.json values
-  2. Environment variable fallbacks (backwards compat)
-  3. Hard-coded defaults
-
 Usage in other modules:
     from config import cfg_get, cfg_bool, cfg_int
 """
 
 import json
-import os
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -31,34 +25,16 @@ def _load() -> dict:
 _c = _load()
 
 
-def cfg_get(section: str, key: str, env_var: str = "", default: str = "") -> str:
+def cfg_get(section: str, key: str, default: str = "") -> str:
     v = _c.get(section, {}).get(key)
-    if v is not None:
-        return str(v)
-    if env_var:
-        v = os.environ.get(env_var)
-        if v is not None:
-            return v
-    return default
+    return str(v) if v is not None else default
 
 
-def cfg_int(section: str, key: str, env_var: str = "", default: int = 0) -> int:
+def cfg_int(section: str, key: str, default: int = 0) -> int:
     v = _c.get(section, {}).get(key)
-    if v is not None:
-        return int(v)
-    if env_var:
-        v = os.environ.get(env_var)
-        if v is not None:
-            return int(v)
-    return default
+    return int(v) if v is not None else default
 
 
-def cfg_bool(section: str, key: str, env_var: str = "", default: bool = False) -> bool:
+def cfg_bool(section: str, key: str, default: bool = False) -> bool:
     v = _c.get(section, {}).get(key)
-    if v is not None:
-        return bool(v)
-    if env_var:
-        v = os.environ.get(env_var)
-        if v is not None:
-            return v.lower() in ("1", "true", "yes")
-    return default
+    return bool(v) if v is not None else default

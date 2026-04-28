@@ -2,7 +2,6 @@
 """Shared LLM agent logic used by both the CLI (wiki.py) and web server (serve.py)."""
 
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Generator
@@ -49,17 +48,17 @@ def get_client_and_model():
     if OpenAI is None:
         return None, None, "openai package not installed — run: pip install openai"
 
-    provider_name = cfg_get("llm", "provider", "WIKI_PROVIDER", "openai").lower()
+    provider_name = cfg_get("llm", "provider", "openai").lower()
     preset        = PROVIDERS.get(provider_name, PROVIDERS["openai"])
 
-    api_key  = cfg_get("llm", "api_key",  "WIKI_API_KEY")  or preset.get("api_key", "")
-    base_url = cfg_get("llm", "api_base", "WIKI_API_BASE") or preset.get("base_url")
-    model    = cfg_get("llm", "model",    "WIKI_MODEL")    or preset["default_model"]
+    api_key  = cfg_get("llm", "api_key")  or preset.get("api_key", "")
+    base_url = cfg_get("llm", "api_base") or preset.get("base_url")
+    model    = cfg_get("llm", "model")    or preset["default_model"]
 
     if not api_key:
         return None, None, (
             f"No API key for provider '{provider_name}'.\n"
-            f"  Set llm.api_key in config.json, or: export WIKI_API_KEY=your-key"
+            f"  Set llm.api_key in config.json."
         )
 
     return OpenAI(api_key=api_key, base_url=base_url), model, None

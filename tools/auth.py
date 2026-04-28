@@ -78,9 +78,9 @@ def _verify(password: str, stored_hex: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def init_auth() -> None:
-    """Provision the admin account from config/env vars if it doesn't exist yet."""
-    email    = cfg_get("admin", "email",    "WIKI_ADMIN_EMAIL",    "").strip().lower()
-    password = cfg_get("admin", "password", "WIKI_ADMIN_PASSWORD", "").strip()
+    """Provision the admin account from config.json if it doesn't exist yet."""
+    email    = cfg_get("admin", "email").strip().lower()
+    password = cfg_get("admin", "password").strip()
     if not email or not password:
         return
 
@@ -158,7 +158,7 @@ def authenticate(email: str, password: str) -> tuple[bool, str]:
         mins = seconds_until_unlock() // 60 + 1
         return False, f"Too many failed attempts. Try again in {mins} minute(s)."
 
-    expected = cfg_get("admin", "email", "WIKI_ADMIN_EMAIL", "").strip().lower()
+    expected = cfg_get("admin", "email").strip().lower()
     if not expected:
         return False, "Server not configured (admin.email missing from config.json)."
 
@@ -214,22 +214,22 @@ def consume_token(token: str, token_type: str) -> bool:
 def _resend_ready() -> bool:
     try:
         import resend  # noqa: F401
-        return bool(cfg_get("email", "resend_api_key", "RESEND_API_KEY"))
+        return bool(cfg_get("email", "resend_api_key"))
     except ImportError:
         return False
 
 
 def _base_url() -> str:
-    return cfg_get("server", "base_url", "WIKI_BASE_URL", "http://localhost:8080").rstrip("/")
+    return cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
 
 
 def _from_addr() -> str:
-    return cfg_get("email", "from_address", "WIKI_FROM_EMAIL", "onboarding@resend.dev")
+    return cfg_get("email", "from_address", "onboarding@resend.dev")
 
 
 def send_verification_email(email: str, token: str) -> None:
     import resend
-    resend.api_key = cfg_get("email", "resend_api_key", "RESEND_API_KEY")
+    resend.api_key = cfg_get("email", "resend_api_key")
     link = f"{_base_url()}/auth/verify/{token}"
     resend.Emails.send({
         "from":    _from_addr(),
@@ -245,7 +245,7 @@ def send_verification_email(email: str, token: str) -> None:
 
 def send_reset_email(email: str, token: str) -> None:
     import resend
-    resend.api_key = cfg_get("email", "resend_api_key", "RESEND_API_KEY")
+    resend.api_key = cfg_get("email", "resend_api_key")
     link = f"{_base_url()}/auth/reset/{token}"
     resend.Emails.send({
         "from":    _from_addr(),
