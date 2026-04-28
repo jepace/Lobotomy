@@ -46,7 +46,7 @@ if missing:
     sys.exit(1)
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import cfg_get, cfg_bool, cfg_int
+from config import cfg_get, cfg_bool, cfg_int, validate_config
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, system_prompt)
@@ -772,12 +772,17 @@ if __name__ == "__main__":
 
     init_auth()
 
-    if not cfg_get("admin", "email"):
-        print("WARNING: admin.email not set in config.json. You won't be able to log in.")
-    if not cfg_get("admin", "password"):
-        print("WARNING: admin.password not set in config.json. You won't be able to log in.")
-    if not _resend_ready():
-        print("NOTE: email.resend_api_key not set — email verification disabled, accounts auto-verified.")
+    issues = validate_config()
+    has_errors = False
+    for level, msg in issues:
+        prefix = "ERROR" if level == "error" else "WARNING"
+        print(f"[{prefix}] {msg}")
+        if level == "error":
+            has_errors = True
+
+    if has_errors:
+        print("\nFix these errors and restart.")
+        sys.exit(1)
 
     provider = cfg_get("llm", "provider", "openai")
     print(f"\nLobotomy  http://{host}:{port}  (provider: {provider})\n")

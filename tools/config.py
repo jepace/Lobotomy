@@ -38,3 +38,42 @@ def cfg_int(section: str, key: str, default: int = 0) -> int:
 def cfg_bool(section: str, key: str, default: bool = False) -> bool:
     v = _c.get(section, {}).get(key)
     return bool(v) if v is not None else default
+
+
+def validate_config() -> list:
+    """Check config for common issues. Returns list of (level, message) tuples.
+    level: 'error' (blocks startup), 'warning' (functionality degraded)
+    """
+    issues = []
+
+    # Admin account
+    admin_email = cfg_get("admin", "email", "").strip()
+    admin_pass = cfg_get("admin", "password", "").strip()
+    if not admin_email:
+        issues.append(("error", "admin.email not set — you won't be able to log in"))
+    if not admin_pass:
+        issues.append(("error", "admin.password not set — you won't be able to log in"))
+
+    # LLM provider
+    provider = cfg_get("llm", "provider", "openai").lower()
+    valid_providers = {"gemini", "openai", "ollama", "openrouter"}
+    if provider not in valid_providers:
+        issues.append(("error", f"llm.provider '{provider}' not recognized (valid: {', '.join(valid_providers)})"))
+
+    api_key = cfg_get("llm", "api_key", "").strip()
+    if not api_key and provider != "ollama":
+        issues.append(("error", f"llm.api_key not set for provider '{provider}'"))
+
+    model = cfg_get("llm", "model", "").strip()
+    if not model:
+        issues.append(("warning", "llm.model not set — will use provider default"))
+
+    # Email (optional but warn if trying to use Resend without key)
+    resend_key = cfg_get("email", "resend_api_key", "").strip()
+    from_addr = cfg_get("email", "from_address", "").strip()
+    if not resend_key:
+        issues.append(("warning", "email.resend_api_key not set — email verification disabled"))
+    elif not from_addr:
+        issues.append(("warning", "email.from_address not set — email verification may fail"))
+
+    return issues
