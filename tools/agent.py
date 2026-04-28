@@ -97,8 +97,10 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = {}
+        raw_body = ""
         try:
-            body = json.loads(e.read().decode("utf-8", errors="replace"))
+            raw_body = e.read().decode("utf-8", errors="replace")
+            body = json.loads(raw_body)
         except Exception:
             pass
         msg = (
@@ -119,7 +121,9 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
         if code == 404:
             raise _LLMError("Model not found — check llm.model in config.json.")
         if code == 400:
-            raise _LLMError(f"Bad request: {msg}")
+            # Include raw response for debugging 400 errors
+            detail = f"{msg}\n{raw_body}" if raw_body and raw_body != msg else msg
+            raise _LLMError(f"Bad request: {detail}")
         if code == 429:
             raise _LLMError(f"Rate limited: {msg}", retryable=True, retry_after=retry_after)
         if code >= 500:
