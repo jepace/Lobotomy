@@ -2,23 +2,33 @@
 """
 LLM Wiki — Web server
 
-A mobile-friendly web app for browsing the wiki, managing tasks, capturing articles,
-and chatting with the AI — all from a phone browser.
+Mobile-friendly web app: chat with AI, browse wiki, manage tasks, capture articles.
 
 Requirements:
-  pip install flask markdown openai
+  pip install flask markdown openai resend
   -- or on FreeBSD --
-  pkg install py311-flask py311-markdown && pip install openai
+  pkg install py311-flask py311-markdown && pip install openai resend
 
-Configuration (environment variables):
-  WIKI_PASSWORD   Password for the web UI (strongly recommended on a public VPS)
-  WIKI_HOST       Bind address (default: 127.0.0.1 — use 0.0.0.0 to expose externally)
-  WIKI_PORT       Port (default: 8080)
-  WIKI_SECRET     Flask session secret (auto-generated and persisted if not set)
-  WIKI_PROVIDER   LLM provider: gemini | openai | ollama | openrouter  (default: openai)
-  WIKI_API_KEY    LLM API key
-  WIKI_MODEL      Override model name
-  WIKI_API_BASE   Override API base URL
+Account configuration (set before first run):
+  WIKI_ADMIN_EMAIL     Your email address (the single admin account)
+  WIKI_ADMIN_PASSWORD  Initial password — plaintext here, hashed on first write
+  WIKI_BASE_URL        Public URL, e.g. https://wiki.example.com (for email links)
+
+Email verification + password reset (Resend — https://resend.com):
+  RESEND_API_KEY       Resend API key
+  WIKI_FROM_EMAIL      From address (must be verified in Resend, e.g. wiki@yourdomain.com)
+
+Server configuration:
+  WIKI_HOST            Bind address (default: 127.0.0.1)
+  WIKI_PORT            Port (default: 8080)
+  WIKI_SECRET          Flask session secret (auto-generated + persisted if not set)
+  WIKI_HTTPS           Set to '1' when running behind HTTPS (enables Secure cookie flag)
+
+LLM configuration:
+  WIKI_PROVIDER        gemini | openai | ollama | openrouter  (default: openai)
+  WIKI_API_KEY         LLM API key
+  WIKI_MODEL           Override model name
+  WIKI_API_BASE        Override API base URL
 
 Usage:
   python3 tools/serve.py
@@ -27,7 +37,6 @@ Usage:
 
 import datetime
 import functools
-import hashlib
 import json
 import os
 import re
@@ -40,8 +49,9 @@ from pathlib import Path
 
 missing = []
 try:
-    from flask import (Flask, Response, abort, redirect, render_template,
-                       request, stream_with_context, url_for)
+    from flask import (Flask, Response, abort, flash, redirect,
+                       render_template, request, session,
+                       stream_with_context, url_for)
 except ImportError:
     missing.append("flask")
 
@@ -55,10 +65,14 @@ if missing:
     print(f"  pip install {' '.join(missing)}")
     sys.exit(1)
 
-# agent.py lives alongside this file
 sys.path.insert(0, str(Path(__file__).parent))
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
-                   get_client_and_model, orientation_message, stream_agent_turn, system_prompt)
+                   get_client_and_model, orientation_message,
+                   stream_agent_turn, system_prompt)
+from auth  import (init_auth, authenticate, get_user, update_password, set_verified,
+                   create_token, consume_token, record_attempt, is_locked_out,
+                   send_verification_email, send_reset_email,
+                   maybe_send_verification, _resend_ready)
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -66,7 +80,6 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
 
 app = Flask(__name__, template_folder="templates")
 
-# Persist the secret key so sessions survive server restarts
 _secret_file = WIKI_DIR / ".secret"
 if os.environ.get("WIKI_SECRET"):
     app.secret_key = os.environ["WIKI_SECRET"]
@@ -77,38 +90,128 @@ else:
     _secret_file.write_text(_key)
     app.secret_key = _key
 
+app.config.update(
+    SESSION_COOKIE_HTTPONLY = True,
+    SESSION_COOKIE_SAMESITE = "Lax",
+    SESSION_COOKIE_SECURE   = os.environ.get("WIKI_HTTPS", "").lower() in ("1", "true", "yes"),
+)
+
 # ---------------------------------------------------------------------------
-# Auth
+# Auth helpers
 # ---------------------------------------------------------------------------
 
-def _check_password(pw: str) -> bool:
-    expected = os.environ.get("WIKI_PASSWORD", "")
-    if not expected:
-        return True
-    return hashlib.sha256(pw.encode()).hexdigest() == hashlib.sha256(expected.encode()).hexdigest()
-
-
-def require_auth(f):
+def require_login(f):
     @functools.wraps(f)
     def decorated(*args, **kwargs):
-        if not os.environ.get("WIKI_PASSWORD"):
-            return f(*args, **kwargs)
-        auth = request.authorization
-        if not auth or not _check_password(auth.password):
-            return Response(
-                "Authentication required.",
-                401,
-                {"WWW-Authenticate": 'Basic realm="Wiki"'},
-            )
+        if not session.get("logged_in"):
+            return redirect(url_for("auth_login", next=request.path))
         return f(*args, **kwargs)
     return decorated
 
+
+@app.context_processor
+def inject_globals():
+    path = request.path
+    if path.startswith("/wiki"):
+        active = "wiki"
+    elif path.startswith("/tasks"):
+        active = "tasks"
+    elif path.startswith("/inbox"):
+        active = "inbox"
+    else:
+        active = "chat"
+    user = get_user() if session.get("logged_in") else None
+    return {"active": active, "current_user": user}
+
 # ---------------------------------------------------------------------------
-# Chat history (persisted to wiki/.chat_history.json, gitignored)
+# Auth routes
+# ---------------------------------------------------------------------------
+
+@app.route("/auth/login", methods=["GET", "POST"])
+def auth_login():
+    if session.get("logged_in"):
+        return redirect(url_for("index"))
+
+    error = None
+    if request.method == "POST":
+        email    = (request.form.get("email")    or "").strip()
+        password = (request.form.get("password") or "").strip()
+        ok, msg  = authenticate(email, password)
+        record_attempt(ok)
+        if ok:
+            session.clear()
+            session["logged_in"]  = True
+            session.permanent     = True
+            app.permanent_session_lifetime = datetime.timedelta(days=30)
+            next_url = request.args.get("next") or url_for("index")
+            return redirect(next_url)
+        error = msg
+
+    return render_template("login.html", error=error)
+
+
+@app.route("/auth/logout", methods=["POST"])
+def auth_logout():
+    session.clear()
+    return redirect(url_for("auth_login"))
+
+
+@app.route("/auth/verify/<token>")
+def auth_verify(token):
+    if consume_token(token, "verify"):
+        set_verified()
+        return render_template("verify_done.html")
+    return render_template("verify_done.html", error="This link is invalid or has expired.")
+
+
+@app.route("/auth/resend-verification", methods=["POST"])
+def auth_resend_verification():
+    sent = maybe_send_verification()
+    msg  = "Verification email sent." if sent else "Could not send email — check RESEND_API_KEY."
+    return render_template("verify_pending.html", message=msg)
+
+
+@app.route("/auth/forgot", methods=["GET", "POST"])
+def auth_forgot():
+    message = None
+    if request.method == "POST":
+        if not _resend_ready():
+            message = "Password reset requires Resend. Set RESEND_API_KEY."
+        else:
+            user = get_user()
+            if user:
+                token = create_token("reset", hours=1)
+                send_reset_email(user["email"], token)
+            # Always show the same message to prevent email enumeration
+            message = "If that email is registered, a reset link has been sent."
+    return render_template("forgot_password.html", message=message)
+
+
+@app.route("/auth/reset/<token>", methods=["GET", "POST"])
+def auth_reset(token):
+    error = None
+    if request.method == "POST":
+        pw1 = request.form.get("password",  "")
+        pw2 = request.form.get("password2", "")
+        if len(pw1) < 10:
+            error = "Password must be at least 10 characters."
+        elif pw1 != pw2:
+            error = "Passwords do not match."
+        else:
+            if consume_token(token, "reset"):
+                update_password(pw1)
+                session.clear()
+                return render_template("login.html",
+                                       message="Password updated. Please log in.")
+            error = "This reset link is invalid or has expired."
+    return render_template("reset_password.html", token=token, error=error)
+
+# ---------------------------------------------------------------------------
+# Chat history
 # ---------------------------------------------------------------------------
 
 HISTORY_FILE = WIKI_DIR / ".chat_history.json"
-MAX_HISTORY  = 80  # messages (~40 exchanges)
+MAX_HISTORY  = 80
 
 
 def load_history() -> list:
@@ -139,7 +242,6 @@ _MD_EXTENSIONS = ["tables", "toc", "fenced_code", "attr_list"]
 
 
 def _rewrite_md_link(href: str, from_page: Path) -> str:
-    """Convert a relative .md link to a /wiki/ URL."""
     if href.startswith(("http://", "https://", "/", "#", "mailto:")):
         return href
     resolved = (from_page.parent / href).resolve()
@@ -154,10 +256,8 @@ def render_md(path: Path) -> str:
     if not path.exists():
         return "<p><em>Page not found.</em></p>"
     text = path.read_text(encoding="utf-8")
-    # Strip YAML frontmatter
     text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
     html = md_lib.markdown(text, extensions=_MD_EXTENSIONS)
-    # Rewrite relative .md links to /wiki/ URLs so navigation works
     html = re.sub(
         r'href="([^"]*\.md[^"]*)"',
         lambda m: f'href="{_rewrite_md_link(m.group(1), path)}"',
@@ -173,12 +273,12 @@ def parse_tasks() -> list:
     tasks_file = WIKI_DIR / "tasks.md"
     if not tasks_file.exists():
         return []
-    lines = tasks_file.read_text(encoding="utf-8").splitlines()
+    lines        = tasks_file.read_text(encoding="utf-8").splitlines()
     tasks        = []
-    current_section = "Inbox"
+    current_sect = "Inbox"
     for i, line in enumerate(lines):
         if line.startswith("## "):
-            current_section = line[3:].strip()
+            current_sect = line[3:].strip()
             continue
         m = re.match(r"^(\s*)-\s+\[([ x])\]\s+(.+)$", line)
         if not m:
@@ -187,13 +287,11 @@ def parse_tasks() -> list:
         p = re.search(r"#p:(\w+)", text)
         d = re.search(r"#due:(\S+)", text)
         c = re.search(r"#ctx:(\w+)", text)
-        clean = re.sub(r"#\S+", "", text).strip()
         tasks.append({
             "line":     i,
             "done":     checked == "x",
-            "text":     clean,
-            "raw":      text,
-            "section":  current_section,
+            "text":     re.sub(r"#\S+", "", text).strip(),
+            "section":  current_sect,
             "indent":   len(indent) // 2,
             "priority": p.group(1) if p else "",
             "due":      d.group(1) if d else "",
@@ -225,12 +323,10 @@ def _add_task(text: str, section: str = "Inbox") -> None:
         tasks_file.write_text("# Tasks\n\n## Inbox\n\n", encoding="utf-8")
     content = tasks_file.read_text(encoding="utf-8")
     entry   = f"- [ ] {text.strip()}\n"
-    # Try to append under the matching section heading
     pattern = rf"(## {re.escape(section)}\n)"
     if re.search(pattern, content):
         content = re.sub(pattern, r"\1" + entry, content, count=1)
     else:
-        # Section doesn't exist — append new section at end
         content = content.rstrip("\n") + f"\n\n## {section}\n\n{entry}"
     tasks_file.write_text(content, encoding="utf-8")
 
@@ -238,21 +334,20 @@ def _add_task(text: str, section: str = "Inbox") -> None:
 # Inbox helpers
 # ---------------------------------------------------------------------------
 
-def list_inbox() -> list[str]:
+def list_inbox() -> list:
     inbox = RAW_DIR / "inbox"
     if not inbox.is_dir():
         return []
     return sorted(
         f.name for f in inbox.iterdir()
-        if f.is_file() and f.name not in (".gitkeep",)
+        if f.is_file() and f.name != ".gitkeep"
     )
 
 # ---------------------------------------------------------------------------
 # Wiki navigation helpers
 # ---------------------------------------------------------------------------
 
-def wiki_sections() -> list[dict]:
-    """Return top-level wiki pages for navigation."""
+def wiki_sections() -> list:
     pages = []
     for name, label in [
         ("index.md",        "Index"),
@@ -262,44 +357,25 @@ def wiki_sections() -> list[dict]:
     ]:
         if (WIKI_DIR / name).exists():
             pages.append({"path": name, "label": label})
-    dirs = []
     for d in ["sources", "entities", "concepts", "synthesis"]:
         if (WIKI_DIR / d).is_dir():
-            dirs.append({"path": d + "/", "label": d.title()})
-    return pages + dirs
+            pages.append({"path": d + "/", "label": d.title()})
+    return pages
 
 # ---------------------------------------------------------------------------
-# Template context
-# ---------------------------------------------------------------------------
-
-@app.context_processor
-def inject_globals():
-    path = request.path
-    if path.startswith("/wiki"):
-        active = "wiki"
-    elif path.startswith("/tasks"):
-        active = "tasks"
-    elif path.startswith("/inbox"):
-        active = "inbox"
-    else:
-        active = "chat"
-    return {"active": active}
-
-# ---------------------------------------------------------------------------
-# Routes — chat
+# Main routes
 # ---------------------------------------------------------------------------
 
 @app.route("/")
-@require_auth
+@require_login
 def index():
     return redirect(url_for("chat"))
 
 
 @app.route("/chat")
-@require_auth
+@require_login
 def chat():
     history = load_history()
-    # Pull only user/assistant text messages for display
     display = [
         {"role": m["role"], "content": m.get("content", "")}
         for m in history
@@ -309,7 +385,7 @@ def chat():
 
 
 @app.route("/chat/send", methods=["POST"])
-@require_auth
+@require_login
 def chat_send():
     data    = request.get_json(silent=True) or {}
     message = (data.get("message") or "").strip()
@@ -325,13 +401,11 @@ def chat_send():
 
     sys_prompt = system_prompt()
     history    = load_history()
-
     if not history:
         history = [
             {"role": "user",      "content": orientation_message()},
             {"role": "assistant", "content": "Oriented. Ready."},
         ]
-
     history.append({"role": "user", "content": message})
 
     def generate():
@@ -342,55 +416,46 @@ def chat_send():
 
 
 @app.route("/chat/clear", methods=["POST"])
-@require_auth
+@require_login
 def chat_clear():
     clear_history()
     return {"ok": True}
 
-# ---------------------------------------------------------------------------
-# Routes — wiki browser
-# ---------------------------------------------------------------------------
 
 @app.route("/wiki/")
-@require_auth
+@require_login
 def wiki_home():
     return redirect(url_for("wiki_page", page_path="index.md"))
 
 
 @app.route("/wiki/<path:page_path>")
-@require_auth
+@require_login
 def wiki_page(page_path):
     p = WIKI_DIR / page_path
     if p.is_dir():
         p = p / "index.md"
     if not p.suffix:
         p = p.with_suffix(".md")
-    # Prevent path traversal
     try:
         p.resolve().relative_to(WIKI_DIR.resolve())
     except ValueError:
         abort(404)
     if not p.exists():
         abort(404)
-    title = p.stem.replace("-", " ").title()
     return render_template(
         "wiki.html",
         content=render_md(p),
-        title=title,
+        title=p.stem.replace("-", " ").title(),
         sections=wiki_sections(),
         current_path=str(p.relative_to(WIKI_DIR)),
     )
 
-# ---------------------------------------------------------------------------
-# Routes — tasks
-# ---------------------------------------------------------------------------
 
 @app.route("/tasks")
-@require_auth
+@require_login
 def tasks():
     all_tasks = parse_tasks()
-    # Group by section
-    sections: dict[str, list] = {}
+    sections: dict = {}
     for t in all_tasks:
         sections.setdefault(t["section"], []).append(t)
     return render_template("tasks.html", sections=sections,
@@ -398,43 +463,39 @@ def tasks():
 
 
 @app.route("/tasks/toggle", methods=["POST"])
-@require_auth
+@require_login
 def tasks_toggle():
     data   = request.get_json(silent=True) or {}
     line   = data.get("line")
     action = data.get("action")
     if line is None or action not in ("complete", "reopen"):
         return {"error": "bad request"}, 400
-    ok = _toggle_task(int(line), action)
-    return {"ok": ok}
+    return {"ok": _toggle_task(int(line), action)}
 
 
 @app.route("/tasks/add", methods=["POST"])
-@require_auth
+@require_login
 def tasks_add():
     data    = request.get_json(silent=True) or {}
-    text    = (data.get("text") or "").strip()
+    text    = (data.get("text")    or "").strip()
     section = (data.get("section") or "Inbox").strip()
     if not text:
         return {"error": "Empty task"}, 400
     _add_task(text, section)
     return {"ok": True}
 
-# ---------------------------------------------------------------------------
-# Routes — inbox
-# ---------------------------------------------------------------------------
 
 @app.route("/inbox")
-@require_auth
+@require_login
 def inbox():
     return render_template("inbox.html", items=list_inbox())
 
 
 @app.route("/inbox/add", methods=["POST"])
-@require_auth
+@require_login
 def inbox_add():
     data    = request.get_json(silent=True) or {}
-    content = (data.get("content") or "").strip()
+    content = (data.get("content")  or "").strip()
     name    = (data.get("filename") or "").strip()
     if not content:
         return {"error": "Empty content"}, 400
@@ -447,7 +508,7 @@ def inbox_add():
 
 
 @app.route("/inbox/delete", methods=["POST"])
-@require_auth
+@require_login
 def inbox_delete():
     data = request.get_json(silent=True) or {}
     name = (data.get("filename") or "").strip()
@@ -470,15 +531,15 @@ if __name__ == "__main__":
     host = os.environ.get("WIKI_HOST", "127.0.0.1")
     port = int(os.environ.get("WIKI_PORT", "8080"))
 
-    if not os.environ.get("WIKI_PASSWORD"):
-        print("WARNING: WIKI_PASSWORD is not set — the server is unauthenticated.")
-        print("         Set it before exposing the server to the internet.")
+    init_auth()
+
+    if not os.environ.get("WIKI_ADMIN_EMAIL"):
+        print("WARNING: WIKI_ADMIN_EMAIL is not set. You won't be able to log in.")
+    if not os.environ.get("WIKI_ADMIN_PASSWORD"):
+        print("WARNING: WIKI_ADMIN_PASSWORD is not set. You won't be able to log in.")
+    if not _resend_ready():
+        print("NOTE: RESEND_API_KEY not set — email verification disabled, accounts auto-verified.")
 
     provider = os.environ.get("WIKI_PROVIDER", "openai")
-    if not os.environ.get("WIKI_API_KEY") and provider != "ollama":
-        print(f"WARNING: WIKI_API_KEY is not set. Chat will return an error until it is.")
-
-    print(f"\nLLM Wiki  http://{host}:{port}")
-    print(f"Provider: {provider}  |  Run 'python3 tools/serve.py --help' for config options\n")
-
+    print(f"\nLLM Wiki  http://{host}:{port}  (provider: {provider})\n")
     app.run(host=host, port=port, debug=False, threaded=True)

@@ -2,3 +2,6 @@ site/
 .env
 wiki/.chat_history.json
 wiki/.secret
+wiki/.user.json
+wiki/.tokens.json
+wiki/.login_log.json

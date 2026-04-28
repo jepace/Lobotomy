@@ -47,10 +47,37 @@ Set these in `~/.profile` (or a `.env` file you `source`):
 
 **Gemini free API key**: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
 
+### Create your account
+
+The server uses a single admin account provisioned from environment variables on first run.
+Set these before starting the server for the first time:
+
+```sh
+export WIKI_ADMIN_EMAIL=you@example.com
+export WIKI_ADMIN_PASSWORD=a-strong-password
+```
+
+The password is hashed with scrypt on first write; the plaintext env var is never stored.
+
+**Email verification (optional — [Resend](https://resend.com)):**
+
+If you set `RESEND_API_KEY`, the account will require email verification and password reset will
+work via email. Without it, the account is auto-verified and password reset is unavailable.
+
+| Variable | Description |
+|----------|-------------|
+| `WIKI_ADMIN_EMAIL` | Your login email address |
+| `WIKI_ADMIN_PASSWORD` | Initial password (plaintext — hashed on first run) |
+| `RESEND_API_KEY` | Resend API key (optional — enables email verification) |
+| `WIKI_FROM_EMAIL` | Verified from-address in Resend, e.g. `wiki@yourdomain.com` |
+| `WIKI_BASE_URL` | Public URL, e.g. `https://wiki.example.com` (used in email links) |
+| `WIKI_HTTPS` | Set to `1` when running behind HTTPS (enables Secure cookie flag) |
+
 ### Start the web server
 
 ```sh
-export WIKI_PASSWORD=your-password   # required before exposing to internet
+export WIKI_ADMIN_EMAIL=you@example.com
+export WIKI_ADMIN_PASSWORD=your-password
 export WIKI_PROVIDER=gemini
 export WIKI_API_KEY=your-key
 python3 tools/serve.py

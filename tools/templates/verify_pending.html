@@ -1,0 +1,25 @@
+{% extends "auth_base.html" %}
+{% block title %}Verify Email — Wiki{% endblock %}
+{% block heading %}Check Your Email{% endblock %}
+{% block content %}
+
+{% if message %}
+<div class="message">{{ message }}</div>
+{% endif %}
+
+<p style="text-align:center; color:var(--text2); font-size:15px; margin-bottom:20px;">
+  A verification link has been sent to your email address.<br>
+  Click the link in the email to activate your account.
+</p>
+
+<form method="post" action="/auth/resend-verification">
+  <button class="btn" type="submit" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);">
+    Resend verification email
+  </button>
+</form>
+
+<div class="links" style="margin-top:14px;">
+  <a href="/auth/login">Back to sign in</a>
+</div>
+
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "auth_base.html" %}
+{% block title %}Email Verified — Wiki{% endblock %}
+{% block heading %}{% if error %}Verification Failed{% else %}Email Verified{% endif %}{% endblock %}
+{% block content %}
+
+{% if error %}
+<div class="error">{{ error }}</div>
+<div class="links"><a href="/auth/forgot">Request a new link</a></div>
+{% else %}
+<p style="text-align:center; color:var(--text2); font-size:15px; margin-bottom:20px;">
+  Your account is verified. You can now sign in.
+</p>
+<a href="/auth/login" class="btn" style="display:block;text-align:center;text-decoration:none;">
+  Sign In
+</a>
+{% endif %}
+
+{% endblock %}
