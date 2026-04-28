@@ -157,8 +157,9 @@ def _list_dir(directory: str) -> str:
 
 
 def _fetch_url(url: str) -> str:
-    import urllib.request, urllib.error
+    import urllib.request, urllib.error, urllib.parse
     from html.parser import HTMLParser
+    from http.cookiejar import CookieJar
 
     class _Stripper(HTMLParser):
         _SKIP = {"script", "style", "noscript", "template"}
@@ -173,11 +174,33 @@ def _fetch_url(url: str) -> str:
         def handle_data(self, data):
             if not self._depth: self.chunks.append(data)
 
+    headers = {
+        "User-Agent":      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) "
+                           "Chrome/124.0.0.0 Safari/537.36",
+        "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "identity",  # avoid dealing with gzip in stdlib
+        "DNT":             "1",
+    }
+
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            ct  = resp.headers.get("Content-Type", "")
-            raw = resp.read(2_000_000)
+        req  = urllib.request.Request(url, headers=headers)
+        with opener.open(req, timeout=15) as resp:
+            status = resp.status
+            ct     = resp.headers.get("Content-Type", "")
+            raw    = resp.read(2_000_000)
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            return (
+                f"Error 403 Forbidden — {url}\n"
+                "The site is blocking automated access. "
+                "Save the article as a .txt/.html file and drop it in raw/inbox/ instead."
+            )
+        if e.code == 429:
+            return f"Error 429 Too Many Requests — {url}\nRate limited. Try again later."
+        return f"HTTP {e.code} fetching {url}: {e.reason}"
     except urllib.error.URLError as e:
         return f"Error fetching {url}: {e}"
     except Exception as e:
@@ -189,6 +212,12 @@ def _fetch_url(url: str) -> str:
         try: p.feed(raw.decode("utf-8", errors="replace"))
         except Exception: pass
         text = _re.sub(r"\s+", " ", "".join(p.chunks)).strip()
+        if not text:
+            return (
+                f"Fetched {url} but extracted no text.\n"
+                "The page may require JavaScript to render (e.g. a SPA or Cloudflare-protected site).\n"
+                "Save the article manually and drop it in raw/inbox/ instead."
+            )
     else:
         text = raw.decode("utf-8", errors="replace")
     return text[:50_000]
