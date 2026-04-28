@@ -1,15 +1,22 @@
 #!/bin/sh
 set -e
 
-# Deploy Lobotomy to FreeBSD jail
-# Usage: ./deploy.sh [--full]
-#   --full: include wiki/, raw/, and blog/ (default: preserve them)
+# Deploy Lobotomy to FreeBSD jail using rsync
+# Usage: ./deploy.sh [--full] [--dry-run]
+#   --full:    include wiki/, raw/, and blog/ (default: preserve them)
+#   --dry-run: show what would be synced without making changes
 
 JAIL_ROOT="/usr/local/bastille/jails/Lobotomy/root/var/www/Lobotomy"
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ ! -d "$JAIL_ROOT" ]; then
     echo "Error: Jail not found at $JAIL_ROOT"
+    exit 1
+fi
+
+# Check for rsync
+if ! command -v rsync >/dev/null; then
+    echo "Error: rsync not found. Install with: pkg install rsync"
     exit 1
 fi
 
@@ -23,51 +30,56 @@ if ! git -C "$REPO_DIR" diff-index --quiet HEAD --; then
 fi
 
 FULL_DEPLOY=0
-if [ "$1" = "--full" ]; then
-    FULL_DEPLOY=1
+DRY_RUN=""
+for arg in "$@"; do
+    case "$arg" in
+        --full) FULL_DEPLOY=1 ;;
+        --dry-run) DRY_RUN="--dry-run" ;;
+    esac
+done
+
+if [ "$FULL_DEPLOY" = "1" ]; then
     echo "🔴 FULL DEPLOY MODE: will overwrite wiki/, raw/, blog/"
     echo "   (Ctrl+C to cancel)"
-    sleep 3
+    sleep 2
 fi
 
-# Create jail dirs if missing
-mkdir -p "$JAIL_ROOT/tools/templates"
-mkdir -p "$JAIL_ROOT/wiki"
-mkdir -p "$JAIL_ROOT/raw/inbox"
-mkdir -p "$JAIL_ROOT/raw/assets"
-mkdir -p "$JAIL_ROOT/blog"
+# Build rsync command with excludes
+RSYNC_ARGS="-av --delete --compress"
+[ -n "$DRY_RUN" ] && RSYNC_ARGS="$RSYNC_ARGS $DRY_RUN"
 
-# Deploy code
-echo "📦 Deploying code..."
-cp -r "$REPO_DIR/tools/"* "$JAIL_ROOT/tools/"
-cp "$REPO_DIR/CLAUDE.md" "$JAIL_ROOT/"
-cp "$REPO_DIR/README.md" "$JAIL_ROOT/"
-cp "$REPO_DIR/requirements.txt" "$JAIL_ROOT/"
+# Always exclude these
+RSYNC_ARGS="$RSYNC_ARGS --exclude=.git"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=__pycache__"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=.pytest_cache"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=.env"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=deploy.sh"
 
-# Deploy full data (if --full)
-if [ "$FULL_DEPLOY" = "1" ]; then
-    echo "🔄 Copying wiki/, raw/, blog/..."
-    rm -rf "$JAIL_ROOT/wiki" "$JAIL_ROOT/raw" "$JAIL_ROOT/blog"
-    cp -r "$REPO_DIR/wiki" "$JAIL_ROOT/"
-    cp -r "$REPO_DIR/raw" "$JAIL_ROOT/"
-    cp -r "$REPO_DIR/blog" "$JAIL_ROOT/" 2>/dev/null || true
+# Exclude data dirs if not full deploy
+if [ "$FULL_DEPLOY" != "1" ]; then
+    RSYNC_ARGS="$RSYNC_ARGS --exclude=wiki/"
+    RSYNC_ARGS="$RSYNC_ARGS --exclude=raw/"
+    RSYNC_ARGS="$RSYNC_ARGS --exclude=blog/"
+    RSYNC_ARGS="$RSYNC_ARGS --exclude=config.json"
+    RSYNC_ARGS="$RSYNC_ARGS --exclude=.user.json"
+    RSYNC_ARGS="$RSYNC_ARGS --exclude=.tokens.json"
+    RSYNC_ARGS="$RSYNC_ARGS --exclude=.login_log.json"
+    echo "📦 Deploying code (preserving wiki/, raw/, blog/, config.json)..."
 else
-    echo "⏭️  Skipping wiki/, raw/, blog/ (use --full to deploy those)"
+    echo "📦 Deploying everything..."
 fi
 
-# Don't overwrite production config
-if [ ! -f "$JAIL_ROOT/config.json" ]; then
-    if [ -f "$REPO_DIR/config.json" ]; then
-        cp "$REPO_DIR/config.json" "$JAIL_ROOT/"
-        echo "⚙️  Deployed config.json (update API keys in the jail)"
-    fi
-fi
+# Run rsync
+# Trailing slash on source = sync contents (not the dir itself)
+eval rsync $RSYNC_ARGS "$REPO_DIR/" "$JAIL_ROOT/"
 
 echo ""
 echo "✅ Deploy complete!"
 echo ""
 echo "Next steps:"
 echo "  1. Log into the jail: bastille console Lobotomy"
-echo "  2. Update API keys in config.json if needed"
+if [ "$FULL_DEPLOY" != "1" ]; then
+    echo "  2. Verify config.json has correct API keys"
+fi
 echo "  3. Restart the service: service lobotomy restart"
 echo "     (or: pkill -f 'python3.*serve.py')"
