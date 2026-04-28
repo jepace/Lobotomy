@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Shared LLM agent logic used by both the CLI (wiki.py) and web server (serve.py)."""
 
+import collections
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Generator
@@ -13,7 +15,11 @@ except ImportError:
     OpenAI = None  # checked at call time
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import cfg_get
+from config import cfg_get, cfg_int
+
+# RPM rate-limit tracking (shared across threads)
+_request_times: collections.deque = collections.deque()
+_rpm_lock = threading.Lock()
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WIKI_DIR  = REPO_ROOT / "wiki"
@@ -350,15 +356,63 @@ def orientation_message() -> str:
     return "Current wiki state:\n\n" + "\n\n".join(snippets)
 
 # ---------------------------------------------------------------------------
-# API error classification
+# API error classification & rate limiting
 # ---------------------------------------------------------------------------
 
 def _max_retries() -> int:
-    return int(cfg_get("llm", "max_retries", default=6))
+    return cfg_int("llm", "max_retries", default=6)
+
+
+def _retry_poll_interval() -> int:
+    return cfg_int("llm", "retry_poll_interval", default=300)
+
+
+def _rpm_max() -> int:
+    return cfg_int("llm", "max_rpm", default=0)  # 0 = disabled
+
+
+def _record_request() -> None:
+    with _rpm_lock:
+        _request_times.append(time.monotonic())
+
+
+def _rpm_wait_sync() -> None:
+    """Block (non-streaming) until we're under the configured RPM limit."""
+    limit = _rpm_max()
+    if not limit:
+        return
+    while True:
+        with _rpm_lock:
+            cutoff = time.monotonic() - 60.0
+            while _request_times and _request_times[0] < cutoff:
+                _request_times.popleft()
+            if len(_request_times) < limit:
+                return
+        time.sleep(5)
+
+
+def _rpm_wait_streaming():
+    """Generator: yields a rate-limit event once then sleeps 5s chunks until under limit."""
+    limit = _rpm_max()
+    if not limit:
+        return
+    notified = False
+    while True:
+        with _rpm_lock:
+            cutoff = time.monotonic() - 60.0
+            while _request_times and _request_times[0] < cutoff:
+                _request_times.popleft()
+            if len(_request_times) < limit:
+                return
+        if not notified:
+            yield json.dumps({"type": "retrying", "attempt": 0, "delay": 5, "max": 0,
+                              "msg": "Rate limit reached — waiting for next window…"}) + "\n"
+            notified = True
+        time.sleep(5)
 
 
 def _retry_delay(attempt: int, exc) -> float:
-    """Return seconds to wait before retry attempt (1-based). Respects Retry-After header."""
+    """Seconds to wait before retry (1-based attempt). Respects Retry-After header."""
     base  = float(cfg_get("llm", "retry_base_delay", default=5))
     delay = base * (2.0 ** (attempt - 1))  # 5, 10, 20, 40, 80, 160
     try:
@@ -399,7 +453,7 @@ def _error_message(exc) -> str:
 # ---------------------------------------------------------------------------
 
 def _create(client, messages, system):
-    """client.chat.completions.create with retry on transient errors (non-streaming)."""
+    """Non-streaming create with two-phase retry and RPM awareness."""
     kwargs = dict(
         model=cfg_get("llm", "model") or PROVIDERS.get(
             cfg_get("llm", "provider", "openai").lower(), PROVIDERS["openai"]
@@ -409,13 +463,32 @@ def _create(client, messages, system):
         max_tokens=4096,
     )
     max_r = _max_retries()
+    poll  = _retry_poll_interval()
+
+    # Phase 1: exponential backoff
     for attempt in range(max_r + 1):
+        _rpm_wait_sync()
         try:
-            return client.chat.completions.create(**kwargs)
+            result = client.chat.completions.create(**kwargs)
+            _record_request()
+            return result
         except Exception as e:
-            if not _is_retryable(e) or attempt == max_r:
+            if not _is_retryable(e):
                 raise
-            time.sleep(_retry_delay(attempt + 1, e))
+            if attempt < max_r:
+                time.sleep(_retry_delay(attempt + 1, e))
+
+    # Phase 2: poll every retry_poll_interval until provider recovers
+    while True:
+        time.sleep(poll)
+        _rpm_wait_sync()
+        try:
+            result = client.chat.completions.create(**kwargs)
+            _record_request()
+            return result
+        except Exception as e:
+            if not _is_retryable(e):
+                raise
 
 
 def run_agent_turn(client, model: str, messages: list, system: str) -> list:
@@ -456,37 +529,70 @@ def run_agent_turn(client, model: str, messages: list, system: str) -> list:
 def stream_agent_turn(client, model: str, messages: list, system: str) -> Generator:
     """
     Run one user turn and yield newline-delimited JSON events:
-      {"type": "tool",      "name": "...", "arg": "..."}  — tool being called
-      {"type": "text",      "content": "..."}              — LLM text response
-      {"type": "retrying",  "attempt": N, "delay": S}      — transient error, retrying
-      {"type": "error",     "content": "..."}              — fatal error
-      {"type": "done"}                                      — turn complete
+      {"type": "tool",      "name": "...", "arg": "..."}
+      {"type": "text",      "content": "..."}
+      {"type": "retrying",  "attempt": N, "delay": S, "max": M, ["msg": "..."]}
+      {"type": "error",     "content": "..."}
+      {"type": "done"}
+    Phase 1: exponential backoff (max_retries attempts).
+    Phase 2: poll every retry_poll_interval seconds indefinitely.
     Updates messages in-place so history can be saved after the generator finishes.
     """
     kwargs = dict(
         model=model,
-        messages=None,  # filled each iteration
+        messages=None,
         tools=TOOL_DEFS,
         max_tokens=4096,
     )
     while True:
         kwargs["messages"] = [{"role": "system", "content": system}] + messages
 
-        resp  = None
         max_r = _max_retries()
+        poll  = _retry_poll_interval()
+        resp  = None
+
+        # Phase 1: exponential backoff
         for attempt in range(max_r + 1):
+            yield from _rpm_wait_streaming()
             try:
                 resp = client.chat.completions.create(**kwargs)
+                _record_request()
                 break
             except Exception as e:
-                if not _is_retryable(e) or attempt == max_r:
+                if not _is_retryable(e):
                     yield json.dumps({"type": "error", "content": _error_message(e)}) + "\n"
                     yield json.dumps({"type": "done"}) + "\n"
                     return
+                if attempt == max_r:
+                    break  # exhausted phase 1 — fall through to phase 2
                 delay = _retry_delay(attempt + 1, e)
                 yield json.dumps({"type": "retrying", "attempt": attempt + 1,
                                   "delay": int(delay), "max": max_r}) + "\n"
                 time.sleep(delay)
+
+        # Phase 2: poll indefinitely until provider recovers
+        if resp is None:
+            poll_attempt = 0
+            while True:
+                poll_attempt += 1
+                yield json.dumps({
+                    "type":    "retrying",
+                    "attempt": poll_attempt,
+                    "delay":   poll,
+                    "max":     -1,
+                    "msg":     f"Provider unavailable — retrying in {poll}s (attempt {poll_attempt})",
+                }) + "\n"
+                time.sleep(poll)
+                yield from _rpm_wait_streaming()
+                try:
+                    resp = client.chat.completions.create(**kwargs)
+                    _record_request()
+                    break
+                except Exception as e:
+                    if not _is_retryable(e):
+                        yield json.dumps({"type": "error", "content": _error_message(e)}) + "\n"
+                        yield json.dumps({"type": "done"}) + "\n"
+                        return
 
         msg = resp.choices[0].message
 

@@ -16,7 +16,9 @@
     "model": "gemini-2.5-flash-lite",
     "api_base": "",
     "max_retries": 6,
-    "retry_base_delay": 5
+    "retry_base_delay": 5,
+    "retry_poll_interval": 300,
+    "max_rpm": 15
   },
   "email": {
     "resend_api_key": "",

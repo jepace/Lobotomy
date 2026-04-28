@@ -50,6 +50,8 @@ from config import cfg_get, cfg_bool, cfg_int
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, system_prompt)
+
+BLOG_DIR = REPO_ROOT / "blog"
 from job_queue import JobQueue
 from auth  import (init_auth, authenticate, get_user, update_password, set_verified,
                    create_token, consume_token, record_attempt, is_locked_out,
@@ -101,10 +103,76 @@ def inject_globals():
         active = "tasks"
     elif path.startswith("/inbox"):
         active = "inbox"
+    elif path.startswith("/blog"):
+        active = "blog"
     else:
         active = "chat"
     user = get_user() if session.get("logged_in") else None
     return {"active": active, "current_user": user}
+
+# ---------------------------------------------------------------------------
+# Blog helpers
+# ---------------------------------------------------------------------------
+
+def _parse_frontmatter(text: str) -> tuple:
+    """Return (meta_dict, body_text) from a markdown file with YAML frontmatter."""
+    meta = {}
+    if not text.startswith("---"):
+        return meta, text
+    lines = text.split("\n")
+    end = -1
+    for i, line in enumerate(lines[1:], 1):
+        if line.rstrip() == "---":
+            end = i
+            break
+    if end == -1:
+        return meta, text
+    for line in lines[1:end]:
+        if ":" not in line:
+            continue
+        k, _, v = line.partition(":")
+        k = k.strip()
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+            v = v[1:-1]
+        if v.startswith("[") and v.endswith("]"):
+            inner = v[1:-1]
+            meta[k] = [x.strip().strip('"').strip("'") for x in inner.split(",") if x.strip()]
+        elif v.lower() == "true":
+            meta[k] = True
+        elif v.lower() == "false":
+            meta[k] = False
+        else:
+            meta[k] = v
+    body = "\n".join(lines[end + 1:]).lstrip("\n")
+    return meta, body
+
+
+def _rfc822(date_str: str) -> str:
+    try:
+        d = datetime.date.fromisoformat(str(date_str))
+        return d.strftime("%a, %d %b %Y 00:00:00 +0000")
+    except (ValueError, TypeError):
+        return ""
+
+
+def _blog_posts(published_only: bool = True) -> list:
+    BLOG_DIR.mkdir(parents=True, exist_ok=True)
+    posts = []
+    for f in sorted(BLOG_DIR.glob("*.md"), reverse=True):
+        text = f.read_text(encoding="utf-8")
+        meta, _ = _parse_frontmatter(text)
+        if published_only and not meta.get("published", False):
+            continue
+        posts.append({
+            "slug":      f.stem,
+            "title":     meta.get("title", f.stem),
+            "date":      meta.get("date", ""),
+            "tags":      meta.get("tags", []),
+            "summary":   meta.get("summary", ""),
+            "published": meta.get("published", False),
+        })
+    return posts
 
 # ---------------------------------------------------------------------------
 # Auth routes
@@ -563,6 +631,130 @@ def inbox_delete():
     if p.exists():
         p.unlink()
     return {"ok": True}
+
+# ---------------------------------------------------------------------------
+# Blog routes
+# ---------------------------------------------------------------------------
+
+@app.route("/blog/")
+def blog_index():
+    logged_in = bool(session.get("logged_in"))
+    posts = _blog_posts(published_only=not logged_in)
+    return render_template("blog_index.html", posts=posts)
+
+
+@app.route("/blog/rss.xml")
+def blog_rss():
+    import xml.etree.ElementTree as ET
+    posts = _blog_posts(published_only=True)
+    base  = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
+
+    rss  = ET.Element("rss", attrib={"version": "2.0"})
+    chan = ET.SubElement(rss, "channel")
+    ET.SubElement(chan, "title").text       = "LLM Wiki Blog"
+    ET.SubElement(chan, "link").text        = f"{base}/blog/"
+    ET.SubElement(chan, "description").text = "Posts from the LLM Wiki"
+    ET.SubElement(chan, "language").text    = "en"
+
+    for p in posts[:20]:
+        item = ET.SubElement(chan, "item")
+        ET.SubElement(item, "title").text       = p["title"]
+        ET.SubElement(item, "link").text        = f"{base}/blog/{p['slug']}"
+        ET.SubElement(item, "guid").text        = f"{base}/blog/{p['slug']}"
+        ET.SubElement(item, "pubDate").text     = _rfc822(p["date"])
+        ET.SubElement(item, "description").text = p["summary"]
+
+    xml_str = ET.tostring(rss, encoding="unicode")
+    return Response(
+        '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str,
+        mimetype="application/rss+xml",
+    )
+
+
+@app.route("/blog/new", methods=["GET", "POST"])
+@require_login
+def blog_new():
+    error = None
+    if request.method == "POST":
+        title     = (request.form.get("title")   or "").strip()
+        tags_raw  = (request.form.get("tags")    or "").strip()
+        summary   = (request.form.get("summary") or "").strip()
+        body      = (request.form.get("body")    or "").strip()
+        published = bool(request.form.get("published"))
+        if not title:
+            error = "Title is required."
+        else:
+            today    = datetime.date.today().isoformat()
+            slug     = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+            slug     = f"{today}-{slug}"
+            tag_list = [t.strip() for t in tags_raw.split(",") if t.strip()]
+            tag_str  = "[" + ", ".join(tag_list) + "]" if tag_list else "[]"
+            pub_str  = "true" if published else "false"
+            content  = (
+                f'---\ntitle: "{title}"\ndate: {today}\ntags: {tag_str}\n'
+                f'published: {pub_str}\nsummary: "{summary}"\n---\n\n{body}'
+            )
+            BLOG_DIR.mkdir(parents=True, exist_ok=True)
+            (BLOG_DIR / f"{slug}.md").write_text(content, encoding="utf-8")
+            return redirect(url_for("blog_post", slug=slug))
+    return render_template("blog_new.html", post=None, slug=None, error=error)
+
+
+@app.route("/blog/<slug>/edit", methods=["GET", "POST"])
+@require_login
+def blog_edit(slug):
+    if not re.match(r"^[\w-]+$", slug):
+        abort(404)
+    f = BLOG_DIR / f"{slug}.md"
+    if not f.exists():
+        abort(404)
+    error = None
+    if request.method == "POST":
+        title     = (request.form.get("title")   or "").strip()
+        tags_raw  = (request.form.get("tags")    or "").strip()
+        summary   = (request.form.get("summary") or "").strip()
+        body      = (request.form.get("body")    or "").strip()
+        published = bool(request.form.get("published"))
+        if not title:
+            error = "Title is required."
+        else:
+            orig_meta, _ = _parse_frontmatter(f.read_text(encoding="utf-8"))
+            date     = orig_meta.get("date", datetime.date.today().isoformat())
+            tag_list = [t.strip() for t in tags_raw.split(",") if t.strip()]
+            tag_str  = "[" + ", ".join(tag_list) + "]" if tag_list else "[]"
+            pub_str  = "true" if published else "false"
+            content  = (
+                f'---\ntitle: "{title}"\ndate: {date}\ntags: {tag_str}\n'
+                f'published: {pub_str}\nsummary: "{summary}"\n---\n\n{body}'
+            )
+            f.write_text(content, encoding="utf-8")
+            return redirect(url_for("blog_post", slug=slug))
+    text = f.read_text(encoding="utf-8")
+    meta, body = _parse_frontmatter(text)
+    tags_val   = meta.get("tags", [])
+    post = {
+        "title":     meta.get("title", ""),
+        "tags":      ", ".join(tags_val) if isinstance(tags_val, list) else str(tags_val),
+        "summary":   meta.get("summary", ""),
+        "body":      body,
+        "published": meta.get("published", False),
+    }
+    return render_template("blog_new.html", post=post, slug=slug, error=error)
+
+
+@app.route("/blog/<slug>")
+def blog_post(slug):
+    if not re.match(r"^[\w-]+$", slug):
+        abort(404)
+    f = BLOG_DIR / f"{slug}.md"
+    if not f.exists():
+        abort(404)
+    text = f.read_text(encoding="utf-8")
+    meta, body = _parse_frontmatter(text)
+    if not meta.get("published") and not session.get("logged_in"):
+        abort(404)
+    html = md_lib.markdown(body, extensions=_MD_EXTENSIONS)
+    return render_template("blog_post.html", meta=meta, content=html, slug=slug)
 
 # ---------------------------------------------------------------------------
 # Main
