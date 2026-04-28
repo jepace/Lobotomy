@@ -29,7 +29,7 @@
       --safe-top:    env(safe-area-inset-top, 0px);
     }
     @media (prefers-color-scheme: dark) {
-      :root {
+      :root:not([data-theme="light"]) {
         --bg:        #000000;
         --bg2:       #1c1c1e;
         --bg3:       #2c2c2e;
@@ -43,6 +43,40 @@
         --ai-fg:     #f2f2f7;
         --tool-bg:   #1c1c1e;
       }
+    }
+    :root[data-theme="dark"] {
+      --bg:        #000000;
+      --bg2:       #1c1c1e;
+      --bg3:       #2c2c2e;
+      --text:      #f2f2f7;
+      --text2:     #8e8e93;
+      --accent:    #0a84ff;
+      --border:    #38383a;
+      --warn-bg:   #3a3000;
+      --user-bg:   #0a84ff;
+      --ai-bg:     #2c2c2e;
+      --ai-fg:     #f2f2f7;
+      --tool-bg:   #1c1c1e;
+    }
+    /* theme toggle — fixed above nav bar, top-right corner */
+    .theme-btn {
+      position: fixed;
+      bottom: calc(var(--nav-h) + var(--safe-bottom) + 8px);
+      right: 10px;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      color: var(--text2);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      line-height: 1;
+      -webkit-tap-highlight-color: transparent;
+      z-index: 210;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
@@ -206,6 +240,8 @@
 <body>
   {% block body %}{% endblock %}
 
+  <button class="theme-btn" onclick="cycleTheme()" id="theme-btn" title="Toggle theme" aria-label="Toggle theme"></button>
+
   <nav class="nav">
     {% if current_user %}
     <form method="post" action="/auth/logout" style="display:none" id="logout-form"></form>
@@ -249,5 +285,26 @@
     </a>
     {% endif %}
   </nav>
+  <script>
+  (function() {
+    var ICONS = { light: '☀️', dark: '🌙', system: '⚙️' };
+    var stored = localStorage.getItem('theme') || 'system';
+    function apply(t) {
+      if (t === 'dark')       document.documentElement.setAttribute('data-theme', 'dark');
+      else if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+      else                    document.documentElement.removeAttribute('data-theme');
+      var btn = document.getElementById('theme-btn');
+      if (btn) btn.textContent = ICONS[t];
+    }
+    apply(stored);
+    window.cycleTheme = function() {
+      var order = ['system', 'light', 'dark'];
+      var cur   = localStorage.getItem('theme') || 'system';
+      var next  = order[(order.indexOf(cur) + 1) % order.length];
+      localStorage.setItem('theme', next);
+      apply(next);
+    };
+  })();
+  </script>
 </body>
 </html>
