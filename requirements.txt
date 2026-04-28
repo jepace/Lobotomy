@@ -1,6 +1,5 @@
 flask
 markdown
-openai
-pymupdf
-pypdf
-resend
+# Optional — only needed for PDF ingestion:
+# pypdf       (text-layer PDFs)
+# pymupdf     (image-only PDFs, renders pages as images)

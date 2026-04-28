@@ -205,11 +205,29 @@ def consume_token(token: str, token_type: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _resend_ready() -> bool:
-    try:
-        import resend  # noqa: F401
-        return bool(cfg_get("email", "resend_api_key"))
-    except ImportError:
-        return False
+    return bool(cfg_get("email", "resend_api_key"))
+
+
+def _send_email(to: str, subject: str, html: str) -> None:
+    """Send via Resend API using stdlib urllib — no resend package needed."""
+    import urllib.request, urllib.error
+    data = json.dumps({
+        "from":    _from_addr(),
+        "to":      [to],
+        "subject": subject,
+        "html":    html,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=data,
+        headers={
+            "Authorization": f"Bearer {cfg_get('email', 'resend_api_key')}",
+            "Content-Type":  "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as _:
+        pass  # raises HTTPError on failure
 
 
 def _base_url() -> str:
@@ -221,35 +239,29 @@ def _from_addr() -> str:
 
 
 def send_verification_email(email: str, token: str) -> None:
-    import resend
-    resend.api_key = cfg_get("email", "resend_api_key")
     link = f"{_base_url()}/auth/verify/{token}"
-    resend.Emails.send({
-        "from":    _from_addr(),
-        "to":      [email],
-        "subject": "Verify your wiki account",
-        "html":    (
+    _send_email(
+        email,
+        "Verify your wiki account",
+        (
             f"<p>Click the link below to verify your wiki account:</p>"
             f"<p><a href='{link}'>{link}</a></p>"
             f"<p>This link expires in 24 hours.</p>"
         ),
-    })
+    )
 
 
 def send_reset_email(email: str, token: str) -> None:
-    import resend
-    resend.api_key = cfg_get("email", "resend_api_key")
     link = f"{_base_url()}/auth/reset/{token}"
-    resend.Emails.send({
-        "from":    _from_addr(),
-        "to":      [email],
-        "subject": "Reset your wiki password",
-        "html":    (
+    _send_email(
+        email,
+        "Reset your wiki password",
+        (
             f"<p>Click the link below to reset your wiki password:</p>"
             f"<p><a href='{link}'>{link}</a></p>"
             f"<p>This link expires in 1 hour. If you didn't request this, ignore it.</p>"
         ),
-    })
+    )
 
 
 def maybe_send_verification() -> bool:

@@ -6,13 +6,10 @@ import json
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Generator
-
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None  # checked at call time
 
 sys.path.insert(0, str(Path(__file__).parent))
 from config import cfg_get, cfg_int
@@ -31,11 +28,11 @@ RAW_DIR   = REPO_ROOT / "raw"
 
 PROVIDERS = {
     "gemini": {
-        "base_url":      "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "base_url":      "https://generativelanguage.googleapis.com/v1beta/openai",
         "default_model": "gemini-2.0-flash",
     },
     "openai": {
-        "base_url":      None,
+        "base_url":      "https://api.openai.com/v1",
         "default_model": "gpt-4o-mini",
     },
     "ollama": {
@@ -51,15 +48,14 @@ PROVIDERS = {
 
 
 def get_client_and_model():
-    """Return (OpenAI-compatible client, model_name, error_string_or_None)."""
-    if OpenAI is None:
-        return None, None, "openai package not installed — run: pip install openai"
-
+    """Return (client_dict, model_name, error_string_or_None).
+    client_dict has keys: api_key, endpoint.
+    """
     provider_name = cfg_get("llm", "provider", "openai").lower()
     preset        = PROVIDERS.get(provider_name, PROVIDERS["openai"])
 
     api_key  = cfg_get("llm", "api_key")  or preset.get("api_key", "")
-    base_url = cfg_get("llm", "api_base") or preset.get("base_url")
+    base_url = (cfg_get("llm", "api_base") or preset.get("base_url", "https://api.openai.com/v1")).rstrip("/")
     model    = cfg_get("llm", "model")    or preset["default_model"]
 
     if not api_key:
@@ -68,7 +64,73 @@ def get_client_and_model():
             f"  Set llm.api_key in config.json."
         )
 
-    return OpenAI(api_key=api_key, base_url=base_url), model, None
+    client = {"api_key": api_key, "endpoint": f"{base_url}/chat/completions"}
+    return client, model, None
+
+
+# ---------------------------------------------------------------------------
+# Minimal HTTP client for OpenAI-compatible APIs
+# ---------------------------------------------------------------------------
+
+class _LLMError(Exception):
+    def __init__(self, msg: str, retryable: bool = False, retry_after: float = None):
+        super().__init__(msg)
+        self.retryable   = retryable
+        self.retry_after = retry_after
+
+
+def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
+    """POST payload to an OpenAI-compatible chat/completions endpoint."""
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req  = urllib.request.Request(
+        endpoint,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type":  "application/json",
+            "User-Agent":    "llm-wiki/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = {}
+        try:
+            body = json.loads(e.read().decode("utf-8", errors="replace"))
+        except Exception:
+            pass
+        msg = (
+            body.get("error", {}).get("message", "") if isinstance(body, dict) else ""
+        ) or e.reason or f"HTTP {e.code}"
+        retry_after = None
+        try:
+            ra = e.headers.get("Retry-After")
+            if ra:
+                retry_after = float(ra)
+        except Exception:
+            pass
+        code = e.code
+        if code == 401:
+            raise _LLMError("Authentication failed — check llm.api_key in config.json.")
+        if code == 403:
+            raise _LLMError("Permission denied — API key may lack access to this model.")
+        if code == 404:
+            raise _LLMError("Model not found — check llm.model in config.json.")
+        if code == 400:
+            raise _LLMError(f"Bad request: {msg}")
+        if code == 429:
+            raise _LLMError(f"Rate limited: {msg}", retryable=True, retry_after=retry_after)
+        if code >= 500:
+            raise _LLMError(f"Server error {code}: {msg}", retryable=True)
+        raise _LLMError(f"HTTP {code}: {msg}")
+    except urllib.error.URLError as e:
+        raise _LLMError(f"Connection error: {e.reason}", retryable=True)
+    except TimeoutError:
+        raise _LLMError("Request timed out — provider too slow.", retryable=True)
+    except OSError as e:
+        raise _LLMError(f"Network error: {e}", retryable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +141,7 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
 
 def _read_file(path: str) -> "str | list":
-    """Return a string, or a list of OpenAI content blocks for image/image-only PDF."""
+    """Return a string, or a list of content blocks for image/image-only PDF."""
     p = REPO_ROOT / path
     if not p.exists():
         return f"Error: not found: {path}"
@@ -104,7 +166,6 @@ def _read_image(p) -> list:
 
 def _read_pdf(p) -> "str | list":
     import base64
-    # Try text extraction first (fast, works for PDFs with a text layer)
     try:
         import pypdf
         reader = pypdf.PdfReader(str(p))
@@ -117,7 +178,6 @@ def _read_pdf(p) -> "str | list":
     except Exception:
         pass
 
-    # No text layer — render pages as images for vision
     try:
         import fitz  # pymupdf
     except ImportError:
@@ -125,13 +185,13 @@ def _read_pdf(p) -> "str | list":
 
     doc    = fitz.open(str(p))
     blocks = [{"type": "text", "text": f"PDF '{p.name}' rendered as images ({len(doc)} page(s)):"}]
-    limit  = 20  # avoid overwhelming the context window
+    limit  = 20
     for i, page in enumerate(doc):
         if i >= limit:
             blocks.append({"type": "text", "text": f"(truncated — showing first {limit} of {len(doc)} pages)"})
             break
-        png   = page.get_pixmap(dpi=150).tobytes("png")
-        b64   = base64.b64encode(png).decode()
+        png  = page.get_pixmap(dpi=150).tobytes("png")
+        b64  = base64.b64encode(png).decode()
         blocks.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
     return blocks
 
@@ -164,7 +224,7 @@ def _list_dir(directory: str) -> str:
 
 
 def _fetch_url(url: str) -> str:
-    import urllib.request, urllib.error, urllib.parse
+    import urllib.parse
     from html.parser import HTMLParser
     from http.cookiejar import CookieJar
 
@@ -187,7 +247,7 @@ def _fetch_url(url: str) -> str:
                            "Chrome/124.0.0.0 Safari/537.36",
         "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "identity",  # avoid dealing with gzip in stdlib
+        "Accept-Encoding": "identity",
         "DNT":             "1",
     }
 
@@ -195,9 +255,8 @@ def _fetch_url(url: str) -> str:
     try:
         req  = urllib.request.Request(url, headers=headers)
         with opener.open(req, timeout=15) as resp:
-            status = resp.status
-            ct     = resp.headers.get("Content-Type", "")
-            raw    = resp.read(2_000_000)
+            ct  = resp.headers.get("Content-Type", "")
+            raw = resp.read(2_000_000)
     except urllib.error.HTTPError as e:
         if e.code == 403:
             return (
@@ -415,36 +474,16 @@ def _retry_delay(attempt: int, exc) -> float:
     """Seconds to wait before retry (1-based attempt). Respects Retry-After header."""
     base  = float(cfg_get("llm", "retry_base_delay", default=5))
     delay = base * (2.0 ** (attempt - 1))  # 5, 10, 20, 40, 80, 160
-    try:
-        ra = exc.response.headers.get("retry-after") if exc.response else None
-        if ra:
-            delay = max(delay, float(ra))
-    except Exception:
-        pass
+    if isinstance(exc, _LLMError) and exc.retry_after:
+        delay = max(delay, exc.retry_after)
     return delay
 
 
 def _is_retryable(exc) -> bool:
-    try:
-        from openai import RateLimitError, InternalServerError, APIConnectionError, APITimeoutError
-        return isinstance(exc, (RateLimitError, InternalServerError, APIConnectionError, APITimeoutError))
-    except ImportError:
-        return False
+    return isinstance(exc, _LLMError) and exc.retryable
 
 
 def _error_message(exc) -> str:
-    try:
-        from openai import AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError
-        if isinstance(exc, AuthenticationError):
-            return "Authentication failed — check llm.api_key in config.json."
-        if isinstance(exc, PermissionDeniedError):
-            return "Permission denied — your API key may not have access to this model."
-        if isinstance(exc, NotFoundError):
-            return "Model not found — check llm.model in config.json."
-        if isinstance(exc, BadRequestError):
-            return f"Bad request: {exc.message}"
-    except ImportError:
-        pass
     return str(exc)
 
 
@@ -452,16 +491,16 @@ def _error_message(exc) -> str:
 # Agentic loops
 # ---------------------------------------------------------------------------
 
-def _create(client, messages, system):
+def _create(client: dict, messages: list, system: str) -> dict:
     """Non-streaming create with two-phase retry and RPM awareness."""
-    kwargs = dict(
-        model=cfg_get("llm", "model") or PROVIDERS.get(
-            cfg_get("llm", "provider", "openai").lower(), PROVIDERS["openai"]
-        )["default_model"],
-        messages=[{"role": "system", "content": system}] + messages,
-        tools=TOOL_DEFS,
-        max_tokens=4096,
-    )
+    provider_name = cfg_get("llm", "provider", "openai").lower()
+    model = cfg_get("llm", "model") or PROVIDERS.get(provider_name, PROVIDERS["openai"])["default_model"]
+    payload = {
+        "model":      model,
+        "messages":   [{"role": "system", "content": system}] + messages,
+        "tools":      TOOL_DEFS,
+        "max_tokens": 4096,
+    }
     max_r = _max_retries()
     poll  = _retry_poll_interval()
 
@@ -469,7 +508,7 @@ def _create(client, messages, system):
     for attempt in range(max_r + 1):
         _rpm_wait_sync()
         try:
-            result = client.chat.completions.create(**kwargs)
+            result = _llm_post(client["endpoint"], client["api_key"], payload)
             _record_request()
             return result
         except Exception as e:
@@ -483,7 +522,7 @@ def _create(client, messages, system):
         time.sleep(poll)
         _rpm_wait_sync()
         try:
-            result = client.chat.completions.create(**kwargs)
+            result = _llm_post(client["endpoint"], client["api_key"], payload)
             _record_request()
             return result
         except Exception as e:
@@ -491,42 +530,47 @@ def _create(client, messages, system):
                 raise
 
 
-def run_agent_turn(client, model: str, messages: list, system: str) -> list:
+def run_agent_turn(client: dict, model: str, messages: list, system: str) -> list:
     """Run one user turn to completion (no streaming). Returns updated messages."""
     while True:
         resp = _create(client, messages, system)
-        msg  = resp.choices[0].message
+        msg  = resp["choices"][0]["message"]
 
         stored: dict = {"role": "assistant"}
-        if msg.content:
-            stored["content"] = msg.content
-        if msg.tool_calls:
+        content    = msg.get("content")
+        tool_calls = msg.get("tool_calls") or []
+        if content:
+            stored["content"] = content
+        if tool_calls:
             stored["tool_calls"] = [
                 {
-                    "id":       tc.id,
+                    "id":       tc["id"],
                     "type":     "function",
-                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]},
                 }
-                for tc in msg.tool_calls
+                for tc in tool_calls
             ]
         messages.append(stored)
 
-        if not msg.tool_calls:
+        if not tool_calls:
             break
 
-        for tc in msg.tool_calls:
-            fn = TOOL_FNS.get(tc.function.name)
+        for tc in tool_calls:
+            fn = TOOL_FNS.get(tc["function"]["name"])
             try:
-                args   = json.loads(tc.function.arguments)
-                result = fn(args) if fn else f"Unknown tool: {tc.function.name}"
+                args   = json.loads(tc["function"]["arguments"])
+                result = fn(args) if fn else f"Unknown tool: {tc['function']['name']}"
             except Exception as e:
                 result = f"Error: {e}"
-            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+            # Tool content must be a string for maximum provider compatibility
+            if not isinstance(result, str):
+                result = json.dumps(result)
+            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
 
     return messages
 
 
-def stream_agent_turn(client, model: str, messages: list, system: str) -> Generator:
+def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> Generator:
     """
     Run one user turn and yield newline-delimited JSON events:
       {"type": "tool",      "name": "...", "arg": "..."}
@@ -538,14 +582,17 @@ def stream_agent_turn(client, model: str, messages: list, system: str) -> Genera
     Phase 2: poll every retry_poll_interval seconds indefinitely.
     Updates messages in-place so history can be saved after the generator finishes.
     """
-    kwargs = dict(
-        model=model,
-        messages=None,
-        tools=TOOL_DEFS,
-        max_tokens=4096,
-    )
+    provider_name = cfg_get("llm", "provider", "openai").lower()
+    resolved_model = model or PROVIDERS.get(provider_name, PROVIDERS["openai"])["default_model"]
+    payload_base = {
+        "model":      resolved_model,
+        "tools":      TOOL_DEFS,
+        "max_tokens": 4096,
+    }
+
     while True:
-        kwargs["messages"] = [{"role": "system", "content": system}] + messages
+        payload = dict(payload_base)
+        payload["messages"] = [{"role": "system", "content": system}] + messages
 
         max_r = _max_retries()
         poll  = _retry_poll_interval()
@@ -555,7 +602,7 @@ def stream_agent_turn(client, model: str, messages: list, system: str) -> Genera
         for attempt in range(max_r + 1):
             yield from _rpm_wait_streaming()
             try:
-                resp = client.chat.completions.create(**kwargs)
+                resp = _llm_post(client["endpoint"], client["api_key"], payload)
                 _record_request()
                 break
             except Exception as e:
@@ -585,7 +632,7 @@ def stream_agent_turn(client, model: str, messages: list, system: str) -> Genera
                 time.sleep(poll)
                 yield from _rpm_wait_streaming()
                 try:
-                    resp = client.chat.completions.create(**kwargs)
+                    resp = _llm_post(client["endpoint"], client["api_key"], payload)
                     _record_request()
                     break
                 except Exception as e:
@@ -594,39 +641,43 @@ def stream_agent_turn(client, model: str, messages: list, system: str) -> Genera
                         yield json.dumps({"type": "done"}) + "\n"
                         return
 
-        msg = resp.choices[0].message
+        msg        = resp["choices"][0]["message"]
+        content    = msg.get("content")
+        tool_calls = msg.get("tool_calls") or []
 
         stored: dict = {"role": "assistant"}
-        if msg.content:
-            stored["content"] = msg.content
-        if msg.tool_calls:
+        if content:
+            stored["content"] = content
+        if tool_calls:
             stored["tool_calls"] = [
                 {
-                    "id":       tc.id,
+                    "id":       tc["id"],
                     "type":     "function",
-                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]},
                 }
-                for tc in msg.tool_calls
+                for tc in tool_calls
             ]
         messages.append(stored)
 
-        if msg.content:
-            yield json.dumps({"type": "text", "content": msg.content}) + "\n"
+        if content:
+            yield json.dumps({"type": "text", "content": content}) + "\n"
 
-        if not msg.tool_calls:
+        if not tool_calls:
             break
 
-        for tc in msg.tool_calls:
-            fn = TOOL_FNS.get(tc.function.name)
+        for tc in tool_calls:
+            fn = TOOL_FNS.get(tc["function"]["name"])
             try:
-                args        = json.loads(tc.function.arguments)
+                args        = json.loads(tc["function"]["arguments"])
                 arg_preview = str(list(args.values())[0])[:80] if args else ""
-                result      = fn(args) if fn else f"Unknown tool: {tc.function.name}"
+                result      = fn(args) if fn else f"Unknown tool: {tc['function']['name']}"
             except Exception as e:
                 arg_preview = ""
                 result      = f"Error: {e}"
 
-            yield json.dumps({"type": "tool", "name": tc.function.name, "arg": arg_preview}) + "\n"
-            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+            yield json.dumps({"type": "tool", "name": tc["function"]["name"], "arg": arg_preview}) + "\n"
+            if not isinstance(result, str):
+                result = json.dumps(result)
+            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
 
     yield json.dumps({"type": "done"}) + "\n"
