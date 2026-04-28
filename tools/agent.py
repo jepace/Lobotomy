@@ -165,7 +165,9 @@ def _read_image(p) -> list:
 
 
 def _read_pdf(p) -> "str | list":
-    import base64
+    import base64, shutil, subprocess, tempfile
+
+    # 1. pypdf — pure Python, handles most text-layer PDFs
     try:
         import pypdf
         reader = pypdf.PdfReader(str(p))
@@ -178,22 +180,46 @@ def _read_pdf(p) -> "str | list":
     except Exception:
         pass
 
-    try:
-        import fitz  # pymupdf
-    except ImportError:
-        return "Error: PDF has no text layer and pymupdf is not installed (pip install pymupdf)"
+    # 2. pdftotext (poppler) — better text extraction for some PDFs
+    if shutil.which("pdftotext"):
+        try:
+            result = subprocess.run(
+                ["pdftotext", "-layout", str(p), "-"],
+                capture_output=True, timeout=30,
+            )
+            text = result.stdout.decode("utf-8", errors="replace").strip()
+            if text:
+                return text
+        except Exception:
+            pass
 
-    doc    = fitz.open(str(p))
-    blocks = [{"type": "text", "text": f"PDF '{p.name}' rendered as images ({len(doc)} page(s)):"}]
-    limit  = 20
-    for i, page in enumerate(doc):
-        if i >= limit:
-            blocks.append({"type": "text", "text": f"(truncated — showing first {limit} of {len(doc)} pages)"})
-            break
-        png  = page.get_pixmap(dpi=150).tobytes("png")
-        b64  = base64.b64encode(png).decode()
-        blocks.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
-    return blocks
+    # 3. pdftoppm (poppler) — render pages as images for vision
+    if shutil.which("pdftoppm"):
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                subprocess.run(
+                    ["pdftoppm", "-png", "-r", "150", "-l", "20", str(p),
+                     f"{tmp}/page"],
+                    capture_output=True, timeout=60, check=True,
+                )
+                png_files = sorted(Path(tmp).glob("page-*.png"))
+                if not png_files:
+                    png_files = sorted(Path(tmp).glob("page*.png"))
+                if png_files:
+                    blocks = [{"type": "text", "text":
+                               f"PDF '{p.name}' rendered as images ({len(png_files)} page(s)):"}]
+                    for i, png_path in enumerate(png_files[:20]):
+                        b64 = base64.b64encode(png_path.read_bytes()).decode()
+                        blocks.append({"type": "image_url",
+                                       "image_url": {"url": f"data:image/png;base64,{b64}"}})
+                    return blocks
+        except Exception:
+            pass
+
+    return (
+        f"Could not extract text from '{p.name}'. "
+        "Install poppler for full PDF support: pkg install poppler"
+    )
 
 
 def _write_file(path: str, content: str) -> str:

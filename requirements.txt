@@ -1,5 +1,5 @@
 flask
 markdown
-# Optional — only needed for PDF ingestion:
-# pypdf       (text-layer PDFs)
-# pymupdf     (image-only PDFs, renders pages as images)
+# Optional — for PDF ingestion:
+# pypdf           (pip install pypdf)   — pure-Python text extraction
+# pkg install poppler                   — pdftotext + pdftoppm (image PDFs)
