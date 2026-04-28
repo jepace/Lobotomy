@@ -53,6 +53,7 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
 
 BLOG_DIR = REPO_ROOT / "blog"
 from job_queue import JobQueue
+from task_manager import read_tasks, write_tasks, get_all_contexts, get_all_projects
 from auth  import (init_auth, authenticate, get_user, update_password, set_verified,
                    create_token, consume_token, record_attempt, is_locked_out,
                    send_verification_email, send_reset_email,
@@ -566,12 +567,11 @@ def wiki_page(page_path):
 @app.route("/tasks")
 @require_login
 def tasks():
-    all_tasks = parse_tasks()
-    sections: dict = {}
-    for t in all_tasks:
-        sections.setdefault(t["section"], []).append(t)
-    return render_template("tasks.html", sections=sections,
-                           today=datetime.date.today().isoformat())
+    tasks_list = read_tasks()
+    tasks_list.sort(key=lambda t: t.due or "9999-12-31")
+    return render_template("tasks_view.html", tasks=tasks_list,
+                           all_contexts=get_all_contexts(),
+                           all_projects=get_all_projects())
 
 
 @app.route("/tasks/toggle", methods=["POST"])
@@ -594,6 +594,79 @@ def tasks_add():
     if not text:
         return {"error": "Empty task"}, 400
     _add_task(text, section)
+    return {"ok": True}
+
+
+@app.route("/tasks/update", methods=["POST"])
+@require_login
+def tasks_update():
+    data = request.get_json(silent=True) or {}
+    task_id = data.get("task_id")
+    field = data.get("field")
+    value = data.get("value", "").strip()
+
+    if task_id is None or field is None:
+        return {"error": "missing task_id or field"}, 400
+
+    tasks_list = read_tasks()
+    if not (0 <= task_id < len(tasks_list)):
+        return {"error": "task not found"}, 404
+
+    task = tasks_list[task_id]
+
+    if field == "description":
+        task.description = value
+    elif field == "context":
+        task.set_context(value if value else None)
+    elif field == "due":
+        task.set_due(value if value else None)
+    elif field == "priority":
+        task.set_priority(value if value else None)
+    elif field == "project":
+        task.set_project(value if value else None)
+    elif field == "notes":
+        task.set_notes(value)
+    else:
+        return {"error": "unknown field"}, 400
+
+    write_tasks(tasks_list)
+    return {"ok": True}
+
+
+@app.route("/tasks/bulk-update", methods=["POST"])
+@require_login
+def tasks_bulk_update():
+    data = request.get_json(silent=True) or {}
+    action = data.get("action")
+    task_ids = data.get("task_ids", [])
+    value = data.get("value", "").strip()
+
+    if action is None:
+        return {"error": "missing action"}, 400
+
+    tasks_list = read_tasks()
+
+    for task_id in task_ids:
+        if not (0 <= task_id < len(tasks_list)):
+            continue
+
+        task = tasks_list[task_id]
+
+        if action == "set-priority":
+            task.set_priority(value if value else None)
+        elif action == "set-context":
+            task.set_context(value if value else None)
+        elif action == "set-due":
+            task.set_due(value if value else None)
+        elif action == "set-project":
+            task.set_project(value if value else None)
+        elif action == "delete":
+            task.description = "[DELETED]"
+            task.complete = True
+        else:
+            return {"error": "unknown action"}, 400
+
+    write_tasks(tasks_list)
     return {"ok": True}
 
 

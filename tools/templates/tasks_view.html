@@ -1,0 +1,432 @@
+{% extends "base.html" %}
+
+{% block title %}Tasks — Lobotomy{% endblock %}
+
+{% block head %}
+<style>
+  .tasks-container { padding: 16px; max-width: 1200px; }
+  .tasks-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .toolbar-left { display: flex; gap: 10px; align-items: center; }
+  .toolbar-right { display: flex; gap: 10px; align-items: center; }
+  .show-completed {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 14px;
+  }
+  .show-completed input { cursor: pointer; }
+  .bulk-menu {
+    position: relative;
+    display: inline-block;
+  }
+  .bulk-menu-btn {
+    padding: 8px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .bulk-menu-dropdown {
+    display: none;
+    position: absolute;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    z-index: 100;
+    min-width: 140px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+  }
+  .bulk-menu-dropdown.active { display: block; }
+  .bulk-menu-item {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .bulk-menu-item:last-child { border-bottom: none; }
+  .bulk-menu-item:hover { background: var(--bg3); }
+
+  .tasks-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    margin-bottom: 20px;
+  }
+  .tasks-table th {
+    background: var(--bg2);
+    padding: 10px;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--text2);
+  }
+  .tasks-table td {
+    padding: 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .tasks-table tr:hover { background: var(--bg2); }
+  .task-row.completed { opacity: 0.6; }
+  .task-row.completed .task-name { text-decoration: line-through; }
+
+  .task-select { width: 20px; height: 20px; cursor: pointer; }
+  .task-name { font-weight: 500; }
+  .task-name.editable { cursor: pointer; }
+  .task-name.editable:hover { color: var(--accent); }
+
+  .editable-cell {
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 4px;
+  }
+  .editable-cell:hover { background: var(--bg3); }
+  .editable-cell.empty { color: var(--text2); }
+
+  .inline-edit { display: none; }
+  .inline-edit.active { display: block; }
+  .inline-edit input,
+  .inline-edit select {
+    width: 100%;
+    padding: 6px;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .inline-edit-buttons {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .inline-edit-buttons button {
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+  }
+  .inline-edit-buttons .save { background: var(--success); color: white; }
+  .inline-edit-buttons .cancel { background: var(--bg3); color: var(--text); }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text2);
+  }
+  .empty-state-icon { font-size: 48px; margin-bottom: 10px; }
+
+  .add-task-form {
+    margin-bottom: 20px;
+    padding: 14px;
+    background: var(--bg2);
+    border-radius: 10px;
+  }
+  .add-task-form input {
+    margin-bottom: 10px;
+  }
+  .add-task-form .form-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .add-task-form .form-row > * { flex: 1; }
+  .add-task-form button {
+    background: var(--accent);
+    color: white;
+    padding: 10px 16px;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="page">
+  <div class="tasks-container">
+    <h1>Tasks</h1>
+
+    <!-- Toolbar -->
+    <div class="tasks-toolbar">
+      <div class="toolbar-left">
+        <label class="show-completed">
+          <input type="checkbox" id="show-completed-checkbox">
+          Show completed
+        </label>
+      </div>
+      <div class="toolbar-right">
+        <div class="bulk-menu">
+          <button class="bulk-menu-btn" id="bulk-menu-btn" style="display: none;">
+            ⋯ Bulk edit
+          </button>
+          <div class="bulk-menu-dropdown" id="bulk-menu-dropdown">
+            <div class="bulk-menu-item" data-action="set-priority">Set priority</div>
+            <div class="bulk-menu-item" data-action="set-context">Set context</div>
+            <div class="bulk-menu-item" data-action="set-due">Set due date</div>
+            <div class="bulk-menu-item" data-action="set-project">Set project</div>
+            <div class="bulk-menu-item" data-action="delete">Delete</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% if tasks %}
+    <!-- Task table -->
+    <table class="tasks-table">
+      <thead>
+        <tr>
+          <th style="width: 30px;"><input type="checkbox" id="select-all-checkbox"></th>
+          <th>Task</th>
+          <th style="width: 100px;">Context</th>
+          <th style="width: 100px;">Due</th>
+          <th style="width: 80px;">Priority</th>
+          <th style="width: 120px;">Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for task in tasks %}
+        <tr class="task-row {% if task.complete %}completed{% endif %}" data-task-id="{{ loop.index0 }}">
+          <td><input type="checkbox" class="task-select" data-task-id="{{ loop.index0 }}"></td>
+          <td>
+            <div class="task-name editable" data-task-id="{{ loop.index0 }}" data-field="description">
+              {{ task.description }}
+            </div>
+            <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="description">
+              <input type="text" value="{{ task.description }}">
+              <div class="inline-edit-buttons">
+                <button class="save">Save</button>
+                <button class="cancel">Cancel</button>
+              </div>
+            </div>
+          </td>
+          <td>
+            <div class="editable-cell {% if not task.context %}empty{% endif %}" data-task-id="{{ loop.index0 }}" data-field="context">
+              {{ task.context or "—" }}
+            </div>
+            <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="context">
+              <select>
+                <option value="">none</option>
+                {% for ctx in all_contexts %}
+                  <option value="{{ ctx }}" {% if task.context == ctx %}selected{% endif %}>{{ ctx }}</option>
+                {% endfor %}
+              </select>
+              <div class="inline-edit-buttons">
+                <button class="save">Save</button>
+                <button class="cancel">Cancel</button>
+              </div>
+            </div>
+          </td>
+          <td>
+            <div class="editable-cell {% if not task.due %}empty{% endif %}" data-task-id="{{ loop.index0 }}" data-field="due">
+              {{ task.due or "—" }}
+            </div>
+            <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="due">
+              <input type="date" value="{{ task.due or '' }}">
+              <div class="inline-edit-buttons">
+                <button class="save">Save</button>
+                <button class="cancel">Cancel</button>
+              </div>
+            </div>
+          </td>
+          <td>
+            <div class="editable-cell {% if not task.priority %}empty{% endif %}" data-task-id="{{ loop.index0 }}" data-field="priority">
+              {{ task.priority or "—" }}
+            </div>
+            <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="priority">
+              <select>
+                <option value="">none</option>
+                <option value="top" {% if task.priority == "top" %}selected{% endif %}>top</option>
+                <option value="high" {% if task.priority == "high" %}selected{% endif %}>high</option>
+                <option value="medium" {% if task.priority == "medium" %}selected{% endif %}>medium</option>
+                <option value="low" {% if task.priority == "low" %}selected{% endif %}>low</option>
+              </select>
+              <div class="inline-edit-buttons">
+                <button class="save">Save</button>
+                <button class="cancel">Cancel</button>
+              </div>
+            </div>
+          </td>
+          <td>
+            <div class="editable-cell {% if not task.notes %}empty{% endif %}" data-task-id="{{ loop.index0 }}" data-field="notes">
+              {{ task.notes[:40] or "—" }}{% if task.notes|length > 40 %}...{% endif %}
+            </div>
+            <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="notes">
+              <textarea style="font-size: 13px; min-height: 80px;">{{ task.notes }}</textarea>
+              <div class="inline-edit-buttons">
+                <button class="save">Save</button>
+                <button class="cancel">Cancel</button>
+              </div>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-state-icon">📝</div>
+      <p>No tasks yet. Add one to get started.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+  const showCompletedCheckbox = document.getElementById('show-completed-checkbox');
+  const selectAllCheckbox = document.getElementById('select-all-checkbox');
+  const bulkMenuBtn = document.getElementById('bulk-menu-btn');
+  const bulkMenuDropdown = document.getElementById('bulk-menu-dropdown');
+  const taskSelects = document.querySelectorAll('.task-select');
+  const taskRows = document.querySelectorAll('.task-row');
+  const editableCells = document.querySelectorAll('.editable-cell, .task-name.editable');
+
+  // Show/hide completed tasks
+  showCompletedCheckbox.addEventListener('change', () => {
+    taskRows.forEach(row => {
+      if (row.classList.contains('completed') && !showCompletedCheckbox.checked) {
+        row.style.display = 'none';
+      } else {
+        row.style.display = '';
+      }
+    });
+    localStorage.setItem('tasks-show-completed', showCompletedCheckbox.checked);
+  });
+
+  // Restore show-completed preference
+  const savedShowCompleted = localStorage.getItem('tasks-show-completed') === 'true';
+  showCompletedCheckbox.checked = savedShowCompleted;
+  showCompletedCheckbox.dispatchEvent(new Event('change'));
+
+  // Select all checkbox
+  selectAllCheckbox.addEventListener('change', () => {
+    taskSelects.forEach(checkbox => {
+      checkbox.checked = selectAllCheckbox.checked;
+    });
+    updateBulkMenu();
+  });
+
+  // Individual task selection
+  taskSelects.forEach(checkbox => {
+    checkbox.addEventListener('change', updateBulkMenu);
+  });
+
+  function updateBulkMenu() {
+    const selected = document.querySelectorAll('.task-select:checked').length;
+    bulkMenuBtn.style.display = selected > 0 ? 'block' : 'none';
+    selectAllCheckbox.checked = selected === taskSelects.length;
+  }
+
+  // Bulk menu items
+  document.querySelectorAll('.bulk-menu-item').forEach(item => {
+    item.addEventListener('click', async (e) => {
+      const action = e.target.dataset.action;
+      const selected = Array.from(document.querySelectorAll('.task-select:checked')).map(cb => {
+        return parseInt(cb.dataset.taskId);
+      });
+
+      if (action === 'delete') {
+        if (confirm(`Delete ${selected.length} task(s)?`)) {
+          await bulk_action('delete', selected, null);
+        }
+      } else {
+        const match = action.match(/^set-(.+)$/);
+        if (match) {
+          const field = match[1];
+          const value = prompt(`Enter new ${field}:`);
+          if (value !== null) {
+            await bulk_action('set-' + field, selected, value);
+          }
+        }
+      }
+      bulkMenuDropdown.classList.remove('active');
+    });
+  });
+
+  bulkMenuBtn.addEventListener('click', () => {
+    bulkMenuDropdown.classList.toggle('active');
+  });
+
+  // Close menu when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.bulk-menu')) {
+      bulkMenuDropdown.classList.remove('active');
+    }
+  });
+
+  // Inline editing
+  editableCells.forEach(cell => {
+    cell.addEventListener('click', () => {
+      const taskId = cell.dataset.taskId;
+      const field = cell.dataset.field;
+      const editDiv = document.querySelector(`.inline-edit[data-task-id="${taskId}"][data-field="${field}"]`);
+
+      if (editDiv) {
+        cell.style.display = 'none';
+        editDiv.classList.add('active');
+
+        const saveBtn = editDiv.querySelector('.save');
+        const cancelBtn = editDiv.querySelector('.cancel');
+
+        saveBtn.addEventListener('click', async () => {
+          const input = editDiv.querySelector('input, textarea, select');
+          const newValue = input.value;
+          await save_task(taskId, field, newValue);
+          editDiv.classList.remove('active');
+          cell.style.display = '';
+          location.reload();
+        });
+
+        cancelBtn.addEventListener('click', () => {
+          editDiv.classList.remove('active');
+          cell.style.display = '';
+        });
+
+        const input = editDiv.querySelector('input, textarea, select');
+        input.focus();
+      }
+    });
+  });
+
+  async function save_task(taskId, field, value) {
+    try {
+      const response = await fetch('/tasks/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_id: parseInt(taskId), field, value })
+      });
+      if (!response.ok) alert('Error saving task');
+    } catch (err) {
+      alert('Error: ' + err);
+    }
+  }
+
+  async function bulk_action(action, taskIds, value) {
+    try {
+      const response = await fetch('/tasks/bulk-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, task_ids: taskIds, value })
+      });
+      if (response.ok) location.reload();
+      else alert('Error performing bulk action');
+    } catch (err) {
+      alert('Error: ' + err);
+    }
+  }
+</script>
+
+{% endblock %}
