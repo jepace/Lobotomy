@@ -83,6 +83,16 @@ def _clear_config_password() -> None:
         print(f"[wiki] Warning: could not clear password from config.json: {e}")
 
 
+def _print_verify_link(email: str) -> None:
+    """Print a console verification link — fallback when email delivery fails."""
+    base = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
+    try:
+        token = create_token("verify", hours=24 * 7)
+        print(f"[wiki] Verify '{email}' by visiting: {base}/auth/verify/{token}")
+    except Exception:
+        pass
+
+
 def init_auth() -> None:
     """Provision the admin account from config.json if it doesn't exist yet."""
     email    = cfg_get("admin", "email").strip().lower()
@@ -92,22 +102,38 @@ def init_auth() -> None:
         return
 
     if _USER_FILE.exists():
-        # Account already provisioned — erase any leftover plaintext and return.
         _clear_config_password()
+        # Warn on every restart if the account is still unverified.
+        user = get_user()
+        if user and not user.get("verified"):
+            print(f"[wiki] WARNING: account '{user['email']}' is not verified — login will fail.")
+            _print_verify_link(user["email"])
         return
 
-    verified = not _resend_ready()
+    # Create new account (unverified until we confirm email works)
     _write(_USER_FILE, {
         "email":      email,
         "pw_hash":    _hash(password),
-        "verified":   verified,
+        "verified":   False,
         "created_at": _now_iso(),
     })
     _clear_config_password()
-    if verified:
+
+    if not _resend_ready():
+        set_verified()
         print(f"[wiki] Admin account created for {email} (auto-verified — Resend not configured).")
-    else:
-        print(f"[wiki] Admin account created for {email}. Check your email to verify.")
+        return
+
+    # Try to send verification email; auto-verify on failure so user isn't locked out.
+    try:
+        token = create_token("verify", hours=24 * 7)
+        send_verification_email(email, token)
+        print(f"[wiki] Admin account created for {email}. Verification email sent.")
+    except Exception as e:
+        set_verified()
+        print(f"[wiki] Admin account created for {email}.")
+        print(f"[wiki] WARNING: verification email failed: {e}")
+        print(f"[wiki] Account auto-verified — fix email config to require it in future.")
 
 
 def get_user() -> dict | None:
@@ -242,8 +268,12 @@ def _send_email(to: str, subject: str, html: str) -> None:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=15) as _:
-        pass  # raises HTTPError on failure
+    try:
+        with urllib.request.urlopen(req, timeout=15) as _:
+            pass
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Resend API error {e.code}: {body}")
 
 
 def _base_url() -> str:

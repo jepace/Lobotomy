@@ -194,7 +194,10 @@ def auth_login():
             session["logged_in"]  = True
             session.permanent     = True
             app.permanent_session_lifetime = datetime.timedelta(days=30)
-            next_url = request.args.get("next") or url_for("index")
+            next_url = request.args.get("next") or ""
+            # Only follow safe relative paths (no scheme, no host, no encoded ?)
+            if not next_url.startswith("/") or "//" in next_url or "%3" in next_url.lower():
+                next_url = url_for("index")
             return redirect(next_url)
         error = msg
 
