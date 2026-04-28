@@ -3,6 +3,7 @@
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Generator
 
@@ -349,19 +350,76 @@ def orientation_message() -> str:
     return "Current wiki state:\n\n" + "\n\n".join(snippets)
 
 # ---------------------------------------------------------------------------
+# API error classification
+# ---------------------------------------------------------------------------
+
+_MAX_RETRIES = 4  # delays: 2s, 4s, 8s, 16s
+
+
+def _retry_delay(attempt: int, exc) -> float:
+    """Return seconds to wait before retry attempt (1-based). Respects Retry-After header."""
+    delay = 2.0 ** attempt  # 2, 4, 8, 16
+    try:
+        ra = exc.response.headers.get("retry-after") if exc.response else None
+        if ra:
+            delay = max(delay, float(ra))
+    except Exception:
+        pass
+    return delay
+
+
+def _is_retryable(exc) -> bool:
+    try:
+        from openai import RateLimitError, InternalServerError, APIConnectionError, APITimeoutError
+        return isinstance(exc, (RateLimitError, InternalServerError, APIConnectionError, APITimeoutError))
+    except ImportError:
+        return False
+
+
+def _error_message(exc) -> str:
+    try:
+        from openai import AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError
+        if isinstance(exc, AuthenticationError):
+            return "Authentication failed — check llm.api_key in config.json."
+        if isinstance(exc, PermissionDeniedError):
+            return "Permission denied — your API key may not have access to this model."
+        if isinstance(exc, NotFoundError):
+            return "Model not found — check llm.model in config.json."
+        if isinstance(exc, BadRequestError):
+            return f"Bad request: {exc.message}"
+    except ImportError:
+        pass
+    return str(exc)
+
+
+# ---------------------------------------------------------------------------
 # Agentic loops
 # ---------------------------------------------------------------------------
+
+def _create(client, messages, system):
+    """client.chat.completions.create with retry on transient errors (non-streaming)."""
+    kwargs = dict(
+        model=cfg_get("llm", "model") or PROVIDERS.get(
+            cfg_get("llm", "provider", "openai").lower(), PROVIDERS["openai"]
+        )["default_model"],
+        messages=[{"role": "system", "content": system}] + messages,
+        tools=TOOL_DEFS,
+        max_tokens=4096,
+    )
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except Exception as e:
+            if not _is_retryable(e) or attempt == _MAX_RETRIES:
+                raise
+            time.sleep(_retry_delay(attempt + 1, e))
+
 
 def run_agent_turn(client, model: str, messages: list, system: str) -> list:
     """Run one user turn to completion (no streaming). Returns updated messages."""
     while True:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "system", "content": system}] + messages,
-            tools=TOOL_DEFS,
-            max_tokens=4096,
-        )
-        msg = resp.choices[0].message
+        resp = _create(client, messages, system)
+        msg  = resp.choices[0].message
 
         stored: dict = {"role": "assistant"}
         if msg.content:
@@ -387,7 +445,6 @@ def run_agent_turn(client, model: str, messages: list, system: str) -> list:
                 result = fn(args) if fn else f"Unknown tool: {tc.function.name}"
             except Exception as e:
                 result = f"Error: {e}"
-            # result may be a str or a list of content blocks (e.g. rendered PDF pages)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     return messages
@@ -396,19 +453,36 @@ def run_agent_turn(client, model: str, messages: list, system: str) -> list:
 def stream_agent_turn(client, model: str, messages: list, system: str) -> Generator:
     """
     Run one user turn and yield newline-delimited JSON events:
-      {"type": "tool",  "name": "...", "arg": "..."}   — tool being called
-      {"type": "text",  "content": "..."}               — LLM text response
-      {"type": "error", "content": "..."}               — error
-      {"type": "done"}                                   — turn complete
+      {"type": "tool",      "name": "...", "arg": "..."}  — tool being called
+      {"type": "text",      "content": "..."}              — LLM text response
+      {"type": "retrying",  "attempt": N, "delay": S}      — transient error, retrying
+      {"type": "error",     "content": "..."}              — fatal error
+      {"type": "done"}                                      — turn complete
     Updates messages in-place so history can be saved after the generator finishes.
     """
+    kwargs = dict(
+        model=model,
+        messages=None,  # filled each iteration
+        tools=TOOL_DEFS,
+        max_tokens=4096,
+    )
     while True:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "system", "content": system}] + messages,
-            tools=TOOL_DEFS,
-            max_tokens=4096,
-        )
+        kwargs["messages"] = [{"role": "system", "content": system}] + messages
+
+        resp = None
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                resp = client.chat.completions.create(**kwargs)
+                break
+            except Exception as e:
+                if not _is_retryable(e) or attempt == _MAX_RETRIES:
+                    yield json.dumps({"type": "error", "content": _error_message(e)}) + "\n"
+                    yield json.dumps({"type": "done"}) + "\n"
+                    return
+                delay = _retry_delay(attempt + 1, e)
+                yield json.dumps({"type": "retrying", "attempt": attempt + 1, "delay": int(delay)}) + "\n"
+                time.sleep(delay)
+
         msg = resp.choices[0].message
 
         stored: dict = {"role": "assistant"}
@@ -442,7 +516,6 @@ def stream_agent_turn(client, model: str, messages: list, system: str) -> Genera
                 result      = f"Error: {e}"
 
             yield json.dumps({"type": "tool", "name": tc.function.name, "arg": arg_preview}) + "\n"
-            # result may be a str or a list of content blocks (e.g. rendered PDF pages)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     yield json.dumps({"type": "done"}) + "\n"
