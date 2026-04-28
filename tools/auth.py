@@ -70,17 +70,32 @@ def _verify(password: str, stored_hex: str) -> bool:
 # User account  (single user, stored in wiki/.user.json)
 # ---------------------------------------------------------------------------
 
+def _clear_config_password() -> None:
+    """Erase plaintext password from config.json. Called after hashing it into .user.json."""
+    config_file = REPO_ROOT / "config.json"
+    try:
+        data = json.loads(config_file.read_text(encoding="utf-8"))
+        if data.get("admin", {}).get("password"):
+            data["admin"]["password"] = ""
+            config_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            print("[wiki] Plaintext password erased from config.json (hash stored in wiki/.user.json).")
+    except Exception as e:
+        print(f"[wiki] Warning: could not clear password from config.json: {e}")
+
+
 def init_auth() -> None:
     """Provision the admin account from config.json if it doesn't exist yet."""
     email    = cfg_get("admin", "email").strip().lower()
     password = cfg_get("admin", "password").strip()
+
     if not email or not password:
         return
 
     if _USER_FILE.exists():
-        return  # already provisioned
+        # Account already provisioned — erase any leftover plaintext and return.
+        _clear_config_password()
+        return
 
-    # If Resend is configured, require email verification; otherwise auto-verify.
     verified = not _resend_ready()
     _write(_USER_FILE, {
         "email":      email,
@@ -88,6 +103,7 @@ def init_auth() -> None:
         "verified":   verified,
         "created_at": _now_iso(),
     })
+    _clear_config_password()
     if verified:
         print(f"[wiki] Admin account created for {email} (auto-verified — Resend not configured).")
     else:
