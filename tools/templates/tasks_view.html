@@ -159,6 +159,28 @@
   <div class="tasks-container">
     <h1>Tasks</h1>
 
+    <!-- Quick add form -->
+    <div class="add-task-form">
+      <input type="text" id="task-input" placeholder="Add a new task..." style="margin-bottom: 10px;">
+      <div class="form-row">
+        <select id="context-input">
+          <option value="">Context (optional)</option>
+          {% for ctx in all_contexts %}
+            <option value="{{ ctx }}">{{ ctx }}</option>
+          {% endfor %}
+        </select>
+        <input type="date" id="due-input" placeholder="Due date">
+        <select id="priority-input">
+          <option value="">Priority (optional)</option>
+          <option value="top">Top</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
+      <button onclick="add_task()">+ Add Task</button>
+    </div>
+
     <!-- Toolbar -->
     <div class="tasks-toolbar">
       <div class="toolbar-left">
@@ -427,6 +449,49 @@
       alert('Error: ' + err);
     }
   }
+
+  async function add_task() {
+    const text = document.getElementById('task-input').value.trim();
+    const context = document.getElementById('context-input').value.trim();
+    const due = document.getElementById('due-input').value.trim();
+    const priority = document.getElementById('priority-input').value.trim();
+
+    if (!text) {
+      alert('Task description is required');
+      return;
+    }
+
+    let tags = [];
+    if (priority) tags.push(`#p:${priority}`);
+    if (due) tags.push(`#due:${due}`);
+    if (context) tags.push(`#ctx:${context}`);
+
+    const fullText = tags.length > 0 ? `${text} ${tags.join(' ')}` : text;
+
+    try {
+      const response = await fetch('/tasks/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: fullText, section: 'Inbox' })
+      });
+      if (response.ok) {
+        document.getElementById('task-input').value = '';
+        document.getElementById('context-input').value = '';
+        document.getElementById('due-input').value = '';
+        document.getElementById('priority-input').value = '';
+        location.reload();
+      } else {
+        alert('Error adding task');
+      }
+    } catch (err) {
+      alert('Error: ' + err);
+    }
+  }
+
+  // Allow Enter key in task input
+  document.getElementById('task-input')?.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') add_task();
+  });
 </script>
 
 {% endblock %}
