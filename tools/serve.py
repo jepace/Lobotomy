@@ -923,15 +923,7 @@ def inbox_read(filename):
         abort(404)
     if not p.exists():
         abort(404)
-    raw = p.read_bytes()
-    # Detect and decompress gzip if needed (legacy files saved with compressed content)
-    if raw.startswith(b'\x1f\x8b'):
-        import gzip as _gzip
-        try:
-            raw = _gzip.decompress(raw)
-        except Exception:
-            pass
-    text = raw.decode("utf-8", errors="replace")
+    text = p.read_text(encoding="utf-8", errors="replace")
     meta, body = _parse_frontmatter(text)
     return render_template(
         "reader.html",
@@ -986,15 +978,7 @@ def inbox_view(filename):
         abort(404)
     if not p.exists():
         abort(404)
-    raw = p.read_bytes()
-    # Detect and decompress gzip if needed (legacy files saved with compressed content)
-    if raw.startswith(b'\x1f\x8b'):
-        import gzip as _gzip
-        try:
-            raw = _gzip.decompress(raw)
-        except Exception:
-            pass
-    content = raw.decode("utf-8", errors="replace")
+    content = p.read_text(encoding="utf-8", errors="replace")
     # For .url files, expose the URL separately so the UI can open it
     if p.suffix == ".url":
         url_line = next((l for l in content.splitlines() if l.startswith("URL:")), "")
