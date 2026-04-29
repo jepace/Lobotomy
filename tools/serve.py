@@ -915,7 +915,12 @@ def inbox_clip():
   <a class="pri" href="{inbox_url}">Reading List</a>
   <a class="sec" href="javascript:history.back()">Back</a>
 </div>
-<script>setTimeout(()=>window.close(),2000)</script>
+<script>
+setTimeout(()=>{
+  if(window.opener)window.opener.location.reload();
+  window.close();
+},2000)
+</script>
 </body></html>"""
 
 
