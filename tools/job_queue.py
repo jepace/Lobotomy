@@ -100,8 +100,8 @@ class JobQueue:
                         pass
             else:
                 idle += 1
-                # If no new data for 10 min and job is no longer current, give up
-                if idle > 12000:
+                # If no new data for 30 min and job is no longer current, give up
+                if idle > 36000:
                     yield json.dumps({"type": "error", "content": "Stream idle timeout — partial response received"}) + "\n"
                     yield json.dumps({"type": "done"}) + "\n"
                     return
