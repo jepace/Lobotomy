@@ -39,6 +39,16 @@
     }
     .reader-bar .source a { font-size: 12px; font-weight: 400; color: var(--text2); }
 
+    .reader-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+    .reader-actions button, .reader-actions a {
+      font-family: -apple-system, sans-serif; font-size: 12px; font-weight: 600;
+      padding: 5px 10px; border-radius: 7px; cursor: pointer; text-decoration: none;
+      white-space: nowrap; border: none; line-height: 1.4;
+    }
+    .btn-archive { background: #34c759; color: #fff; }
+    .btn-ingest  { background: var(--accent); color: #fff; }
+    .btn-ingest:disabled { opacity: .5; cursor: default; }
+
     /* Font size controls */
     .font-ctrl {
       display: flex; gap: 4px; align-items: center; flex-shrink: 0;
@@ -48,6 +58,18 @@
       width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 6px;
       background: var(--bg); color: var(--text); cursor: pointer; line-height: 1;
     }
+
+    /* Progress overlay */
+    .ingest-progress {
+      display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+      background: var(--bg); border-top: 1px solid var(--border);
+      padding: 10px 20px; font-family: -apple-system, sans-serif;
+      font-size: 12px; max-height: 40vh; overflow-y: auto;
+    }
+    .ingest-progress.open { display: block; }
+    .prog-line { color: var(--text2); font-family: monospace; padding: 1px 0; }
+    .prog-done  { color: #34c759; font-weight: 700; margin-top: 6px; }
+    .prog-error { color: #ff3b30; font-weight: 700; margin-top: 6px; }
 
     /* Article content */
     .reader-content {
@@ -90,11 +112,17 @@
   <span class="source">
     {% if url %}<a href="{{ url }}" target="_blank" rel="noopener">{{ url | truncate(50, True, '…') }}</a>{% endif %}
   </span>
+  <div class="reader-actions">
+    <button class="btn-archive" onclick="archiveArticle()">Archive</button>
+    <button class="btn-ingest" id="ingest-btn" onclick="ingestArticle()">Wikify</button>
+  </div>
   <div class="font-ctrl">
     <button onclick="adjFont(-1)">A</button>
     <button onclick="adjFont(1)" style="font-size:18px">A</button>
   </div>
 </div>
+
+<div class="ingest-progress" id="ingest-progress"></div>
 
 <div class="reader-content">
   <h1 class="article-title">{{ title }}</h1>
@@ -113,6 +141,8 @@
 </div>
 
 <script>
+const FILENAME = {{ filename | tojson }};
+
 var fontSize = parseInt(localStorage.getItem('reader-fs') || '18');
 function setFont(sz) {
   fontSize = Math.max(14, Math.min(28, sz));
@@ -121,6 +151,68 @@ function setFont(sz) {
 }
 function adjFont(d) { setFont(fontSize + d); }
 setFont(fontSize);
+
+async function archiveArticle() {
+  const resp = await fetch('/inbox/archive', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({filename: FILENAME}),
+  });
+  const data = await resp.json();
+  if (data.ok) {
+    window.location.href = '/inbox';
+  } else {
+    alert('Archive failed: ' + (data.error || 'Unknown'));
+  }
+}
+
+async function ingestArticle() {
+  const btn = document.getElementById('ingest-btn');
+  const progress = document.getElementById('ingest-progress');
+  btn.disabled = true;
+  btn.textContent = 'Working…';
+  progress.className = 'ingest-progress open';
+  progress.innerHTML = '<div class="prog-line">Starting AI ingest…</div>';
+
+  try {
+    const sendResp = await fetch('/chat/send', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: 'Process inbox file: ' + FILENAME}),
+    });
+    if (!sendResp.ok) throw new Error('HTTP ' + sendResp.status);
+    const job = await sendResp.json();
+
+    const streamResp = await fetch('/chat/stream/' + job.job_id);
+    const reader = streamResp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, {stream: true});
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const ev = JSON.parse(line);
+          if (ev.type === 'tool') {
+            progress.innerHTML += `<div class="prog-line">⚙ ${ev.name}${ev.arg ? '  ' + ev.arg : ''}</div>`;
+            progress.scrollTop = progress.scrollHeight;
+          } else if (ev.type === 'error') {
+            progress.innerHTML += `<div class="prog-error">Error: ${ev.content}</div>`;
+          }
+        } catch(e) {}
+      }
+    }
+    progress.innerHTML += '<div class="prog-done">Done — <a href="/wiki/" style="color:inherit">view wiki</a></div>';
+    btn.textContent = 'Wikified ✓';
+  } catch(e) {
+    progress.innerHTML += `<div class="prog-error">Failed: ${e.message}</div>`;
+    btn.disabled = false;
+    btn.textContent = 'Wikify';
+  }
+}
 </script>
 </body>
 </html>
