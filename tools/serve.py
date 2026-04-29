@@ -31,7 +31,7 @@ missing = []
 try:
     from flask import (Flask, Response, abort, flash, redirect,
                        render_template, request, session,
-                       stream_with_context, url_for)
+                       stream_with_context, url_for, send_file)
 except ImportError:
     missing.append("flask")
 
@@ -348,6 +348,12 @@ def render_md(path: Path) -> str:
         lambda m: f'href="{_rewrite_md_link(m.group(1), path)}"',
         html,
     )
+    return html
+
+def render_md_raw(text: str) -> str:
+    """Render markdown from string content (for raw files)."""
+    text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
+    html = md_lib.markdown(text, extensions=_MD_EXTENSIONS)
     return html
 
 # ---------------------------------------------------------------------------
@@ -744,6 +750,33 @@ def wiki_page(page_path):
         sections=wiki_sections(),
         current_path=str(p.relative_to(WIKI_DIR)),
     )
+
+
+@app.route("/raw/<path:filename>")
+@require_login
+def raw_file(filename):
+    p = RAW_DIR / filename
+    try:
+        p.resolve().relative_to(RAW_DIR.resolve())
+    except ValueError:
+        abort(404)
+    if not p.exists():
+        abort(404)
+    if p.is_dir():
+        abort(404)
+
+    # Serve as plain text or HTML depending on file type
+    if p.suffix in ('.md', '.txt', '.url'):
+        content = p.read_text(encoding='utf-8', errors='replace')
+        return render_template(
+            "raw.html",
+            title=p.stem.replace("-", " ").title(),
+            content=content if p.suffix == '.txt' else render_md_raw(content),
+            filename=filename,
+        )
+    else:
+        # For other files, serve as download
+        return send_file(p, as_attachment=True)
 
 
 @app.route("/tasks")
