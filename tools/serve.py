@@ -763,6 +763,46 @@ def wiki_page(page_path):
     )
 
 
+@app.route("/wiki/lint")
+@require_login
+def wiki_lint():
+    """Find orphaned pages (created but not in index.md)."""
+    index_path = WIKI_DIR / "index.md"
+    if not index_path.exists():
+        return render_template("wiki-lint.html", orphans=[], broken_links=[])
+
+    index_text = index_path.read_text(encoding='utf-8')
+    indexed_paths = set()
+    for match in re.finditer(r'\]\(([\w/.-]+\.md)\)', index_text):
+        indexed_paths.add(match.group(1))
+
+    # Find all .md files
+    all_files = set()
+    for root, dirs, files in os.walk(WIKI_DIR):
+        for f in files:
+            if f.endswith('.md'):
+                rel_path = str(Path(root) / f).replace(str(WIKI_DIR), '').lstrip('/')
+                if rel_path not in ('index.md', 'log.md', 'overview.md', 'reading-list.md', 'tasks.md'):
+                    all_files.add(rel_path)
+
+    orphans = sorted(all_files - indexed_paths)
+
+    # Check for broken links
+    broken = []
+    for fpath in all_files | indexed_paths:
+        p = WIKI_DIR / fpath
+        if p.exists():
+            content = p.read_text(encoding='utf-8', errors='replace')
+            for match in re.finditer(r'\[([^\]]+)\]\(([^")]+)\)', content):
+                link_target = match.group(2)
+                if not link_target.startswith(('http://', 'https://', '/', '#')):
+                    resolved = (p.parent / link_target).resolve()
+                    if not resolved.exists():
+                        broken.append({"file": fpath, "link": link_target, "text": match.group(1)})
+
+    return render_template("wiki-lint.html", orphans=orphans, broken_links=broken)
+
+
 @app.route("/raw/<path:filename>")
 @require_login
 def raw_file(filename):

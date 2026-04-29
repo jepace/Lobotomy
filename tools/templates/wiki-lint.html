@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Wiki Lint — Health Check{% endblock %}
+{% block head %}
+<style>
+  .lint-page { padding: 24px; max-width: 900px; margin: 0 auto; }
+  .lint-page h1 { font-size: 28px; font-weight: 700; margin-bottom: 20px; }
+  .section { margin-bottom: 30px; }
+  .section h2 { font-size: 18px; font-weight: 700; margin-bottom: 12px; border-bottom: 2px solid var(--accent); padding-bottom: 8px; }
+  .issue { background: var(--bg2); padding: 12px; margin-bottom: 8px; border-radius: 6px; border-left: 3px solid var(--danger); }
+  .issue code { background: var(--bg); padding: 2px 6px; border-radius: 3px; font-family: monospace; font-size: 12px; }
+  .empty { color: var(--text2); font-style: italic; }
+  .ok { color: #34c759; font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="page">
+<div class="lint-page">
+  <h1>Wiki Health Check</h1>
+
+  <div class="section">
+    <h2>Summary</h2>
+    {% if not orphans and not broken_links %}
+    <div class="ok">✓ All good! Wiki is healthy.</div>
+    {% else %}
+    <div>
+      {% if orphans %}<div>⚠️ {{ orphans|length }} orphaned page(s)</div>{% endif %}
+      {% if broken_links %}<div>🔗 {{ broken_links|length }} broken link(s)</div>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+  {% if orphans %}
+  <div class="section">
+    <h2>Orphaned Pages</h2>
+    <p>These files exist but aren't listed in <code>wiki/index.md</code>. (Likely created by interrupted ingest.)</p>
+    {% for orphan in orphans %}
+    <div class="issue">
+      <code>{{ orphan }}</code>
+      <br><small style="color: var(--text2);">Add to index.md or delete if unfinished.</small>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if broken_links %}
+  <div class="section">
+    <h2>Broken Links</h2>
+    <p>Internal links that point to non-existent files.</p>
+    {% for link in broken_links %}
+    <div class="issue">
+      <strong>{{ link.file }}</strong>
+      <br>Link: <code>{{ link.link }}</code> (text: "{{ link.text }}")
+      <br><small style="color: var(--text2);">Fix the link or create the target file.</small>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if not orphans and not broken_links %}
+  <div class="section">
+    <div class="ok">✓ No orphaned pages</div>
+    <div class="ok">✓ No broken links</div>
+  </div>
+  {% endif %}
+
+  <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid var(--border);">
+    <p style="font-size: 12px; color: var(--text2);">
+      <strong>What to do with orphaned pages:</strong><br>
+      If they're incomplete (from a timed-out ingest), either re-run the ingest or manually delete them. If they're complete, add them to <code>wiki/index.md</code> in the correct section.
+    </p>
+  </div>
+</div>
+</div>
+{% endblock %}
