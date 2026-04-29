@@ -14,12 +14,10 @@ class Task:
     """Represents a single task with all its metadata."""
 
     def __init__(self, line, line_num, raw_notes=""):
-        """Parse a task line. Expects format: - [x] description #tag:val #tag:val"""
         self.line_num = line_num
         self.raw_notes = raw_notes
         self.section = None
 
-        # Parse checkbox and description
         match = re.match(r'^(\s*)- \[([x ])\] (.+)$', line)
         if not match:
             self.indent = ""
@@ -32,33 +30,32 @@ class Task:
         self.complete = match.group(2) == 'x'
         rest = match.group(3)
 
-        # Split description and tags
-        tag_pattern = r'#\w+:?[^\s]*'
+        # Split description from tags
+        tag_pattern = r'#\w+(?::[^\s]*)?'
         tag_matches = list(re.finditer(tag_pattern, rest))
 
         if tag_matches:
-            desc_end = tag_matches[0].start()
-            self.description = rest[:desc_end].strip()
-            tags_text = rest[desc_end:].strip()
+            self.description = rest[:tag_matches[0].start()].strip()
+            tags_text = rest[tag_matches[0].start():]
         else:
             self.description = rest.strip()
             tags_text = ""
 
-        # Parse tags
+        # Parse tags — keys stored WITHOUT colon: '#p' -> 'high'
         self.tags = {}
-        for match in re.finditer(tag_pattern, tags_text):
-            tag_full = match.group(0)
+        for m in re.finditer(tag_pattern, tags_text):
+            tag_full = m.group(0)
             if ':' in tag_full:
                 key, val = tag_full.split(':', 1)
-                self.tags[key] = val
+                self.tags[key] = val   # e.g. '#p': 'high'
             else:
-                self.tags[tag_full] = None
+                self.tags[tag_full] = None  # e.g. '#star': None
 
     def to_line(self):
-        """Reconstruct task line from current state."""
+        """Reconstruct markdown task line."""
         checkbox = 'x' if self.complete else ' '
         tags_str = ' '.join(
-            f"{k}:{v}" if v else k
+            f"{k}:{v}" if v is not None else k
             for k, v in sorted(self.tags.items())
         )
         line = f"{self.indent}- [{checkbox}] {self.description}"
@@ -66,98 +63,62 @@ class Task:
             line += f" {tags_str}"
         return line
 
+    # ── Properties — keys WITHOUT colon ──────────────────────
     @property
-    def due(self):
-        return self.tags.get('#due:', None)
+    def due(self):        return self.tags.get('#due')
 
     @property
-    def priority(self):
-        return self.tags.get('#p:', None)
+    def priority(self):   return self.tags.get('#p')
 
     @property
-    def context(self):
-        return self.tags.get('#ctx:', None)
+    def context(self):    return self.tags.get('#ctx')
 
     @property
-    def project(self):
-        return self.tags.get('#proj:', None)
+    def project(self):    return self.tags.get('#proj')
 
     @property
-    def status(self):
-        return self.tags.get('#s:', None)
+    def status(self):     return self.tags.get('#s')
 
     @property
-    def recurrence(self):
-        return self.tags.get('#rep:', None)
+    def recurrence(self): return self.tags.get('#rep')
 
     @property
-    def start(self):
-        return self.tags.get('#start:', None)
+    def start(self):      return self.tags.get('#start')
 
     @property
-    def notes(self):
-        return self.raw_notes.strip()
+    def notes(self):      return self.raw_notes.strip()
 
-    def set_due(self, val):
+    # ── Setters — keys WITHOUT colon ─────────────────────────
+    def _set(self, key, val):
         if val:
-            self.tags['#due:'] = val
+            self.tags[key] = val
         else:
-            self.tags.pop('#due:', None)
+            self.tags.pop(key, None)
 
-    def set_priority(self, val):
-        if val:
-            self.tags['#p:'] = val
-        else:
-            self.tags.pop('#p:', None)
-
-    def set_context(self, val):
-        if val:
-            self.tags['#ctx:'] = val
-        else:
-            self.tags.pop('#ctx:', None)
-
-    def set_project(self, val):
-        if val:
-            self.tags['#proj:'] = val
-        else:
-            self.tags.pop('#proj:', None)
-
-    def set_status(self, val):
-        if val:
-            self.tags['#s:'] = val
-        else:
-            self.tags.pop('#s:', None)
-
-    def set_recurrence(self, val):
-        if val:
-            self.tags['#rep:'] = val
-        else:
-            self.tags.pop('#rep:', None)
-
-    def set_start(self, val):
-        if val:
-            self.tags['#start:'] = val
-        else:
-            self.tags.pop('#start:', None)
-
-    def set_notes(self, val):
-        self.raw_notes = val
+    def set_due(self, val):        self._set('#due', val)
+    def set_priority(self, val):   self._set('#p', val)
+    def set_context(self, val):    self._set('#ctx', val)
+    def set_project(self, val):    self._set('#proj', val)
+    def set_status(self, val):     self._set('#s', val)
+    def set_recurrence(self, val): self._set('#rep', val)
+    def set_start(self, val):      self._set('#start', val)
+    def set_notes(self, val):      self.raw_notes = val
 
     def complete_task(self):
-        """Mark task as complete and set done date."""
         self.complete = True
-        today = datetime.now().strftime('%Y-%m-%d')
-        self.tags['#done:'] = today
+        self.tags['#done'] = datetime.now().strftime('%Y-%m-%d')
+
+    def reopen_task(self):
+        self.complete = False
+        self.tags.pop('#done', None)
 
 
 def read_tasks():
-    """Read all tasks from wiki/tasks.md. Return list of Task objects."""
+    """Read all tasks from wiki/tasks.md."""
     if not TASKS_FILE.exists():
         return []
 
-    text = TASKS_FILE.read_text(encoding='utf-8')
-    lines = text.split('\n')
-
+    lines = TASKS_FILE.read_text(encoding='utf-8').split('\n')
     tasks = []
     current_section = None
     i = 0
@@ -165,25 +126,20 @@ def read_tasks():
     while i < len(lines):
         line = lines[i]
 
-        # Detect section headers
         if line.startswith('##'):
-            current_section = line.replace('##', '').strip()
+            current_section = line.lstrip('#').strip()
             i += 1
             continue
 
-        # Detect task lines
         if re.match(r'^\s*- \[[x ]\]', line):
-            # Collect notes (indented lines following the task)
             notes_lines = []
             i += 1
             while i < len(lines):
-                next_line = lines[i]
-                # Stop if we hit another task or section
-                if re.match(r'^##', next_line) or re.match(r'^\s*- \[[x ]\]', next_line):
+                nxt = lines[i]
+                if re.match(r'^##', nxt) or re.match(r'^\s*- \[[x ]\]', nxt):
                     break
-                # Include indented lines as notes
-                if next_line and (next_line[0] in ' \t' or next_line.strip() == ""):
-                    notes_lines.append(next_line)
+                if nxt and (nxt[0] in ' \t' or not nxt.strip()):
+                    notes_lines.append(nxt)
                     i += 1
                 else:
                     break
@@ -198,17 +154,12 @@ def read_tasks():
 
 
 def write_tasks(tasks):
-    """Write tasks back to wiki/tasks.md, preserving structure."""
+    """Write updated tasks back to wiki/tasks.md."""
     if not TASKS_FILE.exists():
         return
 
-    text = TASKS_FILE.read_text(encoding='utf-8')
-    lines = text.split('\n')
-
-    # Build a map of line_num -> task for quick lookup
-    task_map = {task.line_num: task for task in tasks}
-
-    # Rebuild the file
+    lines = TASKS_FILE.read_text(encoding='utf-8').split('\n')
+    task_map = {t.line_num: t for t in tasks}
     new_lines = []
     i = 0
     task_count = 0
@@ -216,28 +167,23 @@ def write_tasks(tasks):
     while i < len(lines):
         line = lines[i]
 
-        # Check if this is a task line
         if re.match(r'^\s*- \[[x ]\]', line):
-            # Find corresponding task
             if task_count in task_map:
                 task = task_map[task_count]
                 new_lines.append(task.to_line())
-                # Add notes if any
                 if task.raw_notes.strip():
                     for note_line in task.raw_notes.split('\n'):
                         new_lines.append(note_line)
-                task_count += 1
-
-            # Skip old notes
+            task_count += 1
             i += 1
+            # Skip old inline notes
             while i < len(lines):
-                next_line = lines[i]
-                if re.match(r'^##', next_line) or re.match(r'^\s*- \[[x ]\]', next_line):
+                nxt = lines[i]
+                if re.match(r'^##', nxt) or re.match(r'^\s*- \[[x ]\]', nxt):
                     break
                 i += 1
             continue
 
-        # Copy everything else
         new_lines.append(line)
         i += 1
 
@@ -245,18 +191,10 @@ def write_tasks(tasks):
 
 
 def get_all_contexts():
-    """Return list of all contexts used in tasks."""
-    tasks = read_tasks()
-    return sorted(set(t.context for t in tasks if t.context))
-
+    return sorted(set(t.context for t in read_tasks() if t.context))
 
 def get_all_projects():
-    """Return list of all projects used in tasks."""
-    tasks = read_tasks()
-    return sorted(set(t.project for t in tasks if t.project))
-
+    return sorted(set(t.project for t in read_tasks() if t.project))
 
 def get_all_sections():
-    """Return list of all section names."""
-    tasks = read_tasks()
-    return sorted(set(t.section for t in tasks if t.section))
+    return sorted(set(t.section for t in read_tasks() if t.section))

@@ -1,249 +1,120 @@
 {% extends "base.html" %}
-
 {% block title %}Tasks — Lobotomy{% endblock %}
-
 {% block head %}
 <style>
-  .tasks-container { padding: 16px 20px; width: 100%; }
+  .tasks-container { padding: 16px 24px; width: 100%; }
   h1 { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
 
-  /* ── Table layout ──────────────────────────────────────── */
-  .tasks-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
-    table-layout: fixed;
-    margin-bottom: 20px;
-  }
+  .col-done  { width: 50px; }
+  .col-task  { width: 26%; }
+  .col-ctx   { width: 9%; }
+  .col-due   { width: 100px; }
+  .col-rep   { width: 10%; }
+  .col-pri   { width: 75px; }
+  .col-start { width: 100px; }
+  .col-note  { width: 50px; }
+  .col-sel   { width: 50px; }
 
-  .col-done    { width: 38px; }
-  .col-task    { width: 28%; }
-  .col-ctx     { width: 10%; }
-  .col-due     { width: 100px; }
-  .col-rep     { width: 12%; }
-  .col-pri     { width: 80px; }
-  .col-start   { width: 100px; }
-  .col-note    { width: 50px; }
-  .col-sel     { width: 38px; }
+  /* Add form */
+  .add-form { width: 100%; border-collapse: collapse; table-layout: fixed;
+              margin-bottom: 14px; background: var(--bg2); border-radius: 8px;
+              overflow: hidden; font-size: 12px; }
+  .add-form td { padding: 6px 6px; vertical-align: bottom; }
+  .add-form label { display: block; font-size: 9px; text-transform: uppercase;
+                    letter-spacing: .04em; color: var(--text2); margin-bottom: 3px; }
+  .add-form input, .add-form select {
+    width: 100%; padding: 5px 6px; font-size: 12px; border: 1px solid var(--border);
+    border-radius: 5px; background: var(--bg); color: var(--text);
+    -webkit-appearance: none; box-sizing: border-box; }
+  .add-form input:focus, .add-form select:focus { border-color: var(--accent); outline: none; }
+  .add-btn { background: var(--success); color: #fff; border: none; border-radius: 5px;
+             padding: 5px 8px; cursor: pointer; font-weight: 700; font-size: 12px;
+             width: 100%; white-space: nowrap; }
 
-  .tasks-table th {
-    background: var(--bg3);
-    padding: 8px 8px;
-    text-align: left;
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text2);
-    border: 1px solid var(--border);
-    cursor: pointer;
-    user-select: none;
-    white-space: nowrap;
-  }
-  .tasks-table th:hover { background: var(--accent); color: #fff; }
-  .tasks-table th.sortable::after  { content: ' ↕'; opacity: 0.3; }
-  .tasks-table th.sort-asc::after,
-  .tasks-table th.sort-desc::after { opacity: 1; font-weight: 900; }
-  .tasks-table th.sort-asc::after  { content: ' ▲'; }
-  .tasks-table th.sort-desc::after { content: ' ▼'; }
-
-  .tasks-table td {
-    padding: 4px 8px;
-    border: 1px solid var(--border);
-    height: 32px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    vertical-align: middle;
-    color: var(--text);
-  }
-  .tasks-table tbody tr:nth-child(4n+1),
-  .tasks-table tbody tr:nth-child(4n+2) { background: var(--bg); }
-  .tasks-table tbody tr:nth-child(4n+3),
-  .tasks-table tbody tr:nth-child(4n+4) { background: var(--bg2); }
-  .tasks-table .note-row { background: var(--bg2) !important; }
-  .tasks-table tbody tr.task-row:hover { background: var(--accent) !important; color: #fff; }
-  .tasks-table tbody tr.task-row:hover td { color: #fff; }
-
-  .task-row.pri-top    td:first-child { border-left: 3px solid #ff3b30; }
-  .task-row.pri-high   td:first-child { border-left: 3px solid #ff9500; }
-  .task-row.pri-medium td:first-child { border-left: 3px solid #007aff; }
-  .task-row.pri-low    td:first-child { border-left: 3px solid #8e8e93; }
-
-  .task-row.completing .task-name-text { text-decoration: line-through; opacity: 0.6; }
-
-  .done-cb, .sel-cb {
-    width: 16px;
-    height: 16px;
-    cursor: pointer;
-    margin: 0 auto;
-    display: block;
-    accent-color: var(--success);
-  }
-
-  .ecell {
-    cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    display: block;
-    border-radius: 3px;
-    padding: 1px 3px;
-    color: var(--text);
-  }
-  .ecell:hover { background: var(--accent); color: #fff; border-radius: 3px; }
-  .ecell.empty { color: var(--text2); }
-
-  .edit-input {
-    display: none;
-    width: 100%;
-    padding: 2px 4px;
-    font-size: 12px;
-    border: 1px solid var(--accent);
-    border-radius: 4px;
-    background: var(--bg);
-    color: var(--text);
-    box-sizing: border-box;
-    -webkit-appearance: none;
-  }
-  .edit-input.active { display: block; }
-  .edit-input:focus { outline: none; }
-
-  .note-row { display: none; }
-  .note-row.open { display: table-row; }
-  .note-row td { height: auto; padding: 8px; white-space: normal; }
-  .note-textarea {
-    width: 100%;
-    min-height: 60px;
-    font-size: 12px;
-    padding: 6px 8px;
-    border: 1px solid var(--accent);
-    border-radius: 6px;
-    background: var(--bg);
-    color: var(--text);
-    resize: vertical;
-    font-family: inherit;
-    box-sizing: border-box;
-  }
-  .note-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 14px;
-    padding: 0;
-    opacity: 0.5;
-    display: block;
-    margin: 0 auto;
-    color: var(--text);
-  }
-  .note-btn:hover, .note-btn.has-note { opacity: 1; }
-  .note-save { margin-top: 8px; display: flex; gap: 6px; }
-  .note-save button {
-    flex: 1;
-    padding: 5px;
-    font-size: 11px;
-    border: 1px solid var(--border);
-    background: var(--bg3);
-    color: var(--text);
-    border-radius: 5px;
-    cursor: pointer;
-  }
-  .note-save button:first-child { background: var(--success); color: #fff; border: none; }
-
-  .tasks-toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-    gap: 10px;
-  }
-  .show-completed { display: flex; gap: 6px; align-items: center; font-size: 12px; cursor: pointer; color: var(--text); }
-  .bulk-menu { position: relative; }
-  .bulk-menu-btn {
-    display: none;
-    padding: 5px 10px;
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 12px;
-    color: var(--text);
-  }
-  .bulk-menu-dropdown {
-    display: none;
-    position: absolute;
-    right: 0;
-    top: 100%;
-    margin-top: 4px;
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    z-index: 100;
-    min-width: 120px;
-  }
-  .bulk-menu-dropdown.open { display: block; }
-  .bulk-item {
-    padding: 8px 12px;
-    font-size: 12px;
-    cursor: pointer;
-    border-bottom: 1px solid var(--border);
-    color: var(--text);
-  }
+  /* Toolbar */
+  .toolbar { display: flex; justify-content: space-between; align-items: center;
+             margin-bottom: 10px; }
+  .show-completed { display: flex; gap: 6px; align-items: center; font-size: 12px;
+                    cursor: pointer; color: var(--text); }
+  .bulk-wrap { position: relative; }
+  .bulk-btn { display: none; padding: 5px 10px; background: var(--bg2);
+              border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+              font-size: 12px; color: var(--text); }
+  .bulk-drop { display: none; position: absolute; right: 0; top: 100%; margin-top: 4px;
+               background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+               box-shadow: 0 2px 8px rgba(0,0,0,.2); z-index: 100; min-width: 130px; }
+  .bulk-drop.open { display: block; }
+  .bulk-item { padding: 8px 12px; font-size: 12px; cursor: pointer;
+               border-bottom: 1px solid var(--border); color: var(--text); }
   .bulk-item:last-child { border-bottom: none; }
   .bulk-item:hover { background: var(--bg3); }
 
-  /* ── Add-task form ─────────────────────────────────────── */
-  .add-form {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-    table-layout: fixed;
-    margin-bottom: 16px;
-    background: var(--bg2);
-    border-radius: 8px;
-    overflow: hidden;
-  }
-  .add-form td {
-    padding: 6px 8px;
-    vertical-align: bottom;
-    color: var(--text);
-  }
-  .add-form label {
-    display: block;
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text2);
-    margin-bottom: 3px;
-  }
-  .add-form input,
-  .add-form select {
-    width: 100%;
-    padding: 5px 6px;
-    font-size: 12px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--bg);
-    color: var(--text);
-    -webkit-appearance: none;
-    box-sizing: border-box;
-  }
-  .add-form input:focus,
-  .add-form select:focus { border-color: var(--accent); outline: none; }
-  .add-btn {
-    background: var(--success);
-    color: #fff;
-    border: none;
-    border-radius: 5px;
-    padding: 5px 10px;
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 12px;
-    white-space: nowrap;
-    width: 100%;
-  }
-  .add-btn:hover { opacity: 0.9; }
+  /* Table */
+  .tasks-table { width: 100%; border-collapse: collapse; font-size: 13px;
+                 table-layout: fixed; }
+  .tasks-table th {
+    background: var(--bg3); padding: 7px 8px; text-align: left;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--text2); border: 1px solid var(--border);
+    white-space: nowrap; cursor: pointer; user-select: none; }
+  .tasks-table th.sortable { color: var(--text2); }
+  .tasks-table th.sortable:hover { background: var(--accent); color: #fff; }
+  .tasks-table th.sort-asc,
+  .tasks-table th.sort-desc { background: var(--accent); color: #fff; font-weight: 900; }
+  .tasks-table th.sort-asc::after  { content: ' ▲'; }
+  .tasks-table th.sort-desc::after { content: ' ▼'; }
+  .tasks-table th.sortable:not(.sort-asc):not(.sort-desc)::after { content: ' ↕'; opacity: .4; }
+  .tasks-table th.no-sort { cursor: default; }
+
+  .tasks-table td { padding: 3px 8px; border: 1px solid var(--border); height: 32px;
+                    overflow: hidden; white-space: nowrap; vertical-align: middle;
+                    color: var(--text); }
+  .tasks-table tbody tr:nth-child(odd)  { background: var(--bg); }
+  .tasks-table tbody tr:nth-child(even) { background: var(--bg2); }
+  .tasks-table .note-row { background: var(--bg2) !important; }
+  .tasks-table tr.task-row:hover { background: var(--bg3) !important; }
+  .tasks-table tr.task-row:hover td { color: var(--text); }
+
+  /* Priority left border */
+  .pri-top    > td:first-child { border-left: 3px solid #ff3b30; }
+  .pri-high   > td:first-child { border-left: 3px solid #ff9500; }
+  .pri-medium > td:first-child { border-left: 3px solid #007aff; }
+  .pri-low    > td:first-child { border-left: 3px solid #8e8e93; }
+
+  .done-cb, .sel-cb { display: block; margin: 0 auto; width: 15px; height: 15px;
+                      cursor: pointer; accent-color: var(--success); }
+
+  /* Editable cells */
+  .ecell { display: block; cursor: pointer; overflow: hidden; text-overflow: ellipsis;
+           white-space: nowrap; border-radius: 3px; padding: 1px 3px; color: var(--text); }
+  .ecell.empty { color: var(--text2); }
+  .ecell:hover { background: var(--accent); color: #fff !important; border-radius: 3px; }
+
+  /* Inline edit input — created dynamically, replaces span */
+  .edit-inline { width: 100%; padding: 2px 4px; font-size: 12px; border: 1px solid var(--accent);
+                 border-radius: 4px; background: var(--bg); color: var(--text);
+                 box-sizing: border-box; outline: none; -webkit-appearance: none; }
+
+  /* completing animation */
+  .completing .task-name-text { text-decoration: line-through; opacity: .6; }
+
+  /* Note row */
+  .note-row { display: none; }
+  .note-row.open { display: table-row; }
+  .note-row > td { height: auto; white-space: normal; padding: 8px; }
+  .note-textarea { width: 100%; min-height: 56px; font-size: 12px; padding: 6px 8px;
+                   border: 1px solid var(--accent); border-radius: 6px;
+                   background: var(--bg); color: var(--text); resize: vertical;
+                   font-family: inherit; box-sizing: border-box; outline: none; }
+  .note-actions { display: flex; gap: 6px; margin-top: 6px; }
+  .note-actions button { flex: 1; padding: 4px; font-size: 11px;
+                         border: 1px solid var(--border); border-radius: 5px;
+                         background: var(--bg3); color: var(--text); cursor: pointer; }
+  .note-actions button:first-child { background: var(--success); color: #fff; border: none; }
+  .note-btn { display: block; margin: 0 auto; background: none; border: none;
+              cursor: pointer; font-size: 14px; opacity: .45; color: var(--text);
+              padding: 0; line-height: 1; }
+  .note-btn:hover, .note-btn.has-note { opacity: 1; }
 
   .empty-state { text-align: center; padding: 60px 20px; color: var(--text2); }
 </style>
@@ -254,68 +125,66 @@
 <div class="tasks-container">
 <h1>Tasks</h1>
 
-<!-- ── Add task form (mirrors table column order/widths) ─ -->
+<!-- Add task form -->
 <table class="add-form">
-  <tr>
-    <td class="col-done"></td>
-    <td class="col-task">
-      <label>Task</label>
-      <input id="f-task" type="text" placeholder="Add task…">
-    </td>
-    <td class="col-ctx">
-      <label>Context</label>
-      <input id="f-ctx" type="text" placeholder="home">
-    </td>
-    <td class="col-due">
-      <label>Due</label>
-      <input id="f-due" type="date">
-    </td>
-    <td class="col-rep">
-      <label>Repeat</label>
-      <input id="f-rep" type="text" placeholder="weekly" list="rep-list">
-      <datalist id="rep-list">
-        <option value="daily">
-        <option value="weekly">
-        <option value="every 2 weeks">
-        <option value="monthly">
-        <option value="quarterly">
-        <option value="yearly">
-      </datalist>
-    </td>
-    <td class="col-pri">
-      <label>Priority</label>
-      <select id="f-pri">
-        <option value="">—</option>
-        <option value="top">Top</option>
-        <option value="high">High</option>
-        <option value="medium">Medium</option>
-        <option value="low">Low</option>
-      </select>
-    </td>
-    <td class="col-start">
-      <label>Start</label>
-      <input id="f-start" type="date">
-    </td>
-    <td class="col-note" style="text-align: center;">
-      <label>&nbsp;</label>
-      <button class="add-btn" onclick="add_task()">Add Task</button>
-    </td>
-    <td class="col-sel"></td>
-  </tr>
+<tr>
+  <td class="col-done"></td>
+  <td class="col-task">
+    <label>Task</label>
+    <input id="f-task" type="text" placeholder="New task…">
+  </td>
+  <td class="col-ctx">
+    <label>Context</label>
+    <input id="f-ctx" type="text" placeholder="home">
+  </td>
+  <td class="col-due">
+    <label>Due</label>
+    <input id="f-due" type="date">
+  </td>
+  <td class="col-rep">
+    <label>Repeat</label>
+    <input id="f-rep" type="text" placeholder="weekly" list="rep-options">
+    <datalist id="rep-options">
+      <option value="1d">Daily</option>
+      <option value="1w">Weekly</option>
+      <option value="2w">Every 2 weeks</option>
+      <option value="1m">Monthly</option>
+      <option value="3m">Quarterly</option>
+      <option value="1y">Yearly</option>
+    </datalist>
+  </td>
+  <td class="col-pri">
+    <label>Priority</label>
+    <select id="f-pri">
+      <option value="">—</option>
+      <option value="top">Top</option>
+      <option value="high">High</option>
+      <option value="medium">Medium</option>
+      <option value="low">Low</option>
+    </select>
+  </td>
+  <td class="col-start">
+    <label>Start</label>
+    <input id="f-start" type="date">
+  </td>
+  <td class="col-note" style="text-align:center; vertical-align:bottom;">
+    <button class="add-btn" onclick="addTask()">Add Task</button>
+  </td>
+  <td class="col-sel"></td>
+</tr>
 </table>
 
-<!-- ── Toolbar ─────────────────────────────────────────── -->
-<div class="tasks-toolbar">
+<!-- Toolbar -->
+<div class="toolbar">
   <label class="show-completed">
     <input type="checkbox" id="show-done"> Show completed
   </label>
-  <div class="bulk-menu">
-    <button class="bulk-menu-btn" id="bulk-btn">⋯ Bulk</button>
-    <div class="bulk-menu-dropdown" id="bulk-drop">
+  <div class="bulk-wrap">
+    <button class="bulk-btn" id="bulk-btn">⋯ Bulk</button>
+    <div class="bulk-drop" id="bulk-drop">
       <div class="bulk-item" data-action="set-priority">Set priority</div>
       <div class="bulk-item" data-action="set-context">Set context</div>
       <div class="bulk-item" data-action="set-due">Set due date</div>
-      <div class="bulk-item" data-action="set-project">Set project</div>
       <div class="bulk-item" data-action="delete">Delete</div>
     </div>
   </div>
@@ -324,400 +193,325 @@
 {% if tasks %}
 <table class="tasks-table">
   <colgroup>
-    <col class="col-done">
-    <col class="col-task">
-    <col class="col-ctx">
-    <col class="col-due">
-    <col class="col-rep">
-    <col class="col-pri">
-    <col class="col-start">
-    <col class="col-note">
-    <col class="col-sel">
+    <col class="col-done"><col class="col-task"><col class="col-ctx">
+    <col class="col-due"><col class="col-rep"><col class="col-pri">
+    <col class="col-start"><col class="col-note"><col class="col-sel">
   </colgroup>
-  <thead>
-    <tr>
-      <th></th>
-      <th class="sortable" data-col="description">Task</th>
-      <th class="sortable" data-col="context">Context</th>
-      <th class="sortable" data-col="due">Due Date</th>
-      <th data-col="recurrence">Repeat</th>
-      <th class="sortable" data-col="priority">Priority</th>
-      <th class="sortable" data-col="start">Start</th>
-      <th>Note</th>
-      <th></th>
-    </tr>
-  </thead>
+  <thead><tr>
+    <th class="no-sort" style="text-align:center;">Done</th>
+    <th class="sortable" data-col="description">Task</th>
+    <th class="sortable" data-col="context">Context</th>
+    <th class="sortable" data-col="due">Due Date</th>
+    <th class="no-sort">Repeat</th>
+    <th class="sortable" data-col="priority">Priority</th>
+    <th class="sortable" data-col="start">Start</th>
+    <th class="no-sort" style="text-align:center;">Note</th>
+    <th class="no-sort" style="text-align:center;">Select</th>
+  </tr></thead>
   <tbody>
-    {% for task in tasks %}
-    <tr class="task-row pri-{{ task.priority or 'none' }} {% if task.complete %}completed{% endif %}"
-        data-id="{{ loop.index0 }}">
-      <td><input type="checkbox" class="done-cb" data-id="{{ loop.index0 }}"
-          {% if task.complete %}checked{% endif %}></td>
-      <td>
-        <span class="ecell task-name-text" data-id="{{ loop.index0 }}" data-field="description">{{ task.description }}</span>
-        <input class="edit-input" data-id="{{ loop.index0 }}" data-field="description" value="{{ task.description }}">
-      </td>
-      <td>
-        <span class="ecell {% if not task.context %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="context">{{ task.context or '—' }}</span>
-        <input class="edit-input" data-id="{{ loop.index0 }}" data-field="context" value="{{ task.context or '' }}" placeholder="home">
-      </td>
-      <td>
-        <span class="ecell {% if not task.due %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="due">{{ task.due or '—' }}</span>
-        <input class="edit-input" type="date" data-id="{{ loop.index0 }}" data-field="due" value="{{ task.due or '' }}">
-      </td>
-      <td>
-        <span class="ecell {% if not task.recurrence %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="recurrence">{{ task.recurrence or '—' }}</span>
-        <input class="edit-input" data-id="{{ loop.index0 }}" data-field="recurrence" value="{{ task.recurrence or '' }}" placeholder="weekly" list="rep-list">
-      </td>
-      <td>
-        <span class="ecell {% if not task.priority %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="priority">{{ task.priority or '—' }}</span>
-        <select class="edit-input" data-id="{{ loop.index0 }}" data-field="priority">
-          <option value="">—</option>
-          <option value="top" {% if task.priority=='top' %}selected{% endif %}>top</option>
-          <option value="high" {% if task.priority=='high' %}selected{% endif %}>high</option>
-          <option value="medium" {% if task.priority=='medium' %}selected{% endif %}>medium</option>
-          <option value="low" {% if task.priority=='low' %}selected{% endif %}>low</option>
-        </select>
-      </td>
-      <td>
-        <span class="ecell {% if not task.start %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="start">{{ task.start or '—' }}</span>
-        <input class="edit-input" type="date" data-id="{{ loop.index0 }}" data-field="start" value="{{ task.start or '' }}">
-      </td>
-      <td style="text-align: center;">
-        <button class="note-btn {% if task.notes %}has-note{% endif %}"
-            data-id="{{ loop.index0 }}" title="{{ task.notes or 'Add note' }}">
-          {% if task.notes %}📝{% else %}+{% endif %}
-        </button>
-      </td>
-      <td><input type="checkbox" class="sel-cb" data-id="{{ loop.index0 }}"></td>
-    </tr>
-    <tr class="note-row" data-id="{{ loop.index0 }}">
-      <td colspan="9">
-        <textarea class="note-textarea" data-id="{{ loop.index0 }}" placeholder="Notes…">{{ task.notes }}</textarea>
-        <div class="note-save">
-          <button onclick="save_note({{ loop.index0 }})">Save</button>
-          <button onclick="close_note({{ loop.index0 }})">Cancel</button>
-        </div>
-      </td>
-    </tr>
-    {% endfor %}
+  {% for task in tasks %}
+  <tr class="task-row pri-{{ task.priority or 'none' }}{% if task.complete %} completed{% endif %}"
+      data-id="{{ loop.index0 }}">
+    <td><input type="checkbox" class="done-cb" data-id="{{ loop.index0 }}"
+        {% if task.complete %}checked{% endif %}></td>
+    <td>
+      <span class="ecell task-name-text{% if not task.description %} empty{% endif %}"
+            data-id="{{ loop.index0 }}" data-field="description">{{ task.description or '—' }}</span>
+    </td>
+    <td>
+      <span class="ecell{% if not task.context %} empty{% endif %}"
+            data-id="{{ loop.index0 }}" data-field="context">{{ task.context or '—' }}</span>
+    </td>
+    <td>
+      <span class="ecell{% if not task.due %} empty{% endif %}"
+            data-id="{{ loop.index0 }}" data-field="due">{{ task.due or '—' }}</span>
+    </td>
+    <td>
+      <span class="ecell{% if not task.recurrence %} empty{% endif %}"
+            data-id="{{ loop.index0 }}" data-field="recurrence">{{ task.recurrence or '—' }}</span>
+    </td>
+    <td>
+      <span class="ecell{% if not task.priority %} empty{% endif %}"
+            data-id="{{ loop.index0 }}" data-field="priority">{{ task.priority or '—' }}</span>
+    </td>
+    <td>
+      <span class="ecell{% if not task.start %} empty{% endif %}"
+            data-id="{{ loop.index0 }}" data-field="start">{{ task.start or '—' }}</span>
+    </td>
+    <td>
+      <button class="note-btn{% if task.notes %} has-note{% endif %}"
+              data-id="{{ loop.index0 }}">{% if task.notes %}📝{% else %}+{% endif %}</button>
+    </td>
+    <td><input type="checkbox" class="sel-cb" data-id="{{ loop.index0 }}"></td>
+  </tr>
+  <tr class="note-row" data-id="{{ loop.index0 }}">
+    <td colspan="9">
+      <textarea class="note-textarea" data-id="{{ loop.index0 }}"
+                placeholder="Notes…">{{ task.notes }}</textarea>
+      <div class="note-actions">
+        <button onclick="saveNote({{ loop.index0 }})">Save</button>
+        <button onclick="closeNote({{ loop.index0 }})">Cancel</button>
+      </div>
+    </td>
+  </tr>
+  {% endfor %}
   </tbody>
 </table>
 {% else %}
-<div class="empty-state">
-  <div style="font-size:48px;">📝</div>
-  <p>No tasks yet.</p>
-</div>
+<div class="empty-state"><div style="font-size:48px">📝</div><p>No tasks yet.</p></div>
 {% endif %}
 </div>
 </div>
 
 <script>
-  let activeEditId = null;
-  let activeEditField = null;
+const today = new Date().toISOString().split('T')[0];
+document.getElementById('f-due').value = today;
+document.getElementById('f-start').value = today;
 
-  // ── Today's date ─────────────────────────────────────────
-  const today = new Date().toISOString().split('T')[0];
-  document.getElementById('f-due').value = today;
-  document.getElementById('f-start').value = today;
-
-  // ── Show/hide completed ──────────────────────────────────
-  const showDoneCb = document.getElementById('show-done');
-  function applyShowDone() {
-    document.querySelectorAll('.task-row.completed').forEach(r => {
-      r.style.display = showDoneCb.checked ? '' : 'none';
-      const note = document.querySelector(`.note-row[data-id="${r.dataset.id}"]`);
-      if (note) note.style.display = showDoneCb.checked ? '' : 'none';
-    });
-  }
-  showDoneCb.addEventListener('change', () => {
-    localStorage.setItem('tasks-show-done', showDoneCb.checked);
-    applyShowDone();
+// ── Show/hide completed ──────────────────────────────────────
+const showDoneCb = document.getElementById('show-done');
+function applyShowDone() {
+  document.querySelectorAll('.task-row.completed').forEach(r => {
+    const hide = !showDoneCb.checked;
+    r.style.display = hide ? 'none' : '';
+    const nr = document.querySelector(`.note-row[data-id="${r.dataset.id}"]`);
+    if (nr) nr.style.display = hide ? 'none' : '';
   });
-  showDoneCb.checked = localStorage.getItem('tasks-show-done') === 'true';
+}
+showDoneCb.addEventListener('change', () => {
+  localStorage.setItem('tasks-show-done', showDoneCb.checked);
   applyShowDone();
+});
+showDoneCb.checked = localStorage.getItem('tasks-show-done') === 'true';
+applyShowDone();
 
-  // ── Done checkbox ────────────────────────────────────────
-  document.querySelectorAll('.done-cb').forEach(cb => {
-    cb.addEventListener('change', async () => {
-      const id = parseInt(cb.dataset.id);
-      const row = document.querySelector(`.task-row[data-id="${id}"]`);
-      const newDone = cb.checked;
-
-      if (newDone) {
-        row.classList.add('completing');
-        await api_update(id, 'complete', 'true');
-        setTimeout(() => {
-          row.classList.add('completed');
-          row.classList.remove('completing');
-          if (!showDoneCb.checked) {
-            row.style.display = 'none';
-            const note = document.querySelector(`.note-row[data-id="${id}"]`);
-            if (note) note.style.display = 'none';
-          }
-        }, 2000);
-      } else {
-        row.classList.remove('completed');
-        await api_update(id, 'complete', 'false');
-      }
-    });
-  });
-
-  // ── Inline editing ───────────────────────────────────────
-  function open_edit(id, field) {
-    if (activeEditId !== null) close_edit(activeEditId, activeEditField, false);
-    activeEditId = id;
-    activeEditField = field;
-
-    const span = document.querySelector(`.ecell[data-id="${id}"][data-field="${field}"]`);
-    const inp  = document.querySelector(`.edit-input[data-id="${id}"][data-field="${field}"]`);
-    if (!span || !inp) return;
-
-    span.style.display = 'none';
-    inp.classList.add('active');
-    inp.focus();
-    if (inp.type !== 'date' && inp.tagName !== 'SELECT') inp.select();
-  }
-
-  function close_edit(id, field, save) {
-    const span = document.querySelector(`.ecell[data-id="${id}"][data-field="${field}"]`);
-    const inp  = document.querySelector(`.edit-input[data-id="${id}"][data-field="${field}"]`);
-
-    if (!span || !inp) return;
-
-    if (save) {
-      let val = inp.value.trim();
-      // Normalize repeat values
-      if (field === 'recurrence') {
-        const norm = {
-          'daily': '1d', 'every day': '1d',
-          'weekly': '1w', 'every week': '1w',
-          'biweekly': '2w', 'every 2 weeks': '2w',
-          'monthly': '1m', 'every month': '1m',
-          'quarterly': '3m', 'yearly': '1y', 'annually': '1y'
-        };
-        val = norm[val.toLowerCase()] || val;
-      }
-      api_update(id, field, val);
-      span.textContent = val || '—';
-      span.classList.toggle('empty', !val);
-    }
-
-    inp.classList.remove('active');
-    span.style.display = 'block';  // Force show, don't rely on cascade
-    activeEditId = null;
-    activeEditField = null;
-  }
-
-  // Click on display span → open edit
-  document.querySelectorAll('.ecell').forEach(span => {
-    span.addEventListener('click', () => {
-      open_edit(parseInt(span.dataset.id), span.dataset.field);
-    });
-  });
-
-  // Enter/Esc on edit inputs
-  document.querySelectorAll('.edit-input').forEach(inp => {
-    inp.addEventListener('keydown', e => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        close_edit(parseInt(inp.dataset.id), inp.dataset.field, true);
-      } else if (e.key === 'Escape') {
-        close_edit(parseInt(inp.dataset.id), inp.dataset.field, false);
-      }
-    });
-    // Save on change for selects and dates
-    if (inp.tagName === 'SELECT' || inp.type === 'date') {
-      inp.addEventListener('change', () => {
-        close_edit(parseInt(inp.dataset.id), inp.dataset.field, true);
-      });
-    }
-  });
-
-  // Click outside → save
-  document.addEventListener('click', e => {
-    if (activeEditId !== null) {
-      const inp = document.querySelector(`.edit-input[data-id="${activeEditId}"][data-field="${activeEditField}"]`);
-      if (inp && !inp.contains(e.target) && !e.target.closest('.ecell')) {
-        close_edit(activeEditId, activeEditField, true);
-      }
-    }
-  });
-
-  // ── Note toggle ──────────────────────────────────────────
-  document.querySelectorAll('.note-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = btn.dataset.id;
-      const noteRow = document.querySelector(`.note-row[data-id="${id}"]`);
-      noteRow.classList.toggle('open');
-      if (noteRow.classList.contains('open')) {
-        noteRow.querySelector('.note-textarea').focus();
-      }
-    });
-  });
-
-  function close_note(id) {
-    const noteRow = document.querySelector(`.note-row[data-id="${id}"]`);
-    noteRow.classList.remove('open');
-  }
-
-  async function save_note(id) {
-    const ta = document.querySelector(`.note-textarea[data-id="${id}"]`);
-    await api_update(id, 'notes', ta.value);
-    const btn = document.querySelector(`.note-btn[data-id="${id}"]`);
-    const hasNote = ta.value.trim().length > 0;
-    btn.textContent = hasNote ? '📝' : '+';
-    btn.classList.toggle('has-note', hasNote);
-    close_note(id);
-  }
-
-  // ── Multiselect ──────────────────────────────────────────
-  const bulkBtn  = document.getElementById('bulk-btn');
-  const bulkDrop = document.getElementById('bulk-drop');
-
-  document.querySelectorAll('.sel-cb').forEach(cb => {
-    cb.addEventListener('change', () => {
-      const selected = document.querySelectorAll('.sel-cb:checked').length;
-      bulkBtn.style.display = selected > 0 ? 'block' : 'none';
-    });
-  });
-
-  bulkBtn.addEventListener('click', () => bulkDrop.classList.toggle('open'));
-  document.addEventListener('click', e => {
-    if (!e.target.closest('.bulk-menu')) bulkDrop.classList.remove('open');
-  });
-
-  document.querySelectorAll('.bulk-item').forEach(item => {
-    item.addEventListener('click', async () => {
-      const action = item.dataset.action;
-      const ids = Array.from(document.querySelectorAll('.sel-cb:checked'))
-        .map(cb => parseInt(cb.dataset.id));
-      bulkDrop.classList.remove('open');
-
-      if (action === 'delete') {
-        if (!confirm(`Delete ${ids.length} task(s)?`)) return;
-        await fetch('/tasks/bulk-update', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({action: 'delete', task_ids: ids, value: ''})
-        });
-        location.reload();
-        return;
-      }
-
-      const field = action.replace('set-', '');
-      const value = prompt(`Set ${field} for ${ids.length} task(s):`);
-      if (value === null) return;
-      await fetch('/tasks/bulk-update', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action, task_ids: ids, value})
-      });
-      location.reload();
-    });
-  });
-
-  // ── Column sort ──────────────────────────────────────────
-  let sortState = {col: 'due', dir: 'asc'};
-
-  document.querySelectorAll('.tasks-table th[data-col]').forEach(th => {
-    th.addEventListener('click', () => {
-      const col = th.dataset.col;
-      if (sortState.col === col) {
-        sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
-      } else {
-        sortState.col = col;
-        sortState.dir = 'asc';
-      }
-      document.querySelectorAll('.tasks-table th').forEach(h => {
-        h.classList.remove('sort-asc', 'sort-desc');
-        if (h.classList.contains('sortable')) h.classList.add('sortable');
-      });
-      th.classList.remove('sortable');
-      th.classList.add(sortState.dir === 'asc' ? 'sort-asc' : 'sort-desc');
-      sort_table();
-    });
-  });
-
-  function col_val(row, col) {
-    const span = row.querySelector(`.ecell[data-field="${col}"]`);
-    const text = span ? span.textContent.trim() : '';
-    if (col === 'priority') {
-      return {top: 0, high: 1, medium: 2, low: 3, '—': 4}[text] ?? 4;
-    }
-    return text === '—' ? '￿' : text.toLowerCase();
-  }
-
-  function sort_table() {
-    const tbody = document.querySelector('.tasks-table tbody');
-    if (!tbody) return;
-    const pairs = [];
-    const rows = tbody.querySelectorAll('.task-row');
-    rows.forEach(row => {
-      const noteRow = tbody.querySelector(`.note-row[data-id="${row.dataset.id}"]`);
-      pairs.push({row, noteRow});
-    });
-    pairs.sort((a, b) => {
-      const av = col_val(a.row, sortState.col);
-      const bv = col_val(b.row, sortState.col);
-      if (av < bv) return sortState.dir === 'asc' ? -1 : 1;
-      if (av > bv) return sortState.dir === 'asc' ? 1 : -1;
-      return 0;
-    });
-    pairs.forEach(({row, noteRow}) => {
-      tbody.appendChild(row);
-      if (noteRow) tbody.appendChild(noteRow);
-    });
-  }
-
-  // ── Add task ─────────────────────────────────────────────
-  async function add_task() {
-    const text = document.getElementById('f-task').value.trim();
-    if (!text) { document.getElementById('f-task').focus(); return; }
-
-    const start = document.getElementById('f-start').value || today;
-
-    let tags = [];
-    const pri = document.getElementById('f-pri').value;
-    const ctx = document.getElementById('f-ctx').value.trim();
-    const due = document.getElementById('f-due').value;
-    const rep = document.getElementById('f-rep').value.trim();
-
-    if (pri) tags.push(`#p:${pri}`);
-    if (due) tags.push(`#due:${due}`);
-    if (ctx) tags.push(`#ctx:${ctx}`);
-    if (rep) tags.push(`#rep:${rep}`);
-    tags.push(`#start:${start}`);
-
-    const fullText = tags.length ? `${text} ${tags.join(' ')}` : text;
-
-    const res = await fetch('/tasks/add', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text: fullText, section: 'Inbox'})
-    });
-    if (res.ok) {
-      ['f-task','f-ctx','f-rep'].forEach(id => document.getElementById(id).value = '');
-      document.getElementById('f-pri').value = '';
-      document.getElementById('f-due').value = today;
-      document.getElementById('f-start').value = today;
-      location.reload();
+// ── Done checkbox ────────────────────────────────────────────
+document.querySelectorAll('.done-cb').forEach(cb => {
+  cb.addEventListener('change', async () => {
+    const id = parseInt(cb.dataset.id);
+    const row = document.querySelector(`.task-row[data-id="${id}"]`);
+    if (cb.checked) {
+      row.classList.add('completing');
+      await apiUpdate(id, 'complete', 'true');
+      setTimeout(() => {
+        row.classList.remove('completing');
+        row.classList.add('completed');
+        if (!showDoneCb.checked) {
+          row.style.display = 'none';
+          const nr = document.querySelector(`.note-row[data-id="${id}"]`);
+          if (nr) nr.style.display = 'none';
+        }
+      }, 2000);
     } else {
-      alert('Error adding task');
+      row.classList.remove('completed');
+      await apiUpdate(id, 'complete', 'false');
     }
+  });
+});
+
+// ── Inline editing — DOM swap approach ──────────────────────
+// Replace the span with an actual input, swap back when done.
+// No CSS show/hide tricks — the DOM change IS the update.
+
+const REPEAT_MAP = {
+  'daily':'1d','every day':'1d','weekly':'1w','every week':'1w',
+  'biweekly':'2w','every 2 weeks':'2w','fortnightly':'2w',
+  'monthly':'1m','every month':'1m','quarterly':'3m','yearly':'1y','annually':'1y'
+};
+
+function makeEditable(span) {
+  const id    = parseInt(span.dataset.id);
+  const field = span.dataset.field;
+  const curText = span.textContent.trim();
+  const curVal  = (curText === '—' || curText === '') ? '' : curText;
+  const td = span.parentElement;
+
+  let inp;
+  if (field === 'priority') {
+    inp = document.createElement('select');
+    inp.className = 'edit-inline';
+    [['','—'],['top','top'],['high','high'],['medium','medium'],['low','low']].forEach(([v,l]) => {
+      const o = new Option(l, v);
+      if (v === curVal) o.selected = true;
+      inp.appendChild(o);
+    });
+  } else if (field === 'due' || field === 'start') {
+    inp = document.createElement('input');
+    inp.type = 'date';
+    inp.className = 'edit-inline';
+    inp.value = curVal;
+  } else {
+    inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'edit-inline';
+    inp.value = curVal;
+    if (field === 'recurrence') inp.setAttribute('list', 'rep-options');
   }
 
-  document.getElementById('f-task').addEventListener('keypress', e => {
-    if (e.key === 'Enter') add_task();
+  td.replaceChild(inp, span);
+  inp.focus();
+  if (inp.type === 'text') inp.select();
+
+  const commit = () => {
+    let val = (inp.tagName === 'SELECT' ? inp.value : inp.value.trim());
+    if (field === 'recurrence' && val) {
+      val = REPEAT_MAP[val.toLowerCase()] || val;
+    }
+    span.textContent = val || '—';
+    span.classList.toggle('empty', !val);
+    td.replaceChild(span, inp);
+    apiUpdate(id, field, val);
+  };
+
+  const cancel = () => td.replaceChild(span, inp);
+
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') cancel();
   });
 
-  // ── API helper ───────────────────────────────────────────
-  async function api_update(id, field, value) {
-    await fetch('/tasks/update', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({task_id: id, field, value})
-    });
+  if (field === 'priority') {
+    inp.addEventListener('change', commit);
+  } else if (field === 'due' || field === 'start') {
+    let picked = false;
+    inp.addEventListener('change', () => { picked = true; commit(); });
+    inp.addEventListener('blur',   () => { if (!picked) cancel(); });
+  } else {
+    let escaped = false;
+    inp.addEventListener('keydown', e => { if (e.key === 'Escape') escaped = true; });
+    inp.addEventListener('blur', () => { if (!escaped) commit(); escaped = false; });
   }
+}
+
+document.querySelectorAll('.ecell').forEach(span => {
+  span.addEventListener('click', () => makeEditable(span));
+});
+
+// ── Notes ───────────────────────────────────────────────────
+document.querySelectorAll('.note-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const nr = document.querySelector(`.note-row[data-id="${btn.dataset.id}"]`);
+    nr.classList.toggle('open');
+    if (nr.classList.contains('open')) nr.querySelector('.note-textarea').focus();
+  });
+});
+function closeNote(id) {
+  document.querySelector(`.note-row[data-id="${id}"]`).classList.remove('open');
+}
+async function saveNote(id) {
+  const ta  = document.querySelector(`.note-textarea[data-id="${id}"]`);
+  const btn = document.querySelector(`.note-btn[data-id="${id}"]`);
+  await apiUpdate(id, 'notes', ta.value);
+  const has = ta.value.trim().length > 0;
+  btn.textContent = has ? '📝' : '+';
+  btn.classList.toggle('has-note', has);
+  closeNote(id);
+}
+
+// ── Multiselect / Bulk ──────────────────────────────────────
+const bulkBtn  = document.getElementById('bulk-btn');
+const bulkDrop = document.getElementById('bulk-drop');
+document.querySelectorAll('.sel-cb').forEach(cb => {
+  cb.addEventListener('change', () => {
+    bulkBtn.style.display = document.querySelectorAll('.sel-cb:checked').length ? 'block' : 'none';
+  });
+});
+bulkBtn.addEventListener('click', () => bulkDrop.classList.toggle('open'));
+document.addEventListener('click', e => { if (!e.target.closest('.bulk-wrap')) bulkDrop.classList.remove('open'); });
+document.querySelectorAll('.bulk-item').forEach(item => {
+  item.addEventListener('click', async () => {
+    const action = item.dataset.action;
+    const ids = [...document.querySelectorAll('.sel-cb:checked')].map(c => parseInt(c.dataset.id));
+    bulkDrop.classList.remove('open');
+    if (action === 'delete') {
+      if (!confirm(`Delete ${ids.length} task(s)?`)) return;
+    } else {
+      const val = prompt(`Set ${action.replace('set-','')} for ${ids.length} task(s):`);
+      if (val === null) return;
+      await fetch('/tasks/bulk-update', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action, task_ids:ids, value:val})
+      });
+    }
+    if (action === 'delete') {
+      await fetch('/tasks/bulk-update', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({action:'delete', task_ids:ids, value:''})
+      });
+    }
+    location.reload();
+  });
+});
+
+// ── Column sort ──────────────────────────────────────────────
+let sortCol = 'due', sortDir = 'asc';
+document.querySelectorAll('.tasks-table th[data-col]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    sortDir = (sortCol === col && sortDir === 'asc') ? 'desc' : 'asc';
+    sortCol = col;
+    document.querySelectorAll('.tasks-table th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
+    th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+    sortTable();
+  });
+});
+function colVal(row, col) {
+  const sp = row.querySelector(`.ecell[data-field="${col}"]`);
+  const t  = sp ? sp.textContent.trim() : '';
+  if (col === 'priority') return {top:0,high:1,medium:2,low:3,'—':4}[t] ?? 4;
+  return t === '—' ? '￿' : t.toLowerCase();
+}
+function sortTable() {
+  const tbody = document.querySelector('.tasks-table tbody');
+  if (!tbody) return;
+  const pairs = [...document.querySelectorAll('.task-row')].map(row => ({
+    row, note: document.querySelector(`.note-row[data-id="${row.dataset.id}"]`)
+  }));
+  pairs.sort((a,b) => {
+    const av = colVal(a.row, sortCol), bv = colVal(b.row, sortCol);
+    if (av < bv) return sortDir === 'asc' ? -1 : 1;
+    if (av > bv) return sortDir === 'asc' ?  1 : -1;
+    return 0;
+  });
+  pairs.forEach(({row,note}) => { tbody.appendChild(row); if (note) tbody.appendChild(note); });
+}
+
+// ── Add task ─────────────────────────────────────────────────
+async function addTask() {
+  const text = document.getElementById('f-task').value.trim();
+  if (!text) { document.getElementById('f-task').focus(); return; }
+
+  const tags = [];
+  const pri   = document.getElementById('f-pri').value;
+  const ctx   = document.getElementById('f-ctx').value.trim();
+  const due   = document.getElementById('f-due').value;
+  const rep   = document.getElementById('f-rep').value.trim();
+  const start = document.getElementById('f-start').value || today;
+
+  if (pri)   tags.push(`#p:${pri}`);
+  if (due)   tags.push(`#due:${due}`);
+  if (ctx)   tags.push(`#ctx:${ctx}`);
+  if (rep)   tags.push(`#rep:${REPEAT_MAP[rep.toLowerCase()] || rep}`);
+  tags.push(`#start:${start}`);
+
+  const fullText = `${text} ${tags.join(' ')}`;
+  const res = await fetch('/tasks/add', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({text: fullText, section:'Inbox'})
+  });
+  if (res.ok) location.reload();
+  else alert('Error adding task');
+}
+document.getElementById('f-task').addEventListener('keypress', e => {
+  if (e.key === 'Enter') addTask();
+});
+
+// ── API helper ───────────────────────────────────────────────
+async function apiUpdate(id, field, value) {
+  await fetch('/tasks/update', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({task_id:id, field, value})
+  });
+}
 </script>
 {% endblock %}

@@ -663,8 +663,7 @@ def tasks_update():
         if value == "true":
             task.complete_task()
         else:
-            task.complete = False
-            task.tags.pop('#done:', None)
+            task.reopen_task()
     else:
         return {"error": "unknown field"}, 400
 
