@@ -61,7 +61,18 @@
   }
   .act-btn.archive { background: var(--success); color: #fff; border: none; }
   .act-btn.wikify  { background: var(--accent);  color: #fff; border: none; }
+  .act-btn.wikify:disabled { opacity: .6; cursor: default; }
   .act-btn.delete  { color: var(--danger); border-color: var(--danger); background: transparent; }
+
+  /* Inline wikify progress */
+  .item-progress {
+    display: none; border-top: 1px solid var(--border);
+    padding: 10px 14px; background: var(--bg2);
+  }
+  .item-progress.active { display: block; }
+  .prog-tool  { font-size: 11px; font-family: monospace; color: var(--text2); padding: 1px 0; }
+  .prog-done  { font-size: 12px; font-weight: 700; color: var(--success); margin-top: 6px; }
+  .prog-error { font-size: 12px; font-weight: 700; color: var(--danger);  margin-top: 6px; }
 
   .item-reader {
     display: none; border-top: 1px solid var(--border);
@@ -116,9 +127,12 @@
 
       <div class="item-actions">
         <button class="act-btn archive" onclick="archiveItem('{{ item.name | e }}', {{ loop.index }})">Archive</button>
-        <button class="act-btn wikify"  onclick="wikifyItem('{{ item.name | e }}')">Wikify with AI</button>
+        <button class="act-btn wikify" id="wikify-{{ loop.index }}"
+                onclick="wikifyItem('{{ item.name | e }}', {{ loop.index }})">Wikify with AI</button>
         <button class="act-btn delete"  onclick="deleteItem('{{ item.name | e }}', {{ loop.index }})">Delete</button>
       </div>
+
+      <div class="item-progress" id="progress-{{ loop.index }}"></div>
 
       <div class="item-reader" id="reader-{{ loop.index }}">
         <div class="reader-loading">Loading…</div>
@@ -201,9 +215,61 @@ async function deleteItem(name, idx) {
   document.getElementById('item-' + idx)?.remove();
 }
 
-function wikifyItem(name) {
-  localStorage.setItem('pendingChatPrompt', 'Process inbox file: ' + name);
-  window.location.href = '/chat';
+async function wikifyItem(name, idx) {
+  const btn      = document.getElementById('wikify-' + idx);
+  const progress = document.getElementById('progress-' + idx);
+  btn.disabled   = true;
+  btn.textContent = 'Working…';
+  progress.className = 'item-progress active';
+  progress.innerHTML = '<div class="prog-tool">Starting AI ingest…</div>';
+
+  try {
+    const sendResp = await fetch('/chat/send', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: 'Process inbox file: ' + name}),
+    });
+    if (!sendResp.ok) {
+      const err = await sendResp.json().catch(() => ({}));
+      throw new Error(err.error || 'HTTP ' + sendResp.status);
+    }
+    const job = await sendResp.json();
+
+    const streamResp = await fetch('/chat/stream/' + job.job_id);
+    const reader  = streamResp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const tools = [];
+
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, {stream: true});
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const ev = JSON.parse(line);
+          if (ev.type === 'tool') {
+            tools.push('⚙ ' + ev.name + (ev.arg ? '  ' + ev.arg : ''));
+            progress.innerHTML = tools.map(t => `<div class="prog-tool">${t}</div>`).join('');
+          } else if (ev.type === 'retrying') {
+            const msg = ev.msg || ('Retrying in ' + ev.delay + 's…');
+            tools.push('⏳ ' + msg);
+            progress.innerHTML = tools.map(t => `<div class="prog-tool">${t}</div>`).join('');
+          } else if (ev.type === 'error') {
+            progress.innerHTML += `<div class="prog-error">Error: ${ev.content}</div>`;
+          }
+        } catch(e) {}
+      }
+    }
+    progress.innerHTML += '<div class="prog-done">Done — <a href="/chat" style="color:inherit">view in chat</a></div>';
+    btn.textContent = 'Wikified ✓';
+  } catch(e) {
+    progress.innerHTML += `<div class="prog-error">Failed: ${e.message}</div>`;
+    btn.disabled = false;
+    btn.textContent = 'Wikify with AI';
+  }
 }
 </script>
 {% endblock %}
