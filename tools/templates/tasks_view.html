@@ -482,6 +482,7 @@
   function close_edit(id, field, save) {
     const span = document.querySelector(`.ecell[data-id="${id}"][data-field="${field}"]`);
     const inp  = document.querySelector(`.edit-input[data-id="${id}"][data-field="${field}"]`);
+
     if (!span || !inp) return;
 
     if (save) {
@@ -503,7 +504,7 @@
     }
 
     inp.classList.remove('active');
-    span.style.display = '';
+    span.style.display = 'block';  // Force show, don't rely on cascade
     activeEditId = null;
     activeEditField = null;
   }
