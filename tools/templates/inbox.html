@@ -59,8 +59,10 @@
     cursor: pointer; border: 1px solid var(--border);
     background: var(--bg); color: var(--text); white-space: nowrap;
   }
+  .act-btn.read    { background: var(--accent);  color: #fff; border: none; text-decoration: none; }
+  .act-btn.open    { background: var(--bg3);    color: var(--text); }
   .act-btn.archive { background: var(--success); color: #fff; border: none; }
-  .act-btn.wikify  { background: var(--accent);  color: #fff; border: none; }
+  .act-btn.wikify  { background: var(--bg3);    color: var(--text); }
   .act-btn.wikify:disabled { opacity: .6; cursor: default; }
   .act-btn.delete  { color: var(--danger); border-color: var(--danger); background: transparent; }
 
@@ -126,6 +128,11 @@
       </div>
 
       <div class="item-actions">
+        {% if item.has_content %}
+          <a class="act-btn read" href="/inbox/read/{{ item.name | urlencode }}">Read</a>
+        {% elif item.source_url %}
+          <a class="act-btn open" href="{{ item.source_url }}" target="_blank" rel="noopener">Open ↗</a>
+        {% endif %}
         <button class="act-btn archive" onclick="archiveItem('{{ item.name | e }}', {{ loop.index }})">Archive</button>
         <button class="act-btn wikify" id="wikify-{{ loop.index }}"
                 onclick="wikifyItem('{{ item.name | e }}', {{ loop.index }})">Wikify with AI</button>
