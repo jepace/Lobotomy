@@ -487,7 +487,12 @@ def list_inbox() -> list:
             text = ""
         lines = [l.strip() for l in text.splitlines() if l.strip()]
         title   = lines[0][:100] if lines else f.stem
-        excerpt = " ".join(lines[1:4])[:200] if len(lines) > 1 else ""
+        # For .url files show the URL as the excerpt
+        if f.suffix == ".url":
+            url_line = next((l for l in lines if l.startswith("URL:")), "")
+            excerpt  = url_line[4:].strip()[:200]
+        else:
+            excerpt = " ".join(lines[1:4])[:200] if len(lines) > 1 else ""
         mtime   = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
         items.append({"name": f.name, "title": title, "excerpt": excerpt, "date": mtime})
     return items
@@ -730,7 +735,60 @@ def inbox():
     return render_template("inbox.html", items=list_inbox())
 
 
-@app.route("/inbox/add", methods=["POST"])
+@app.route("/inbox/clip")
+@require_login
+def inbox_clip():
+    """
+    Browser bookmarklet / iOS Shortcut endpoint.
+    GET /inbox/clip?url=...&title=...
+    Saves a .url file to raw/inbox/ and returns a lightweight confirmation page.
+    """
+    url   = request.args.get("url",   "").strip()
+    title = request.args.get("title", "").strip()
+    if not url:
+        return "Missing url parameter", 400
+
+    # Build file content — first line is title (for reading list display)
+    display_title = title or url
+    content = f"{display_title}\nURL: {url}\n"
+
+    # Slug from title or URL
+    slug_src = title if title else url.split("//")[-1].split("?")[0]
+    slug = re.sub(r"[^a-z0-9]+", "-", slug_src.lower())[:60].strip("-")
+    name = f"{slug}.url"
+    dest = RAW_DIR / "inbox" / name
+    # Avoid collisions
+    if dest.exists():
+        import time as _time
+        name = f"{slug}-{int(_time.time())}.url"
+        dest = RAW_DIR / "inbox" / name
+    (RAW_DIR / "inbox").mkdir(parents=True, exist_ok=True)
+    dest.write_text(content, encoding="utf-8")
+
+    inbox_url = url_for("inbox", _external=False)
+    return f"""<!doctype html>
+<html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<style>
+  body{{font-family:-apple-system,sans-serif;background:#000;color:#f2f2f7;
+       display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
+  .card{{background:#1c1c1e;border-radius:16px;padding:28px 24px;max-width:340px;
+         width:100%;text-align:center}}
+  h1{{font-size:22px;margin-bottom:6px}}
+  p{{color:#8e8e93;font-size:14px;margin:0 0 20px}}
+  a{{display:block;background:#0a84ff;color:#fff;text-decoration:none;
+     border-radius:10px;padding:12px;font-weight:600;font-size:16px;margin-bottom:10px}}
+  a.sec{{background:#2c2c2e;color:#f2f2f7}}
+</style></head>
+<body><div class="card">
+  <h1>Saved</h1>
+  <p>{display_title[:80]}</p>
+  <a href="{inbox_url}">View Reading List</a>
+  <a class="sec" onclick="history.back();return false" href="#">Back</a>
+</div></body></html>"""
+
+
+
 @require_login
 def inbox_add():
     data    = request.get_json(silent=True) or {}
@@ -773,7 +831,13 @@ def inbox_view(filename):
         abort(404)
     if not p.exists():
         abort(404)
-    return {"content": p.read_text(encoding="utf-8", errors="replace")}
+    content = p.read_text(encoding="utf-8", errors="replace")
+    # For .url files, expose the URL separately so the UI can open it
+    if p.suffix == ".url":
+        url_line = next((l for l in content.splitlines() if l.startswith("URL:")), "")
+        url = url_line[4:].strip()
+        return {"content": content, "url": url}
+    return {"content": content, "url": None}
 
 
 @app.route("/inbox/archive", methods=["POST"])

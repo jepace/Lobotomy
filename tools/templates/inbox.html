@@ -147,10 +147,35 @@
   </div>
   {% endif %}
 
+  <!-- Bookmarklet / Shortcut setup -->
+  <div style="margin:16px 12px 0; padding:14px; background:var(--bg2); border-radius:12px;">
+    <div style="font-size:13px; font-weight:700; margin-bottom:10px;">Save from your browser</div>
+
+    <div style="font-size:12px; color:var(--text2); margin-bottom:6px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;">Bookmarklet — Firefox &amp; Safari</div>
+    <div style="font-size:12px; color:var(--text2); margin-bottom:8px;">Drag this link to your bookmarks bar. Tap it on any page to save to your reading list.</div>
+    <a id="bookmarklet-link" href="#" style="display:inline-block; padding:7px 14px; background:var(--accent); color:#fff; border-radius:8px; font-size:13px; font-weight:700; text-decoration:none; margin-bottom:14px;">📖 Save to Lobotomy</a>
+    <div style="font-size:11px; color:var(--text2);">On iOS: tap the link, choose <em>Add Bookmark</em>, save it to Favorites. Then tap it from any article.</div>
+
+    <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
+      <div style="font-size:12px; color:var(--text2); margin-bottom:6px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;">iOS Shortcut (share sheet)</div>
+      <div style="font-size:12px; color:var(--text2); margin-bottom:6px;">Create a Shortcut that sends the current URL to Lobotomy — then it appears in your iOS share sheet.</div>
+      <div style="font-size:11px; font-family:monospace; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px; color:var(--text); white-space:pre-wrap; word-break:break-all;" id="shortcut-url"></div>
+      <div style="font-size:11px; color:var(--text2); margin-top:6px;">In Shortcuts app: New → <em>Get Contents of URL</em> → paste the URL above with <code>?url=[Shortcut Input]&amp;title=[Name]</code> → set method GET → add <em>Show Result</em>. Enable in share sheet under Shortcut settings.</div>
+    </div>
+  </div>
+
   <div style="height:20px;"></div>
 </div>
 
 <script>
+// Build bookmarklet and shortcut URL from current origin
+(function() {
+  const base = location.origin + '/inbox/clip';
+  const bm   = `javascript:(function(){var u=encodeURIComponent(location.href),t=encodeURIComponent(document.title);location.href='${base}?url='+u+'&title='+t;})();`;
+  document.getElementById('bookmarklet-link').href = bm;
+  document.getElementById('shortcut-url').textContent = base + '?url=[URL]&title=[Page Title]';
+})();
+</script>
 function toggleSave() {
   const p = document.getElementById('save-panel');
   p.classList.toggle('open');
@@ -181,11 +206,23 @@ async function toggleItem(idx, name) {
     try {
       const resp = await fetch('/inbox/view/' + encodeURIComponent(name));
       const data = await resp.json();
-      const pre  = document.createElement('pre');
-      pre.className = 'reader-content';
-      pre.textContent = data.content;
       reader.innerHTML = '';
-      reader.appendChild(pre);
+      if (data.url) {
+        // .url file — show link to open the article
+        reader.innerHTML =
+          `<div style="padding:4px 0 8px">` +
+          `<a href="${data.url}" target="_blank" rel="noopener" ` +
+          `style="color:var(--accent);word-break:break-all;font-size:14px;">${data.url}</a>` +
+          `</div>` +
+          `<a href="${data.url}" target="_blank" rel="noopener" ` +
+          `style="display:inline-block;padding:8px 14px;background:var(--accent);color:#fff;` +
+          `border-radius:8px;font-size:13px;font-weight:700;text-decoration:none;">Open article ↗</a>`;
+      } else {
+        const pre = document.createElement('pre');
+        pre.className = 'reader-content';
+        pre.textContent = data.content;
+        reader.appendChild(pre);
+      }
       loaded[idx] = true;
     } catch(e) {
       reader.innerHTML = '<div class="reader-loading">Could not load.</div>';
