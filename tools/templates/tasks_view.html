@@ -117,6 +117,21 @@
   .note-btn:hover, .note-btn.has-note { opacity: 1; }
 
   .empty-state { text-align: center; padding: 60px 20px; color: var(--text2); }
+
+  /* Date group header rows (injected by JS when sorting by due) */
+  .group-header-row td {
+    background: var(--bg3) !important;
+    color: var(--text2);
+    font-size: 10px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .08em;
+    padding: 5px 10px; border-top: 2px solid var(--border);
+  }
+  .group-header-row.grp-overdue td {
+    background: #ff3b3015 !important; color: var(--danger); border-top-color: var(--danger);
+  }
+  .group-header-row.grp-today td {
+    background: #ff950015 !important; color: #ff9500; border-top-color: #ff9500;
+  }
 </style>
 {% endblock %}
 
@@ -211,46 +226,46 @@
   <tbody>
   {% for task in tasks %}
   <tr class="task-row pri-{{ task.priority or 'none' }}{% if task.complete %} completed{% endif %}"
-      data-id="{{ loop.index0 }}">
-    <td><input type="checkbox" class="done-cb" data-id="{{ loop.index0 }}"
+      data-id="{{ task.line_num }}">
+    <td><input type="checkbox" class="done-cb" data-id="{{ task.line_num }}"
         {% if task.complete %}checked{% endif %}></td>
     <td>
       <span class="ecell task-name-text{% if not task.description %} empty{% endif %}"
-            data-id="{{ loop.index0 }}" data-field="description">{{ task.description or '—' }}</span>
+            data-id="{{ task.line_num }}" data-field="description">{{ task.description or '—' }}</span>
     </td>
     <td>
       <span class="ecell{% if not task.context %} empty{% endif %}"
-            data-id="{{ loop.index0 }}" data-field="context">{{ task.context or '—' }}</span>
+            data-id="{{ task.line_num }}" data-field="context">{{ task.context or '—' }}</span>
     </td>
     <td>
       <span class="ecell{% if not task.due %} empty{% endif %}"
-            data-id="{{ loop.index0 }}" data-field="due">{{ task.due or '—' }}</span>
+            data-id="{{ task.line_num }}" data-field="due">{{ task.due or '—' }}</span>
     </td>
     <td>
       <span class="ecell{% if not task.recurrence %} empty{% endif %}"
-            data-id="{{ loop.index0 }}" data-field="recurrence">{{ task.recurrence or '—' }}</span>
+            data-id="{{ task.line_num }}" data-field="recurrence">{{ task.recurrence or '—' }}</span>
     </td>
     <td>
       <span class="ecell{% if not task.priority %} empty{% endif %}"
-            data-id="{{ loop.index0 }}" data-field="priority">{{ task.priority or '—' }}</span>
+            data-id="{{ task.line_num }}" data-field="priority">{{ task.priority or '—' }}</span>
     </td>
     <td>
       <span class="ecell{% if not task.start %} empty{% endif %}"
-            data-id="{{ loop.index0 }}" data-field="start">{{ task.start or '—' }}</span>
+            data-id="{{ task.line_num }}" data-field="start">{{ task.start or '—' }}</span>
     </td>
     <td>
       <button class="note-btn{% if task.notes %} has-note{% endif %}"
-              data-id="{{ loop.index0 }}">{% if task.notes %}📝{% else %}+{% endif %}</button>
+              data-id="{{ task.line_num }}">{% if task.notes %}📝{% else %}+{% endif %}</button>
     </td>
-    <td><input type="checkbox" class="sel-cb" data-id="{{ loop.index0 }}"></td>
+    <td><input type="checkbox" class="sel-cb" data-id="{{ task.line_num }}"></td>
   </tr>
-  <tr class="note-row" data-id="{{ loop.index0 }}">
+  <tr class="note-row" data-id="{{ task.line_num }}">
     <td colspan="9">
-      <textarea class="note-textarea" data-id="{{ loop.index0 }}"
+      <textarea class="note-textarea" data-id="{{ task.line_num }}"
                 placeholder="Notes…">{{ task.notes }}</textarea>
       <div class="note-actions">
-        <button onclick="saveNote({{ loop.index0 }})">Save</button>
-        <button onclick="closeNote({{ loop.index0 }})">Cancel</button>
+        <button onclick="saveNote({{ task.line_num }})">Save</button>
+        <button onclick="closeNote({{ task.line_num }})">Cancel</button>
       </div>
     </td>
   </tr>
@@ -443,7 +458,9 @@ document.querySelectorAll('.bulk-item').forEach(item => {
   });
 });
 
-// ── Column sort ──────────────────────────────────────────────
+// ── Column sort with date grouping ──────────────────────────
+const PRIORITY_ORDER = {top:0, high:1, medium:2, low:3};
+
 let sortCol = 'due', sortDir = 'asc';
 document.querySelectorAll('.tasks-table th[data-col]').forEach(th => {
   th.addEventListener('click', () => {
@@ -455,25 +472,83 @@ document.querySelectorAll('.tasks-table th[data-col]').forEach(th => {
     sortTable();
   });
 });
+
 function colVal(row, col) {
   const sp = row.querySelector(`.ecell[data-field="${col}"]`);
   const t  = sp ? sp.textContent.trim() : '';
-  if (col === 'priority') return {top:0,high:1,medium:2,low:3,'—':4}[t] ?? 4;
+  if (col === 'priority') {
+    return PRIORITY_ORDER[t.replace(/^:+/, '').toLowerCase()] ?? 4;
+  }
   return t === '—' ? '￿' : t.toLowerCase();
 }
+
+function dateGroup(due) {
+  if (!due || due === '—') return {cls:'grp-none', label:'No due date'};
+  const d7 = new Date(Date.now() + 7*86400000).toISOString().slice(0,10);
+  if (due < today)    return {cls:'grp-overdue', label:'Overdue'};
+  if (due === today)  return {cls:'grp-today',   label:'Today'};
+  if (due <= d7)      return {cls:'grp-week',    label:'Next 7 days'};
+
+  const ym  = due.slice(0,7);
+  const [yr, mo] = ym.split('-').map(Number);
+  const thisDate = new Date(today);
+  const thisMo   = thisDate.getMonth();   // 0-based
+  const thisYr   = thisDate.getFullYear();
+  const isCurMo  = (yr === thisYr && mo === thisMo + 1);
+  const isNextMo = (yr === thisYr && mo === thisMo + 2) ||
+                   (thisMo === 11 && yr === thisYr + 1 && mo === 1);
+  const label = new Date(yr, mo - 1, 1).toLocaleString('default', {month:'long', year:'numeric'});
+  if (isCurMo)  return {cls:'grp-month', label: label + ' (this month)'};
+  if (isNextMo) return {cls:'grp-month', label: label + ' (next month)'};
+  return {cls:'grp-future', label};
+}
+
+function removeGroupHeaders() {
+  document.querySelectorAll('.group-header-row').forEach(r => r.remove());
+}
+
 function sortTable() {
   const tbody = document.querySelector('.tasks-table tbody');
   if (!tbody) return;
+  removeGroupHeaders();
+
   const pairs = [...document.querySelectorAll('.task-row')].map(row => ({
     row, note: document.querySelector(`.note-row[data-id="${row.dataset.id}"]`)
   }));
+
   pairs.sort((a,b) => {
     const av = colVal(a.row, sortCol), bv = colVal(b.row, sortCol);
-    if (av < bv) return sortDir === 'asc' ? -1 : 1;
-    if (av > bv) return sortDir === 'asc' ?  1 : -1;
+    let cmp = 0;
+    if (av < bv) cmp = sortDir === 'asc' ? -1 : 1;
+    else if (av > bv) cmp = sortDir === 'asc' ?  1 : -1;
+    if (cmp !== 0) return cmp;
+    // Sub-sort: due→priority, priority→due, others→description
+    if (sortCol === 'due')      return colVal(a.row,'priority') - colVal(b.row,'priority');
+    if (sortCol === 'priority') {
+      const adv = colVal(a.row,'due'), bdv = colVal(b.row,'due');
+      return adv < bdv ? -1 : adv > bdv ? 1 : 0;
+    }
     return 0;
   });
+
   pairs.forEach(({row,note}) => { tbody.appendChild(row); if (note) tbody.appendChild(note); });
+
+  // Inject date group headers when sorting by due asc
+  if (sortCol === 'due' && sortDir === 'asc') {
+    let lastKey = null;
+    for (const {row} of pairs) {
+      const due = row.querySelector('.ecell[data-field="due"]')?.textContent.trim() || '—';
+      const grp = dateGroup(due);
+      const key = grp.label;
+      if (key !== lastKey) {
+        const tr = document.createElement('tr');
+        tr.className = `group-header-row ${grp.cls}`;
+        tr.innerHTML = `<td colspan="9">${grp.label}</td>`;
+        tbody.insertBefore(tr, row);
+        lastKey = key;
+      }
+    }
+  }
 }
 
 // ── Add task ─────────────────────────────────────────────────

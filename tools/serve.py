@@ -473,14 +473,118 @@ def _add_task(text: str, section: str = "Inbox") -> None:
 # Inbox helpers
 # ---------------------------------------------------------------------------
 
+def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
+    """Fetch a URL and return (clean_text, error). Uses stdlib only."""
+    import urllib.request
+    import urllib.error
+    from html.parser import HTMLParser
+
+    class _Reader(HTMLParser):
+        SKIP  = {"script", "style", "noscript", "nav", "header", "footer",
+                 "aside", "template", "form", "button"}
+        BLOCK = {"p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6",
+                 "li", "tr", "blockquote", "article", "section", "pre"}
+
+        def __init__(self):
+            super().__init__()
+            self._skip = 0
+            self.parts = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag in self.SKIP:
+                self._skip += 1
+            elif tag in self.BLOCK and not self._skip:
+                self.parts.append("\n\n")
+
+        def handle_endtag(self, tag):
+            if tag in self.SKIP and self._skip:
+                self._skip -= 1
+
+        def handle_data(self, data):
+            if not self._skip:
+                self.parts.append(data)
+
+    headers = {
+        "User-Agent":      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
+        "Accept":          "text/html,application/xhtml+xml,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "identity",
+    }
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            ct  = resp.headers.get("Content-Type", "")
+            raw = resp.read(1_000_000)
+    except urllib.error.HTTPError as e:
+        return None, f"HTTP {e.code}: {e.reason}"
+    except Exception as e:
+        return None, str(e)
+
+    if "html" in ct.lower():
+        parser = _Reader()
+        try:
+            parser.feed(raw.decode("utf-8", errors="replace"))
+        except Exception:
+            pass
+        text = re.sub(r"\n{3,}", "\n\n", "".join(parser.parts)).strip()
+        if not text:
+            return None, "No text extracted — site may require JavaScript or be paywalled"
+        return text[:100_000], None
+    else:
+        return raw.decode("utf-8", errors="replace")[:100_000], None
+
+
 def list_inbox() -> list:
     inbox = RAW_DIR / "inbox"
     if not inbox.is_dir():
         return []
-    return sorted(
-        f.name for f in inbox.iterdir()
-        if f.is_file() and f.name != ".gitkeep"
-    )
+    items = []
+    for f in sorted(inbox.iterdir(), key=lambda x: -x.stat().st_mtime):
+        if not f.is_file() or f.name.startswith("."):
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            text = ""
+
+        has_content = False
+        source_url  = ""
+        if f.suffix == ".md":
+            meta, _ = _parse_frontmatter(text)
+            if meta.get("url"):
+                has_content = True
+                source_url  = meta.get("url", "")
+                title       = meta.get("title", f.stem)[:100]
+                excerpt     = source_url
+            else:
+                lines   = [l.strip() for l in text.splitlines() if l.strip()]
+                title   = lines[0][:100] if lines else f.stem
+                excerpt = " ".join(lines[1:4])[:200] if len(lines) > 1 else ""
+        elif f.suffix == ".url":
+            lines      = [l.strip() for l in text.splitlines() if l.strip()]
+            title      = lines[0][:100] if lines else f.stem
+            url_line   = next((l for l in lines if l.startswith("URL:")), "")
+            source_url = url_line[4:].strip()
+            excerpt    = source_url
+        else:
+            lines   = [l.strip() for l in text.splitlines() if l.strip()]
+            title   = lines[0][:100] if lines else f.stem
+            excerpt = " ".join(lines[1:4])[:200] if len(lines) > 1 else ""
+
+        mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
+        items.append({
+            "name":        f.name,
+            "title":       title,
+            "excerpt":     excerpt,
+            "date":        mtime,
+            "has_content": has_content,
+            "source_url":  source_url,
+            "ext":         f.suffix,
+        })
+    return items
+
+    return items
 
 # ---------------------------------------------------------------------------
 # Wiki navigation helpers
@@ -555,6 +659,12 @@ def chat_stream(job_id):
     def generate():
         yield from job_queue.tail(job_id)
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
+
+
+@app.route("/chat/status")
+@require_login
+def chat_status():
+    return job_queue.status()
 
 
 @app.route("/chat/clear", methods=["POST"])
@@ -714,6 +824,100 @@ def inbox():
     return render_template("inbox.html", items=list_inbox())
 
 
+@app.route("/inbox/clip")
+@require_login
+def inbox_clip():
+    """
+    Browser bookmarklet / iOS Shortcut endpoint.
+    GET /inbox/clip?url=...&title=...
+    Fetches the article, saves full content as .md (falls back to .url if fetch fails).
+    Returns a lightweight dark-mode confirmation page.
+    """
+    url   = request.args.get("url",   "").strip()
+    title = request.args.get("title", "").strip()
+    if not url:
+        return "Missing url parameter", 400
+
+    display_title = title or url
+    slug_src = title if title else url.split("//")[-1].split("?")[0]
+    slug = re.sub(r"[^a-z0-9]+", "-", slug_src.lower())[:60].strip("-") or "clipping"
+    (RAW_DIR / "inbox").mkdir(parents=True, exist_ok=True)
+
+    def _unique(base_name):
+        dest = RAW_DIR / "inbox" / base_name
+        if not dest.exists():
+            return base_name, dest
+        stem, ext = base_name.rsplit(".", 1)
+        import time as _t
+        name = f"{stem}-{int(_t.time())}.{ext}"
+        return name, RAW_DIR / "inbox" / name
+
+    # Try to fetch full article content
+    text, fetch_err = _clip_fetch(url)
+    read_url = None
+
+    if text:
+        base_name, dest = _unique(f"{slug}.md")
+        today = datetime.date.today().isoformat()
+        md_content = (
+            f'---\ntitle: "{display_title}"\nurl: {url}\nsaved: {today}\n---\n\n'
+            f'{text}'
+        )
+        dest.write_text(md_content, encoding="utf-8")
+        read_url = url_for("inbox_read", filename=base_name)
+        status_msg = "Saved with full content"
+    else:
+        base_name, dest = _unique(f"{slug}.url")
+        dest.write_text(f"{display_title}\nURL: {url}\n", encoding="utf-8")
+        status_msg = f"URL saved — offline reading unavailable ({fetch_err or 'fetch failed'})"
+
+    inbox_url = url_for("inbox")
+    read_link = f'<a href="{read_url}">Read now</a>' if read_url else ""
+    return f"""<!doctype html>
+<html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<style>
+  body{{font-family:-apple-system,sans-serif;background:#000;color:#f2f2f7;
+       display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:16px;box-sizing:border-box}}
+  .card{{background:#1c1c1e;border-radius:16px;padding:28px 24px;max-width:340px;width:100%;text-align:center}}
+  h1{{font-size:22px;margin:0 0 6px}}
+  .sub{{color:#8e8e93;font-size:13px;margin:0 0 20px;word-break:break-word}}
+  a{{display:block;text-decoration:none;border-radius:10px;padding:12px;
+     font-weight:600;font-size:16px;margin-bottom:10px}}
+  .pri{{background:#0a84ff;color:#fff}}
+  .sec{{background:#2c2c2e;color:#f2f2f7}}
+</style></head>
+<body><div class="card">
+  <h1>Saved</h1>
+  <p class="sub">{display_title[:80]}</p>
+  {read_link}
+  <a class="pri" href="{inbox_url}">Reading List</a>
+  <a class="sec" href="javascript:history.back()">Back</a>
+</div></body></html>"""
+
+
+@app.route("/inbox/read/<path:filename>")
+@require_login
+def inbox_read(filename):
+    p = RAW_DIR / "inbox" / filename
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        abort(404)
+    if not p.exists():
+        abort(404)
+    text = p.read_text(encoding="utf-8", errors="replace")
+    meta, body = _parse_frontmatter(text)
+    return render_template(
+        "reader.html",
+        title   = meta.get("title", p.stem),
+        url     = meta.get("url", ""),
+        saved   = meta.get("saved", ""),
+        body    = body,
+        filename= filename,
+    )
+
+
 @app.route("/inbox/add", methods=["POST"])
 @require_login
 def inbox_add():
@@ -744,6 +948,51 @@ def inbox_delete():
         return {"error": "Invalid path"}, 400
     if p.exists():
         p.unlink()
+    return {"ok": True}
+
+
+@app.route("/inbox/view/<path:filename>")
+@require_login
+def inbox_view(filename):
+    p = RAW_DIR / "inbox" / filename
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        abort(404)
+    if not p.exists():
+        abort(404)
+    content = p.read_text(encoding="utf-8", errors="replace")
+    # For .url files, expose the URL separately so the UI can open it
+    if p.suffix == ".url":
+        url_line = next((l for l in content.splitlines() if l.startswith("URL:")), "")
+        url = url_line[4:].strip()
+        return {"content": content, "url": url}
+    return {"content": content, "url": None}
+
+
+@app.route("/inbox/archive", methods=["POST"])
+@require_login
+def inbox_archive():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("filename") or "").strip()
+    if not name:
+        return {"error": "No filename"}, 400
+    src = RAW_DIR / "inbox" / name
+    try:
+        src.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        return {"error": "Invalid path"}, 400
+    if not src.exists():
+        return {"error": "File not found"}, 404
+    dst = RAW_DIR / name
+    # Avoid overwriting existing files in raw/
+    if dst.exists():
+        stem, suffix = src.stem, src.suffix
+        i = 1
+        while dst.exists():
+            dst = RAW_DIR / f"{stem}-{i}{suffix}"
+            i += 1
+    src.rename(dst)
     return {"ok": True}
 
 # ---------------------------------------------------------------------------

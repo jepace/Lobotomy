@@ -190,6 +190,14 @@
     {% endfor %}
   </div>
 
+  <div id="active-job-banner" style="display:none; flex-shrink:0; background:var(--accent); color:#fff; font-size:13px; padding:8px 16px; display:none; align-items:center; gap:8px;">
+    <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#fff; animation:pulse 1.4s infinite;"></span>
+    <span id="active-job-msg">AI is working in the background — tap to reconnect</span>
+  </div>
+  <style>
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  </style>
+
   <div class="quick-prompts" id="quick-prompts">
     <div class="qp" onclick="usePrompt('Process inbox')">Process inbox</div>
     <div class="qp" onclick="usePrompt('Lint the wiki')">Lint wiki</div>
@@ -232,6 +240,98 @@ function escHtml(s) {
 }
 
 var sending = false;
+
+// ── Stream reader (shared by sendMessage and reconnectToJob) ─────────────
+async function readStream(streamResp, toolsEl, bubbleEl) {
+  var fullText = '';
+  var tools    = [];
+  var reader   = streamResp.body.getReader();
+  var decoder  = new TextDecoder();
+  var buffer   = '';
+
+  while (true) {
+    var chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, {stream: true});
+    var lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (!line) continue;
+      try {
+        var ev = JSON.parse(line);
+        if (ev.type === 'tool') {
+          tools.push(ev.name + '  ' + ev.arg);
+          toolsEl.style.display = 'block';
+          toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">⚙ ' + escHtml(t) + '</div>'; }).join('');
+        } else if (ev.type === 'text') {
+          fullText += ev.content;
+          bubbleEl.innerHTML = md(fullText);
+        } else if (ev.type === 'retrying') {
+          var retryMsg = ev.msg || ('AI busy — retrying in ' + ev.delay + 's (attempt ' + ev.attempt + '/' + ev.max + ')');
+          tools.push('⏳ ' + retryMsg);
+          toolsEl.style.display = 'block';
+          toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">' + escHtml(t) + '</div>'; }).join('');
+        } else if (ev.type === 'error') {
+          bubbleEl.innerHTML = '<span style="color:var(--danger)">Error: ' + escHtml(ev.content) + '</span>';
+        }
+        scrollToBottom();
+      } catch(e) {}
+    }
+  }
+  return fullText;
+}
+
+// ── Check for active job on page load ───────────────────────────────────
+async function checkActiveJob() {
+  try {
+    var resp   = await fetch('/chat/status');
+    var status = await resp.json();
+    if (!status.running || !status.job_id) return;
+    showBanner('AI is working in the background — reconnecting…');
+    await reconnectToJob(status.job_id);
+  } catch(e) {}
+}
+
+function showBanner(msg) {
+  var b = document.getElementById('active-job-banner');
+  document.getElementById('active-job-msg').textContent = msg;
+  b.style.display = 'flex';
+}
+
+function hideBanner() {
+  document.getElementById('active-job-banner').style.display = 'none';
+}
+
+async function reconnectToJob(jobId) {
+  sending = true;
+  document.getElementById('send-btn').disabled = true;
+
+  var id      = appendAssistantMsg();
+  var toolsEl = document.getElementById('tools-' + id);
+  var bubbleEl = document.getElementById('bubble-' + id);
+
+  // Prepend a "reconnected" note so user knows this is resumed output
+  toolsEl.style.display = 'block';
+  toolsEl.innerHTML = '<div class="tool-item" style="color:var(--accent)">↩ Reconnected to active job</div>';
+
+  try {
+    var resp = await fetch('/chat/stream/' + jobId);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    var fullText = await readStream(resp, toolsEl, bubbleEl);
+    if (!fullText && bubbleEl.querySelector('.typing')) {
+      bubbleEl.innerHTML = '<span style="color:var(--text2)">Job finished — reload to see full history.</span>';
+    }
+  } catch(e) {
+    bubbleEl.innerHTML = '<span style="color:var(--text2)">Reconnect ended: ' + escHtml(e.message) + '</span>';
+  } finally {
+    hideBanner();
+    sending = false;
+    document.getElementById('send-btn').disabled = false;
+    scrollToBottom();
+  }
+}
 
 function autoResize(el) {
   el.style.height = 'auto';
@@ -300,7 +400,6 @@ async function sendMessage() {
   var bubbleEl = document.getElementById('bubble-' + id);
 
   var fullText = '';
-  var tools    = [];
 
   try {
     var sendResp = await fetch('/chat/send', {
@@ -316,42 +415,7 @@ async function sendMessage() {
 
     var resp    = await fetch('/chat/stream/' + job.job_id);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
-
-    var reader  = resp.body.getReader();
-    var decoder = new TextDecoder();
-    var buffer  = '';
-
-    while (true) {
-      var chunk = await reader.read();
-      if (chunk.done) break;
-      buffer += decoder.decode(chunk.value, {stream: true});
-      var lines = buffer.split('\n');
-      buffer = lines.pop();
-
-      for (var i = 0; i < lines.length; i++) {
-        var line = lines[i].trim();
-        if (!line) continue;
-        try {
-          var ev = JSON.parse(line);
-          if (ev.type === 'tool') {
-            tools.push(ev.name + '  ' + ev.arg);
-            toolsEl.style.display = 'block';
-            toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">⚙ ' + escHtml(t) + '</div>'; }).join('');
-          } else if (ev.type === 'text') {
-            fullText += ev.content;
-            bubbleEl.innerHTML = md(fullText);
-          } else if (ev.type === 'retrying') {
-            var retryMsg = ev.msg || ('AI busy — retrying in ' + ev.delay + 's (attempt ' + ev.attempt + '/' + ev.max + ')');
-            tools.push('⏳ ' + retryMsg);
-            toolsEl.style.display = 'block';
-            toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">' + escHtml(t) + '</div>'; }).join('');
-          } else if (ev.type === 'error') {
-            bubbleEl.innerHTML = '<span style="color:var(--danger)">Error: ' + escHtml(ev.content) + '</span>';
-          }
-          scrollToBottom();
-        } catch(e) {}
-      }
-    }
+    fullText = await readStream(resp, toolsEl, bubbleEl);
   } catch(e) {
     bubbleEl.innerHTML = '<span style="color:var(--danger)">Error: ' + escHtml(e.message) + '</span>';
   } finally {
@@ -370,8 +434,18 @@ async function clearChat() {
   location.reload();
 }
 
-// Scroll to bottom on load
-window.addEventListener('load', scrollToBottom);
+// On load: scroll to bottom, check for active job, and apply any pending prompt
+window.addEventListener('load', function() {
+  scrollToBottom();
+  checkActiveJob();
+  const pending = localStorage.getItem('pendingChatPrompt');
+  if (pending) {
+    localStorage.removeItem('pendingChatPrompt');
+    document.getElementById('msg-input').value = pending;
+    autoResize(document.getElementById('msg-input'));
+    document.getElementById('msg-input').focus();
+  }
+});
 // Keep bottom visible when iOS keyboard appears
 window.addEventListener('resize', scrollToBottom);
 </script>

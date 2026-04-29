@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <style>
+    :root {
+      --bg: #fff; --text: #1a1a1a; --text2: #666; --border: #e0e0e0;
+      --accent: #007aff; --fs: 18px; --lh: 1.75;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #111; --text: #e8e8e8; --text2: #888; --border: #2a2a2a; }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Georgia, "Times New Roman", serif;
+      background: var(--bg); color: var(--text);
+      font-size: var(--fs); line-height: var(--lh);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Top bar */
+    .reader-bar {
+      position: sticky; top: 0; z-index: 10;
+      background: var(--bg); border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    }
+    .reader-bar a {
+      color: var(--accent); text-decoration: none; font-family: -apple-system, sans-serif;
+      font-size: 15px; font-weight: 600; white-space: nowrap;
+    }
+    .reader-bar .source {
+      flex: 1; min-width: 0;
+      font-family: -apple-system, sans-serif; font-size: 12px; color: var(--text2);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center;
+    }
+    .reader-bar .source a { font-size: 12px; font-weight: 400; color: var(--text2); }
+
+    /* Font size controls */
+    .font-ctrl {
+      display: flex; gap: 4px; align-items: center; flex-shrink: 0;
+    }
+    .font-ctrl button {
+      font-family: -apple-system, sans-serif; font-size: 14px; font-weight: 700;
+      width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg); color: var(--text); cursor: pointer; line-height: 1;
+    }
+
+    /* Article content */
+    .reader-content {
+      max-width: 680px; margin: 0 auto;
+      padding: 32px 24px 80px;
+    }
+
+    h1.article-title {
+      font-size: 1.6em; line-height: 1.25; font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .article-meta {
+      font-family: -apple-system, sans-serif; font-size: 13px; color: var(--text2);
+      margin-bottom: 32px; padding-bottom: 20px; border-bottom: 1px solid var(--border);
+    }
+    .article-meta a { color: var(--accent); text-decoration: none; }
+
+    .article-body p  { margin-bottom: 1.1em; }
+    .article-body h1, .article-body h2, .article-body h3 {
+      font-size: 1.15em; font-weight: 700; margin: 1.6em 0 .5em;
+    }
+    .article-body ul, .article-body ol { padding-left: 1.4em; margin-bottom: 1em; }
+    .article-body li { margin-bottom: .3em; }
+    .article-body blockquote {
+      border-left: 3px solid var(--border); padding-left: 1em;
+      color: var(--text2); margin: 1em 0;
+    }
+    .article-body a { color: var(--accent); }
+    .article-body img { max-width: 100%; height: auto; border-radius: 6px; margin: .5em 0; }
+
+    /* Render plain text as paragraphs */
+    .article-body.plain { white-space: pre-wrap; font-family: inherit; }
+    .article-body.plain p { margin-bottom: 0; }
+  </style>
+</head>
+<body>
+
+<div class="reader-bar">
+  <a href="/inbox">← Reading</a>
+  <span class="source">
+    {% if url %}<a href="{{ url }}" target="_blank" rel="noopener">{{ url | truncate(50, True, '…') }}</a>{% endif %}
+  </span>
+  <div class="font-ctrl">
+    <button onclick="adjFont(-1)">A</button>
+    <button onclick="adjFont(1)" style="font-size:18px">A</button>
+  </div>
+</div>
+
+<div class="reader-content">
+  <h1 class="article-title">{{ title }}</h1>
+  <div class="article-meta">
+    {% if saved %}Saved {{ saved }}{% endif %}
+    {% if url %} &middot; <a href="{{ url }}" target="_blank" rel="noopener">Original article ↗</a>{% endif %}
+  </div>
+
+  <div class="article-body plain" id="body">
+{%- set paras = body.split('\n\n') -%}
+{% for para in paras -%}
+{%- if para.strip() %}<p>{{ para.strip() | e }}</p>
+{% endif -%}
+{% endfor %}
+  </div>
+</div>
+
+<script>
+var fontSize = parseInt(localStorage.getItem('reader-fs') || '18');
+function setFont(sz) {
+  fontSize = Math.max(14, Math.min(28, sz));
+  document.documentElement.style.setProperty('--fs', fontSize + 'px');
+  localStorage.setItem('reader-fs', fontSize);
+}
+function adjFont(d) { setFont(fontSize + d); }
+setFont(fontSize);
+</script>
+</body>
+</html>
