@@ -4,7 +4,7 @@
 
 {% block head %}
 <style>
-  .tasks-container { padding: 12px; width: 100%; }
+  .tasks-container { padding: 16px 20px; width: 100%; }
   h1 { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
 
   /* ── Table layout ──────────────────────────────────────── */
@@ -13,22 +13,22 @@
     border-collapse: collapse;
     font-size: 13px;
     table-layout: fixed;
+    margin-bottom: 20px;
   }
 
-  /* Column widths */
-  .col-done    { width: 30px; }
-  .col-task    { width: 18%; }
-  .col-ctx     { width: 9%; }
-  .col-due     { width: 90px; }
-  .col-rep     { width: 9%; }
-  .col-pri     { width: 70px; }
-  .col-start   { width: 90px; }
-  .col-note    { width: 36px; }
-  .col-sel     { width: 30px; }
+  .col-done    { width: 38px; }
+  .col-task    { width: 28%; }
+  .col-ctx     { width: 10%; }
+  .col-due     { width: 100px; }
+  .col-rep     { width: 12%; }
+  .col-pri     { width: 80px; }
+  .col-start   { width: 100px; }
+  .col-note    { width: 50px; }
+  .col-sel     { width: 38px; }
 
   .tasks-table th {
     background: var(--bg3);
-    padding: 7px 8px;
+    padding: 8px 8px;
     text-align: left;
     font-size: 10px;
     font-weight: 700;
@@ -39,31 +39,32 @@
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
-    overflow: hidden;
   }
   .tasks-table th:hover { background: var(--accent); color: #fff; }
-  .tasks-table th.sort-asc::after  { content: ' ↑'; }
-  .tasks-table th.sort-desc::after { content: ' ↓'; }
-  .tasks-table th.sortable::after  { content: ' ↕'; opacity: 0.3; font-size: 9px; }
+  .tasks-table th.sortable::after  { content: ' ↕'; opacity: 0.3; }
   .tasks-table th.sort-asc::after,
-  .tasks-table th.sort-desc::after { opacity: 1; font-size: 9px; }
+  .tasks-table th.sort-desc::after { opacity: 1; font-weight: 900; }
+  .tasks-table th.sort-asc::after  { content: ' ▲'; }
+  .tasks-table th.sort-desc::after { content: ' ▼'; }
 
   .tasks-table td {
-    padding: 6px 8px;
+    padding: 4px 8px;
     border: 1px solid var(--border);
-    height: 38px;
+    height: 32px;
     overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
     vertical-align: middle;
+    color: var(--text);
   }
   .tasks-table tbody tr:nth-child(4n+1),
   .tasks-table tbody tr:nth-child(4n+2) { background: var(--bg); }
   .tasks-table tbody tr:nth-child(4n+3),
   .tasks-table tbody tr:nth-child(4n+4) { background: var(--bg2); }
   .tasks-table .note-row { background: var(--bg2) !important; }
-  .tasks-table tbody tr.task-row:hover { background: var(--bg3) !important; }
+  .tasks-table tbody tr.task-row:hover { background: var(--accent) !important; color: #fff; }
+  .tasks-table tbody tr.task-row:hover td { color: #fff; }
 
-  /* Priority left-border accent */
   .task-row.pri-top    td:first-child { border-left: 3px solid #ff3b30; }
   .task-row.pri-high   td:first-child { border-left: 3px solid #ff9500; }
   .task-row.pri-medium td:first-child { border-left: 3px solid #007aff; }
@@ -71,14 +72,15 @@
 
   .task-row.completing .task-name-text { text-decoration: line-through; opacity: 0.6; }
 
-  /* Done checkbox */
-  .done-cb {
-    width: 16px; height: 16px;
+  .done-cb, .sel-cb {
+    width: 16px;
+    height: 16px;
     cursor: pointer;
+    margin: 0 auto;
+    display: block;
     accent-color: var(--success);
   }
 
-  /* Editable cells */
   .ecell {
     cursor: pointer;
     overflow: hidden;
@@ -87,33 +89,33 @@
     display: block;
     border-radius: 3px;
     padding: 1px 3px;
+    color: var(--text);
   }
   .ecell:hover { background: var(--accent); color: #fff; border-radius: 3px; }
   .ecell.empty { color: var(--text2); }
-  .ecell.empty:hover { color: #fff; }
 
-  /* Inline edit — hides the display span, shows input */
   .edit-input {
     display: none;
     width: 100%;
-    padding: 3px 5px;
+    padding: 2px 4px;
     font-size: 12px;
     border: 1px solid var(--accent);
     border-radius: 4px;
     background: var(--bg);
     color: var(--text);
     box-sizing: border-box;
+    -webkit-appearance: none;
   }
   .edit-input.active { display: block; }
+  .edit-input:focus { outline: none; }
 
-  /* Note row */
   .note-row { display: none; }
   .note-row.open { display: table-row; }
   .note-row td { height: auto; padding: 8px; white-space: normal; }
   .note-textarea {
     width: 100%;
-    min-height: 64px;
-    font-size: 13px;
+    min-height: 60px;
+    font-size: 12px;
     padding: 6px 8px;
     border: 1px solid var(--accent);
     border-radius: 6px;
@@ -121,32 +123,41 @@
     color: var(--text);
     resize: vertical;
     font-family: inherit;
+    box-sizing: border-box;
   }
-  .note-save { margin-top: 6px; }
   .note-btn {
     background: none;
     border: none;
     cursor: pointer;
     font-size: 14px;
+    padding: 0;
     opacity: 0.5;
-    padding: 2px;
     display: block;
     margin: 0 auto;
+    color: var(--text);
   }
   .note-btn:hover, .note-btn.has-note { opacity: 1; }
+  .note-save { margin-top: 8px; display: flex; gap: 6px; }
+  .note-save button {
+    flex: 1;
+    padding: 5px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--text);
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .note-save button:first-child { background: var(--success); color: #fff; border: none; }
 
-  /* Select checkbox */
-  .sel-cb { width: 14px; height: 14px; cursor: pointer; display: block; margin: 0 auto; }
-
-  /* Toolbar */
   .tasks-toolbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
     gap: 10px;
   }
-  .show-completed { display: flex; gap: 6px; align-items: center; font-size: 12px; cursor: pointer; }
+  .show-completed { display: flex; gap: 6px; align-items: center; font-size: 12px; cursor: pointer; color: var(--text); }
   .bulk-menu { position: relative; }
   .bulk-menu-btn {
     display: none;
@@ -156,6 +167,7 @@
     border-radius: 6px;
     cursor: pointer;
     font-size: 12px;
+    color: var(--text);
   }
   .bulk-menu-dropdown {
     display: none;
@@ -176,6 +188,7 @@
     font-size: 12px;
     cursor: pointer;
     border-bottom: 1px solid var(--border);
+    color: var(--text);
   }
   .bulk-item:last-child { border-bottom: none; }
   .bulk-item:hover { background: var(--bg3); }
@@ -186,18 +199,19 @@
     border-collapse: collapse;
     font-size: 12px;
     table-layout: fixed;
-    margin-bottom: 12px;
+    margin-bottom: 16px;
     background: var(--bg2);
     border-radius: 8px;
     overflow: hidden;
   }
   .add-form td {
-    padding: 4px 6px;
+    padding: 6px 8px;
     vertical-align: bottom;
+    color: var(--text);
   }
   .add-form label {
     display: block;
-    font-size: 10px;
+    font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text2);
@@ -218,7 +232,7 @@
   .add-form input:focus,
   .add-form select:focus { border-color: var(--accent); outline: none; }
   .add-btn {
-    background: var(--accent);
+    background: var(--success);
     color: #fff;
     border: none;
     border-radius: 5px;
@@ -229,6 +243,7 @@
     white-space: nowrap;
     width: 100%;
   }
+  .add-btn:hover { opacity: 0.9; }
 
   .empty-state { text-align: center; padding: 60px 20px; color: var(--text2); }
 </style>
@@ -242,10 +257,10 @@
 <!-- ── Add task form (mirrors table column order/widths) ─ -->
 <table class="add-form">
   <tr>
-    <td style="width:30px;"></td>
+    <td class="col-done"></td>
     <td class="col-task">
       <label>Task</label>
-      <input id="f-task" type="text" placeholder="New task…">
+      <input id="f-task" type="text" placeholder="Add task…">
     </td>
     <td class="col-ctx">
       <label>Context</label>
@@ -257,7 +272,15 @@
     </td>
     <td class="col-rep">
       <label>Repeat</label>
-      <input id="f-rep" type="text" placeholder="every 2 weeks">
+      <input id="f-rep" type="text" placeholder="weekly" list="rep-list">
+      <datalist id="rep-list">
+        <option value="daily">
+        <option value="weekly">
+        <option value="every 2 weeks">
+        <option value="monthly">
+        <option value="quarterly">
+        <option value="yearly">
+      </datalist>
     </td>
     <td class="col-pri">
       <label>Priority</label>
@@ -273,11 +296,11 @@
       <label>Start</label>
       <input id="f-start" type="date">
     </td>
-    <td class="col-note">
+    <td class="col-note" style="text-align: center;">
       <label>&nbsp;</label>
-      <button class="add-btn" onclick="add_task()">+</button>
+      <button class="add-btn" onclick="add_task()">Add Task</button>
     </td>
-    <td style="width:30px;"></td>
+    <td class="col-sel"></td>
   </tr>
 </table>
 
@@ -320,7 +343,7 @@
       <th data-col="recurrence">Repeat</th>
       <th class="sortable" data-col="priority">Priority</th>
       <th class="sortable" data-col="start">Start</th>
-      <th></th>
+      <th>Note</th>
       <th></th>
     </tr>
   </thead>
@@ -336,7 +359,7 @@
       </td>
       <td>
         <span class="ecell {% if not task.context %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="context">{{ task.context or '—' }}</span>
-        <input class="edit-input" data-id="{{ loop.index0 }}" data-field="context" value="{{ task.context or '' }}" placeholder="home, work…">
+        <input class="edit-input" data-id="{{ loop.index0 }}" data-field="context" value="{{ task.context or '' }}" placeholder="home">
       </td>
       <td>
         <span class="ecell {% if not task.due %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="due">{{ task.due or '—' }}</span>
@@ -344,7 +367,7 @@
       </td>
       <td>
         <span class="ecell {% if not task.recurrence %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="recurrence">{{ task.recurrence or '—' }}</span>
-        <input class="edit-input" data-id="{{ loop.index0 }}" data-field="recurrence" value="{{ task.recurrence or '' }}" placeholder="every 2 weeks">
+        <input class="edit-input" data-id="{{ loop.index0 }}" data-field="recurrence" value="{{ task.recurrence or '' }}" placeholder="weekly" list="rep-list">
       </td>
       <td>
         <span class="ecell {% if not task.priority %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="priority">{{ task.priority or '—' }}</span>
@@ -360,7 +383,7 @@
         <span class="ecell {% if not task.start %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="start">{{ task.start or '—' }}</span>
         <input class="edit-input" type="date" data-id="{{ loop.index0 }}" data-field="start" value="{{ task.start or '' }}">
       </td>
-      <td>
+      <td style="text-align: center;">
         <button class="note-btn {% if task.notes %}has-note{% endif %}"
             data-id="{{ loop.index0 }}" title="{{ task.notes or 'Add note' }}">
           {% if task.notes %}📝{% else %}+{% endif %}
@@ -372,7 +395,7 @@
       <td colspan="9">
         <textarea class="note-textarea" data-id="{{ loop.index0 }}" placeholder="Notes…">{{ task.notes }}</textarea>
         <div class="note-save">
-          <button onclick="save_note({{ loop.index0 }})">Save note</button>
+          <button onclick="save_note({{ loop.index0 }})">Save</button>
           <button onclick="close_note({{ loop.index0 }})">Cancel</button>
         </div>
       </td>
@@ -392,6 +415,11 @@
 <script>
   let activeEditId = null;
   let activeEditField = null;
+
+  // ── Today's date ─────────────────────────────────────────
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('f-due').value = today;
+  document.getElementById('f-start').value = today;
 
   // ── Show/hide completed ──────────────────────────────────
   const showDoneCb = document.getElementById('show-done');
@@ -438,7 +466,6 @@
   // ── Inline editing ───────────────────────────────────────
   function open_edit(id, field) {
     if (activeEditId !== null) close_edit(activeEditId, activeEditField, false);
-
     activeEditId = id;
     activeEditField = field;
 
@@ -449,7 +476,7 @@
     span.style.display = 'none';
     inp.classList.add('active');
     inp.focus();
-    if (inp.tagName === 'INPUT' && inp.type !== 'date') inp.select();
+    if (inp.type !== 'date' && inp.tagName !== 'SELECT') inp.select();
   }
 
   function close_edit(id, field, save) {
@@ -458,7 +485,18 @@
     if (!span || !inp) return;
 
     if (save) {
-      const val = inp.value.trim();
+      let val = inp.value.trim();
+      // Normalize repeat values
+      if (field === 'recurrence') {
+        const norm = {
+          'daily': '1d', 'every day': '1d',
+          'weekly': '1w', 'every week': '1w',
+          'biweekly': '2w', 'every 2 weeks': '2w',
+          'monthly': '1m', 'every month': '1m',
+          'quarterly': '3m', 'yearly': '1y', 'annually': '1y'
+        };
+        val = norm[val.toLowerCase()] || val;
+      }
       api_update(id, field, val);
       span.textContent = val || '—';
       span.classList.toggle('empty', !val);
@@ -477,7 +515,7 @@
     });
   });
 
-  // Enter = save, Esc = cancel, Tab = save + move to next
+  // Enter/Esc on edit inputs
   document.querySelectorAll('.edit-input').forEach(inp => {
     inp.addEventListener('keydown', e => {
       if (e.key === 'Enter') {
@@ -487,8 +525,8 @@
         close_edit(parseInt(inp.dataset.id), inp.dataset.field, false);
       }
     });
-    // For selects, also save on change
-    if (inp.tagName === 'SELECT') {
+    // Save on change for selects and dates
+    if (inp.tagName === 'SELECT' || inp.type === 'date') {
       inp.addEventListener('change', () => {
         close_edit(parseInt(inp.dataset.id), inp.dataset.field, true);
       });
@@ -529,7 +567,6 @@
     const hasNote = ta.value.trim().length > 0;
     btn.textContent = hasNote ? '📝' : '+';
     btn.classList.toggle('has-note', hasNote);
-    btn.title = ta.value.trim() || 'Add note';
     close_note(id);
   }
 
@@ -545,7 +582,6 @@
   });
 
   bulkBtn.addEventListener('click', () => bulkDrop.classList.toggle('open'));
-
   document.addEventListener('click', e => {
     if (!e.target.closest('.bulk-menu')) bulkDrop.classList.remove('open');
   });
@@ -638,7 +674,6 @@
     const text = document.getElementById('f-task').value.trim();
     if (!text) { document.getElementById('f-task').focus(); return; }
 
-    const today = new Date().toISOString().split('T')[0];
     const start = document.getElementById('f-start').value || today;
 
     let tags = [];
@@ -661,9 +696,10 @@
       body: JSON.stringify({text: fullText, section: 'Inbox'})
     });
     if (res.ok) {
-      ['f-task','f-ctx','f-due','f-rep'].forEach(id => document.getElementById(id).value = '');
+      ['f-task','f-ctx','f-rep'].forEach(id => document.getElementById(id).value = '');
       document.getElementById('f-pri').value = '';
-      document.getElementById('f-start').value = '';
+      document.getElementById('f-due').value = today;
+      document.getElementById('f-start').value = today;
       location.reload();
     } else {
       alert('Error adding task');
