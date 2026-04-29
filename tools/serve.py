@@ -526,10 +526,14 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
             ct  = resp.headers.get("Content-Type", "")
             ce  = resp.headers.get("Content-Encoding", "")
             raw = resp.read(1_000_000)
-        # Decompress if needed (urllib doesn't do this automatically)
-        if "gzip" in ce.lower():
+        # Decompress if needed — check both header and magic bytes
+        # (some servers send gzip without declaring Content-Encoding)
+        if "gzip" in ce.lower() or raw.startswith(b'\x1f\x8b'):
             import gzip as _gzip
-            raw = _gzip.decompress(raw)
+            try:
+                raw = _gzip.decompress(raw)
+            except Exception:
+                pass
         elif "deflate" in ce.lower():
             import zlib as _zlib
             raw = _zlib.decompress(raw)
