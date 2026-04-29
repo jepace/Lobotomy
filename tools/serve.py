@@ -524,7 +524,15 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=15) as resp:
             ct  = resp.headers.get("Content-Type", "")
+            ce  = resp.headers.get("Content-Encoding", "")
             raw = resp.read(1_000_000)
+        # Decompress if needed (urllib doesn't do this automatically)
+        if "gzip" in ce.lower():
+            import gzip as _gzip
+            raw = _gzip.decompress(raw)
+        elif "deflate" in ce.lower():
+            import zlib as _zlib
+            raw = _zlib.decompress(raw)
     except urllib.error.HTTPError as e:
         return None, f"HTTP {e.code}: {e.reason}"
     except Exception as e:
@@ -976,7 +984,10 @@ def inbox_view(filename):
         url_line = next((l for l in content.splitlines() if l.startswith("URL:")), "")
         url = url_line[4:].strip()
         return {"content": content, "url": url}
-    return {"content": content, "url": None}
+    # Strip YAML frontmatter before returning to the inline reader
+    meta, body = _parse_frontmatter(content)
+    source_url = meta.get("url", "") or None
+    return {"content": body.strip(), "url": source_url}
 
 
 @app.route("/inbox/archive", methods=["POST"])
