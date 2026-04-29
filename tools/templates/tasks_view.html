@@ -4,7 +4,7 @@
 
 {% block head %}
 <style>
-  .tasks-container { padding: 16px; max-width: 1200px; }
+  .tasks-container { padding: 16px; width: 100%; }
   .tasks-toolbar {
     display: flex;
     justify-content: space-between;
@@ -72,18 +72,41 @@
     font-size: 12px;
     text-transform: uppercase;
     color: var(--text2);
+    cursor: pointer;
+    user-select: none;
   }
+  .tasks-table th:hover { background: var(--bg3); }
+  .tasks-table th.sortable::after {
+    content: ' ↕';
+    opacity: 0.3;
+    font-size: 10px;
+  }
+  .tasks-table th.sort-asc::after { content: ' ↑'; opacity: 1; }
+  .tasks-table th.sort-desc::after { content: ' ↓'; opacity: 1; }
+
   .tasks-table td {
     padding: 10px;
     border-bottom: 1px solid var(--border);
     vertical-align: middle;
+    height: 44px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .tasks-table tr:hover { background: var(--bg2); }
+  .tasks-table tbody tr:nth-child(odd) { background: var(--bg); }
+  .tasks-table tbody tr:nth-child(even) { background: var(--bg2); }
+  .tasks-table tbody tr:hover { background: var(--bg3) !important; }
+
   .task-row.completed { opacity: 0.6; }
   .task-row.completed .task-name { text-decoration: line-through; }
 
-  .task-select { width: 20px; height: 20px; cursor: pointer; }
-  .task-name { font-weight: 500; }
+  .task-select { width: 20px; height: 20px; cursor: pointer; flex-shrink: 0; }
+  .task-name {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .task-name.editable { cursor: pointer; }
   .task-name.editable:hover { color: var(--accent); }
 
@@ -492,6 +515,82 @@
   document.getElementById('task-input')?.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') add_task();
   });
+
+  // Column sorting
+  let sortState = { column: 'due', direction: 'asc' }; // Default sort by due date
+
+  document.querySelectorAll('.tasks-table th').forEach((th, index) => {
+    const columns = ['select', 'description', 'context', 'due', 'priority', 'notes'];
+    const column = columns[index];
+
+    if (column && column !== 'select') {
+      th.classList.add('sortable');
+      th.addEventListener('click', () => sortTable(column, th));
+    }
+  });
+
+  function sortTable(column, headerEl) {
+    const tbody = document.querySelector('.tasks-table tbody');
+    if (!tbody) return;
+
+    // Toggle direction if same column clicked
+    if (sortState.column === column) {
+      sortState.direction = sortState.direction === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortState.column = column;
+      sortState.direction = 'asc';
+    }
+
+    // Update header styling
+    document.querySelectorAll('.tasks-table th').forEach(th => {
+      th.classList.remove('sort-asc', 'sort-desc');
+    });
+    headerEl.classList.add(sortState.direction === 'asc' ? 'sort-asc' : 'sort-desc');
+
+    // Get and sort rows
+    const rows = Array.from(tbody.querySelectorAll('.task-row'));
+    rows.sort((a, b) => {
+      let aVal, bVal;
+
+      switch(column) {
+        case 'description':
+          aVal = a.querySelector('.task-name')?.textContent || '';
+          bVal = b.querySelector('.task-name')?.textContent || '';
+          break;
+        case 'context':
+          aVal = a.querySelectorAll('.editable-cell')[0]?.textContent || '';
+          bVal = b.querySelectorAll('.editable-cell')[0]?.textContent || '';
+          break;
+        case 'due':
+          aVal = a.querySelectorAll('.editable-cell')[1]?.textContent || '9999-12-31';
+          bVal = b.querySelectorAll('.editable-cell')[1]?.textContent || '9999-12-31';
+          aVal = aVal === '—' ? '9999-12-31' : aVal;
+          bVal = bVal === '—' ? '9999-12-31' : bVal;
+          break;
+        case 'priority':
+          const priorityOrder = { 'top': 0, 'high': 1, 'medium': 2, 'low': 3, '—': 4 };
+          aVal = priorityOrder[a.querySelectorAll('.editable-cell')[2]?.textContent?.trim() || '—'] || 4;
+          bVal = priorityOrder[b.querySelectorAll('.editable-cell')[2]?.textContent?.trim() || '—'] || 4;
+          break;
+        case 'notes':
+          aVal = a.querySelectorAll('.editable-cell')[3]?.textContent || '';
+          bVal = b.querySelectorAll('.editable-cell')[3]?.textContent || '';
+          break;
+        default:
+          return 0;
+      }
+
+      if (typeof aVal === 'string') aVal = aVal.toLowerCase();
+      if (typeof bVal === 'string') bVal = bVal.toLowerCase();
+
+      if (aVal < bVal) return sortState.direction === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortState.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    // Re-insert sorted rows
+    rows.forEach(row => tbody.appendChild(row));
+  }
 </script>
 
 {% endblock %}
