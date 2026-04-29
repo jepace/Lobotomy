@@ -1,4 +1,4 @@
-# LLM Wiki — Operating Schema
+# Lobotomy — Operating Schema
 
 Read this file completely before doing anything else. It is the authoritative guide for every
 operation in this wiki. If you are an LLM session that has just been pointed at this repository,
@@ -340,8 +340,9 @@ you want to process but have not gotten to yet.
 2. **Triage**: Ask which items to process now (or process all if user said "process inbox").
 3. **For each item to process**:
    - Read the file. Determine if it is a URL, article text, or notes.
-   - **If URL only**: Note the URL; summarize what you know about it. Add to
-     `wiki/reading-list.md` with status **Queued**. Ask user if they want to fetch and ingest now.
+   - **If URL only**: Use `fetch_url` to retrieve the page content, then run the full Ingest
+     Workflow on the fetched text. If fetch fails, note the URL and add to `wiki/reading-list.md`
+     with status **Queued**.
    - **If article text or notes**: Assign a slug, move the file from `raw/inbox/` to `raw/`
      (rename: `raw/inbox/article.md` → `raw/article-slug.md`), then run the full Ingest Workflow
      (Section 6). After ingesting, add or update the entry in `wiki/reading-list.md` with status
@@ -373,21 +374,36 @@ Tasks live in `wiki/tasks.md`. All task management is done by editing that file.
 ### Task format
 
 ```markdown
-- [ ] Task description #p:high #due:2026-05-01 #ctx:work #proj:project-name
+- [ ] Task description #p:high #due:2026-05-01 #start:2026-04-25 #ctx:work #proj:project-name #s:next #rep:1w #len:30m #star
   Notes: optional notes on indented line
     - [ ] Subtask (double-indented)
     - [ ] Another subtask
 ```
 
+All tags are optional. Only include what is relevant.
+
 ### Tag reference
 
 | Tag | Example values | Meaning |
 |-----|----------------|---------|
-| `#p:` | `top`, `high`, `medium`, `low` | Priority (omit tag for none) |
+| `#p:` | `top`, `high`, `medium`, `low` | Priority (omit for none) |
 | `#due:` | `2026-05-01` | Due date in YYYY-MM-DD format |
+| `#start:` | `2026-04-25` | Hide task until this date |
 | `#ctx:` | `home`, `work`, `computer`, `errands`, `calls` | GTD context |
 | `#proj:` | `any-project-slug` | Project |
-| `#done:` | `2026-04-27` | Added when marking a task complete |
+| `#s:` | `next`, `waiting`, `someday`, `hold` | Status (omit = active) |
+| `#rep:` | `1d`, `7d`, `2w`, `1m`, `3m`, `1y` | Fixed recurrence period |
+| `#rep:` (relative) | `7d+`, `1m+` | Recur N days/weeks/months after *completion* |
+| `#len:` | `30m`, `2h` | Estimated duration |
+| `#star` | (no value) | Starred / flagged |
+| `#done:` | `2026-04-27` | Added automatically when marking complete |
+
+### Recurrence behaviour
+
+When a recurring task (`#rep:`) is marked complete:
+- A new instance is automatically created immediately below it with the next due date.
+- **Fixed** (`#rep:1w`): next due = current due date + period. Use for bills, meetings, scheduled events.
+- **Relative** (`#rep:7d+`): next due = completion date + period. Use for habits, maintenance tasks.
 
 ### Task sections in `wiki/tasks.md`
 

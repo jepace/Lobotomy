@@ -87,13 +87,22 @@
         <svg viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3"/></svg>
       </div>
       <div class="task-body">
-        <div class="task-text">{{ t.text }}</div>
+        <div class="task-text">{% if t.star %}⭐ {% endif %}{{ t.text }}</div>
         <div class="task-meta">
           {% if t.priority %}
           <span class="badge badge-{{ t.priority }}">{{ t.priority }}</span>
           {% endif %}
+          {% if t.status %}
+          <span class="badge" style="background:var(--bg3);color:var(--text2)">{{ t.status }}</span>
+          {% endif %}
           {% if t.due %}
           <span class="text-sm {% if t.due < today %}due-soon{% else %}text2{% endif %}">📅 {{ t.due }}</span>
+          {% endif %}
+          {% if t.repeat %}
+          <span class="text-sm text2">🔁 {{ t.repeat }}</span>
+          {% endif %}
+          {% if t.length %}
+          <span class="text-sm text2">⏱ {{ t.length }}</span>
           {% endif %}
           {% if t.context %}
           <span class="text-sm text2">@{{ t.context }}</span>

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LLM Wiki — Web server
+Lobotomy — Web server
 
 Mobile-friendly web app: chat with AI, browse wiki, manage tasks, capture articles.
 
@@ -46,13 +46,17 @@ if missing:
     sys.exit(1)
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import cfg_get, cfg_bool, cfg_int
+from config import cfg_get, cfg_bool, cfg_int, validate_config
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, system_prompt)
-from auth  import (init_auth, authenticate, get_user, update_password, set_verified,
-                   create_token, consume_token, record_attempt, is_locked_out,
-                   send_verification_email, send_reset_email,
+
+BLOG_DIR = REPO_ROOT / "blog"
+from job_queue import JobQueue
+from task_manager import read_tasks, write_tasks, get_all_contexts, get_all_projects
+from auth  import (user_exists, create_user, authenticate, get_user, update_password,
+                   set_verified, create_token, consume_token, record_attempt,
+                   is_locked_out, send_verification_email, send_reset_email,
                    maybe_send_verification, _resend_ready)
 
 # ---------------------------------------------------------------------------
@@ -85,10 +89,39 @@ app.config.update(
 def require_login(f):
     @functools.wraps(f)
     def decorated(*args, **kwargs):
+        if not user_exists():
+            return redirect(url_for("setup"))
         if not session.get("logged_in"):
             return redirect(url_for("auth_login", next=request.path))
         return f(*args, **kwargs)
     return decorated
+
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup():
+    if user_exists():
+        return redirect(url_for("auth_login"))
+    error = None
+    email = ""
+    if request.method == "POST":
+        email    = request.form.get("email", "").strip()
+        password = request.form.get("password", "")
+        confirm  = request.form.get("confirm", "")
+        if not email or not password:
+            error = "Email and password are required."
+        elif password != confirm:
+            error = "Passwords do not match."
+        elif len(password) < 8:
+            error = "Password must be at least 8 characters."
+        else:
+            try:
+                create_user(email, password)
+                session["logged_in"] = True
+                session["email"] = email
+                return redirect(url_for("chat"))
+            except RuntimeError as e:
+                error = str(e)
+    return render_template("setup.html", error=error, email=email)
 
 
 @app.context_processor
@@ -100,10 +133,76 @@ def inject_globals():
         active = "tasks"
     elif path.startswith("/inbox"):
         active = "inbox"
+    elif path.startswith("/blog"):
+        active = "blog"
     else:
         active = "chat"
     user = get_user() if session.get("logged_in") else None
     return {"active": active, "current_user": user}
+
+# ---------------------------------------------------------------------------
+# Blog helpers
+# ---------------------------------------------------------------------------
+
+def _parse_frontmatter(text: str) -> tuple:
+    """Return (meta_dict, body_text) from a markdown file with YAML frontmatter."""
+    meta = {}
+    if not text.startswith("---"):
+        return meta, text
+    lines = text.split("\n")
+    end = -1
+    for i, line in enumerate(lines[1:], 1):
+        if line.rstrip() == "---":
+            end = i
+            break
+    if end == -1:
+        return meta, text
+    for line in lines[1:end]:
+        if ":" not in line:
+            continue
+        k, _, v = line.partition(":")
+        k = k.strip()
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+            v = v[1:-1]
+        if v.startswith("[") and v.endswith("]"):
+            inner = v[1:-1]
+            meta[k] = [x.strip().strip('"').strip("'") for x in inner.split(",") if x.strip()]
+        elif v.lower() == "true":
+            meta[k] = True
+        elif v.lower() == "false":
+            meta[k] = False
+        else:
+            meta[k] = v
+    body = "\n".join(lines[end + 1:]).lstrip("\n")
+    return meta, body
+
+
+def _rfc822(date_str: str) -> str:
+    try:
+        d = datetime.date.fromisoformat(str(date_str))
+        return d.strftime("%a, %d %b %Y 00:00:00 +0000")
+    except (ValueError, TypeError):
+        return ""
+
+
+def _blog_posts(published_only: bool = True) -> list:
+    BLOG_DIR.mkdir(parents=True, exist_ok=True)
+    posts = []
+    for f in sorted(BLOG_DIR.glob("*.md"), reverse=True):
+        text = f.read_text(encoding="utf-8")
+        meta, _ = _parse_frontmatter(text)
+        if published_only and not meta.get("published", False):
+            continue
+        posts.append({
+            "slug":      f.stem,
+            "title":     meta.get("title", f.stem),
+            "date":      meta.get("date", ""),
+            "tags":      meta.get("tags", []),
+            "summary":   meta.get("summary", ""),
+            "published": meta.get("published", False),
+        })
+    return posts
 
 # ---------------------------------------------------------------------------
 # Auth routes
@@ -125,7 +224,10 @@ def auth_login():
             session["logged_in"]  = True
             session.permanent     = True
             app.permanent_session_lifetime = datetime.timedelta(days=30)
-            next_url = request.args.get("next") or url_for("index")
+            next_url = request.args.get("next") or ""
+            # Only follow safe relative paths (no scheme, no host, no encoded ?)
+            if not next_url.startswith("/") or "//" in next_url or "%3" in next_url.lower():
+                next_url = url_for("index")
             return redirect(next_url)
         error = msg
 
@@ -258,6 +360,7 @@ def parse_tasks() -> list:
     lines        = tasks_file.read_text(encoding="utf-8").splitlines()
     tasks        = []
     current_sect = "Inbox"
+    today        = datetime.date.today().isoformat()
     for i, line in enumerate(lines):
         if line.startswith("## "):
             current_sect = line[3:].strip()
@@ -266,9 +369,17 @@ def parse_tasks() -> list:
         if not m:
             continue
         indent, checked, text = m.groups()
-        p = re.search(r"#p:(\w+)", text)
-        d = re.search(r"#due:(\S+)", text)
-        c = re.search(r"#ctx:(\w+)", text)
+        p   = re.search(r"#p:(\w+)",     text)
+        d   = re.search(r"#due:(\S+)",   text)
+        c   = re.search(r"#ctx:(\w+)",   text)
+        s   = re.search(r"#s:(\w+)",     text)
+        st  = re.search(r"#start:(\S+)", text)
+        lg  = re.search(r"#len:(\S+)",   text)
+        rep = re.search(r"#rep:(\S+)",   text)
+        start = st.group(1) if st else ""
+        # Hide tasks whose start date is in the future
+        if start and start > today and checked != "x":
+            continue
         tasks.append({
             "line":     i,
             "done":     checked == "x",
@@ -278,8 +389,42 @@ def parse_tasks() -> list:
             "priority": p.group(1) if p else "",
             "due":      d.group(1) if d else "",
             "context":  c.group(1) if c else "",
+            "status":   s.group(1) if s else "",
+            "start":    start,
+            "length":   lg.group(1) if lg else "",
+            "repeat":   rep.group(1) if rep else "",
+            "star":     bool(re.search(r"#star\b", text)),
         })
     return tasks
+
+
+def _next_due(rep: str, current_due: str, done_date: str) -> str:
+    import calendar
+    m = re.match(r"^(\d+)([dwmy])(\+?)$", rep.lower())
+    if not m:
+        return ""
+    n, unit, after = int(m.group(1)), m.group(2), m.group(3) == "+"
+    base_str = done_date if after else current_due
+    try:
+        base = datetime.date.fromisoformat(base_str)
+    except (ValueError, TypeError):
+        return ""
+    if unit == "d":
+        return (base + datetime.timedelta(days=n)).isoformat()
+    if unit == "w":
+        return (base + datetime.timedelta(weeks=n)).isoformat()
+    if unit == "m":
+        mo = base.month - 1 + n
+        yr = base.year + mo // 12
+        mo = mo % 12 + 1
+        dy = min(base.day, calendar.monthrange(yr, mo)[1])
+        return datetime.date(yr, mo, dy).isoformat()
+    if unit == "y":
+        try:
+            return base.replace(year=base.year + n).isoformat()
+        except ValueError:
+            return base.replace(year=base.year + n, day=28).isoformat()
+    return ""
 
 
 def _toggle_task(line_num: int, action: str) -> bool:
@@ -291,6 +436,18 @@ def _toggle_task(line_num: int, action: str) -> bool:
     if action == "complete" and "- [ ]" in line:
         today = datetime.date.today().isoformat()
         lines[line_num] = line.replace("- [ ]", "- [x]") + f" #done:{today}"
+        rep_m = re.search(r"#rep:(\S+)", line)
+        if rep_m:
+            due_m    = re.search(r"#due:(\S+)", line)
+            due      = due_m.group(1) if due_m else today
+            next_due = _next_due(rep_m.group(1), due, today)
+            if next_due:
+                new_line = re.sub(r"\s*#done:\S+", "", line)
+                if due_m:
+                    new_line = re.sub(r"#due:\S+", f"#due:{next_due}", new_line)
+                else:
+                    new_line += f" #due:{next_due}"
+                lines.insert(line_num + 1, new_line)
     elif action == "reopen" and "- [x]" in line:
         lines[line_num] = re.sub(r"\s*#done:\S+", "", line).replace("- [x]", "- [ ]")
     else:
@@ -376,10 +533,7 @@ def chat_send():
 
     client, model, error = get_client_and_model()
     if error:
-        def err_stream():
-            yield json.dumps({"type": "error", "content": error}) + "\n"
-            yield json.dumps({"type": "done"}) + "\n"
-        return Response(stream_with_context(err_stream()), mimetype="application/x-ndjson")
+        return {"error": error}, 503
 
     sys_prompt = system_prompt()
     history    = load_history()
@@ -390,10 +544,16 @@ def chat_send():
         ]
     history.append({"role": "user", "content": message})
 
-    def generate():
-        yield from stream_agent_turn(client, model, history, sys_prompt)
-        save_history(history)
+    job_id = job_queue.submit(client, model, history, sys_prompt,
+                              on_done=save_history)
+    return {"job_id": job_id}
 
+
+@app.route("/chat/stream/<job_id>")
+@require_login
+def chat_stream(job_id):
+    def generate():
+        yield from job_queue.tail(job_id)
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
 
 
@@ -436,12 +596,11 @@ def wiki_page(page_path):
 @app.route("/tasks")
 @require_login
 def tasks():
-    all_tasks = parse_tasks()
-    sections: dict = {}
-    for t in all_tasks:
-        sections.setdefault(t["section"], []).append(t)
-    return render_template("tasks.html", sections=sections,
-                           today=datetime.date.today().isoformat())
+    tasks_list = read_tasks()
+    tasks_list.sort(key=lambda t: t.due or "9999-12-31")
+    return render_template("tasks_view.html", tasks=tasks_list,
+                           all_contexts=get_all_contexts(),
+                           all_projects=get_all_projects())
 
 
 @app.route("/tasks/toggle", methods=["POST"])
@@ -464,6 +623,88 @@ def tasks_add():
     if not text:
         return {"error": "Empty task"}, 400
     _add_task(text, section)
+    return {"ok": True}
+
+
+@app.route("/tasks/update", methods=["POST"])
+@require_login
+def tasks_update():
+    data = request.get_json(silent=True) or {}
+    task_id = data.get("task_id")
+    field = data.get("field")
+    value = data.get("value", "").strip()
+
+    if task_id is None or field is None:
+        return {"error": "missing task_id or field"}, 400
+
+    tasks_list = read_tasks()
+    if not (0 <= task_id < len(tasks_list)):
+        return {"error": "task not found"}, 404
+
+    task = tasks_list[task_id]
+
+    if field == "description":
+        task.description = value
+    elif field == "context":
+        task.set_context(value if value else None)
+    elif field == "due":
+        task.set_due(value if value else None)
+    elif field == "priority":
+        task.set_priority(value if value else None)
+    elif field == "project":
+        task.set_project(value if value else None)
+    elif field == "recurrence":
+        task.set_recurrence(value if value else None)
+    elif field == "start":
+        task.set_start(value if value else None)
+    elif field == "notes":
+        task.set_notes(value)
+    elif field == "complete":
+        if value == "true":
+            task.complete_task()
+        else:
+            task.reopen_task()
+    else:
+        return {"error": "unknown field"}, 400
+
+    write_tasks(tasks_list)
+    return {"ok": True}
+
+
+@app.route("/tasks/bulk-update", methods=["POST"])
+@require_login
+def tasks_bulk_update():
+    data = request.get_json(silent=True) or {}
+    action = data.get("action")
+    task_ids = data.get("task_ids", [])
+    value = data.get("value", "").strip()
+
+    if action is None:
+        return {"error": "missing action"}, 400
+
+    tasks_list = read_tasks()
+
+    for task_id in task_ids:
+        if not (0 <= task_id < len(tasks_list)):
+            continue
+
+        task = tasks_list[task_id]
+
+        if action == "set-priority":
+            task.set_priority(value if value else None)
+        elif action == "set-context":
+            task.set_context(value if value else None)
+        elif action == "set-due":
+            task.set_due(value if value else None)
+        elif action == "set-project":
+            task.set_project(value if value else None)
+        elif action == "delete":
+            task.description = "[DELETED]"
+            task.complete = True
+        else:
+            return {"error": "unknown action"}, 400
+
+    write_tasks(tasks_list)
     return {"ok": True}
 
 
@@ -506,22 +747,153 @@ def inbox_delete():
     return {"ok": True}
 
 # ---------------------------------------------------------------------------
+# Blog routes
+# ---------------------------------------------------------------------------
+
+@app.route("/blog/")
+def blog_index():
+    logged_in = bool(session.get("logged_in"))
+    posts = _blog_posts(published_only=not logged_in)
+    return render_template("blog_index.html", posts=posts)
+
+
+@app.route("/blog/rss.xml")
+def blog_rss():
+    import xml.etree.ElementTree as ET
+    posts = _blog_posts(published_only=True)
+    base  = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
+
+    rss  = ET.Element("rss", attrib={"version": "2.0"})
+    chan = ET.SubElement(rss, "channel")
+    ET.SubElement(chan, "title").text       = "Lobotomy Blog"
+    ET.SubElement(chan, "link").text        = f"{base}/blog/"
+    ET.SubElement(chan, "description").text = "Posts from Lobotomy"
+    ET.SubElement(chan, "language").text    = "en"
+
+    for p in posts[:20]:
+        item = ET.SubElement(chan, "item")
+        ET.SubElement(item, "title").text       = p["title"]
+        ET.SubElement(item, "link").text        = f"{base}/blog/{p['slug']}"
+        ET.SubElement(item, "guid").text        = f"{base}/blog/{p['slug']}"
+        ET.SubElement(item, "pubDate").text     = _rfc822(p["date"])
+        ET.SubElement(item, "description").text = p["summary"]
+
+    xml_str = ET.tostring(rss, encoding="unicode")
+    return Response(
+        '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str,
+        mimetype="application/rss+xml",
+    )
+
+
+@app.route("/blog/new", methods=["GET", "POST"])
+@require_login
+def blog_new():
+    error = None
+    if request.method == "POST":
+        title     = (request.form.get("title")   or "").strip()
+        tags_raw  = (request.form.get("tags")    or "").strip()
+        summary   = (request.form.get("summary") or "").strip()
+        body      = (request.form.get("body")    or "").strip()
+        published = bool(request.form.get("published"))
+        if not title:
+            error = "Title is required."
+        else:
+            today    = datetime.date.today().isoformat()
+            slug     = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+            slug     = f"{today}-{slug}"
+            tag_list = [t.strip() for t in tags_raw.split(",") if t.strip()]
+            tag_str  = "[" + ", ".join(tag_list) + "]" if tag_list else "[]"
+            pub_str  = "true" if published else "false"
+            content  = (
+                f'---\ntitle: "{title}"\ndate: {today}\ntags: {tag_str}\n'
+                f'published: {pub_str}\nsummary: "{summary}"\n---\n\n{body}'
+            )
+            BLOG_DIR.mkdir(parents=True, exist_ok=True)
+            (BLOG_DIR / f"{slug}.md").write_text(content, encoding="utf-8")
+            return redirect(url_for("blog_post", slug=slug))
+    return render_template("blog_new.html", post=None, slug=None, error=error)
+
+
+@app.route("/blog/<slug>/edit", methods=["GET", "POST"])
+@require_login
+def blog_edit(slug):
+    if not re.match(r"^[\w-]+$", slug):
+        abort(404)
+    f = BLOG_DIR / f"{slug}.md"
+    if not f.exists():
+        abort(404)
+    error = None
+    if request.method == "POST":
+        title     = (request.form.get("title")   or "").strip()
+        tags_raw  = (request.form.get("tags")    or "").strip()
+        summary   = (request.form.get("summary") or "").strip()
+        body      = (request.form.get("body")    or "").strip()
+        published = bool(request.form.get("published"))
+        if not title:
+            error = "Title is required."
+        else:
+            orig_meta, _ = _parse_frontmatter(f.read_text(encoding="utf-8"))
+            date     = orig_meta.get("date", datetime.date.today().isoformat())
+            tag_list = [t.strip() for t in tags_raw.split(",") if t.strip()]
+            tag_str  = "[" + ", ".join(tag_list) + "]" if tag_list else "[]"
+            pub_str  = "true" if published else "false"
+            content  = (
+                f'---\ntitle: "{title}"\ndate: {date}\ntags: {tag_str}\n'
+                f'published: {pub_str}\nsummary: "{summary}"\n---\n\n{body}'
+            )
+            f.write_text(content, encoding="utf-8")
+            return redirect(url_for("blog_post", slug=slug))
+    text = f.read_text(encoding="utf-8")
+    meta, body = _parse_frontmatter(text)
+    tags_val   = meta.get("tags", [])
+    post = {
+        "title":     meta.get("title", ""),
+        "tags":      ", ".join(tags_val) if isinstance(tags_val, list) else str(tags_val),
+        "summary":   meta.get("summary", ""),
+        "body":      body,
+        "published": meta.get("published", False),
+    }
+    return render_template("blog_new.html", post=post, slug=slug, error=error)
+
+
+@app.route("/blog/<slug>")
+def blog_post(slug):
+    if not re.match(r"^[\w-]+$", slug):
+        abort(404)
+    f = BLOG_DIR / f"{slug}.md"
+    if not f.exists():
+        abort(404)
+    text = f.read_text(encoding="utf-8")
+    meta, body = _parse_frontmatter(text)
+    if not meta.get("published") and not session.get("logged_in"):
+        abort(404)
+    html = md_lib.markdown(body, extensions=_MD_EXTENSIONS)
+    return render_template("blog_post.html", meta=meta, content=html, slug=slug)
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+job_queue = JobQueue(WIKI_DIR / ".jobs")
+
 
 if __name__ == "__main__":
     host = cfg_get("server", "host", "127.0.0.1")
     port = cfg_int("server", "port", default=8080)
 
-    init_auth()
+    issues = validate_config()
+    for level, msg in issues:
+        prefix = "ERROR" if level == "error" else "WARNING"
+        print(f"[{prefix}] {msg}")
 
-    if not cfg_get("admin", "email"):
-        print("WARNING: admin.email not set in config.json. You won't be able to log in.")
-    if not cfg_get("admin", "password"):
-        print("WARNING: admin.password not set in config.json. You won't be able to log in.")
-    if not _resend_ready():
-        print("NOTE: email.resend_api_key not set — email verification disabled, accounts auto-verified.")
+    errors = [m for l, m in issues if l == "error"]
+    if errors:
+        print("\nFix these errors and restart.")
+        sys.exit(1)
+
+    if not user_exists():
+        print(f"[INFO] No account found. Visit http://{host}:{port}/setup to create one.")
 
     provider = cfg_get("llm", "provider", "openai")
-    print(f"\nLLM Wiki  http://{host}:{port}  (provider: {provider})\n")
+    print(f"\nLobotomy  http://{host}:{port}  (provider: {provider})\n")
     app.run(host=host, port=port, debug=False, threaded=True)

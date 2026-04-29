@@ -1,0 +1,5 @@
+flask
+markdown
+# Optional — for PDF ingestion:
+# pypdf           (pip install pypdf)   — pure-Python text extraction
+# pkg install poppler                   — pdftotext + pdftoppm (image PDFs)

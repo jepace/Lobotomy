@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LLM Wiki — CLI client
+Lobotomy — CLI client
 
 Interactive terminal session for operating the wiki from the command line.
 For web-based access use: python3 tools/serve.py
@@ -55,7 +55,7 @@ def main():
         messages = run_agent_turn_with_output(client, model, messages, sys_prompt)
         return
 
-    print(f"\nLLM Wiki  [{provider} / {model}]")
+    print(f"\nLobotomy  [{provider} / {model}]")
     print("Commands: 'ingest raw/file.md'  |  'process inbox'  |  'query: ...'  |  'lint the wiki'")
     print("Type 'exit' or Ctrl-D to quit.\n")
 
