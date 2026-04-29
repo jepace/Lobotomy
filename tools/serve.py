@@ -910,7 +910,9 @@ def inbox_clip():
   {read_link}
   <a class="pri" href="{inbox_url}">Reading List</a>
   <a class="sec" href="javascript:history.back()">Back</a>
-</div></body></html>"""
+</div>
+<script>setTimeout(()=>window.close(),2000)</script>
+</body></html>"""
 
 
 @app.route("/inbox/read/<path:filename>")
