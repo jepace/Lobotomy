@@ -505,11 +505,19 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
                 self.parts.append(data)
 
     headers = {
-        "User-Agent":      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
-        "Accept":          "text/html,application/xhtml+xml,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "identity",
+        "User-Agent":              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept":                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language":         "en-US,en;q=0.9",
+        "Accept-Encoding":         "gzip, deflate, br",
+        "Sec-Fetch-Dest":          "document",
+        "Sec-Fetch-Mode":          "navigate",
+        "Sec-Fetch-Site":          "none",
+        "Sec-Fetch-User":          "?1",
+        "Upgrade-Insecure-Requests": "1",
+        "Connection":              "keep-alive",
+        "Cache-Control":           "max-age=0",
+        "Pragma":                  "no-cache",
     }
     try:
         req = urllib.request.Request(url, headers=headers)
