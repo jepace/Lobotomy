@@ -158,7 +158,7 @@
   </td>
   <td class="col-rep">
     <label>Repeat</label>
-    <input id="f-rep" type="text" placeholder="weekly" list="rep-options">
+    <input id="f-rep" type="text" placeholder="1d, 1w, 2w, 1m, 3m, 1y" list="rep-options">
     <datalist id="rep-options">
       <option value="1d">Daily</option>
       <option value="1w">Weekly</option>
@@ -247,7 +247,7 @@
     </td>
     <td>
       <span class="ecell{% if not task.priority %} empty{% endif %}"
-            data-id="{{ task.line_num }}" data-field="priority">{{ task.priority or '—' }}</span>
+            data-id="{{ task.line_num }}" data-field="priority">{{ task.priority|capitalize if task.priority else '—' }}</span>
     </td>
     <td>
       <span class="ecell{% if not task.start %} empty{% endif %}"
@@ -283,6 +283,9 @@ const today = new Date().toISOString().split('T')[0];
 document.getElementById('f-due').value = today;
 document.getElementById('f-start').value = today;
 
+// Completion timeout tracking
+const completionTimeouts = {};
+
 // ── Show/hide completed ──────────────────────────────────────
 const showDoneCb = document.getElementById('show-done');
 function applyShowDone() {
@@ -302,13 +305,14 @@ applyShowDone();
 
 // ── Done checkbox ────────────────────────────────────────────
 document.querySelectorAll('.done-cb').forEach(cb => {
-  cb.addEventListener('change', async () => {
+  cb.addEventListener('change', async (e) => {
     const id = parseInt(cb.dataset.id);
     const row = document.querySelector(`.task-row[data-id="${id}"]`);
     if (cb.checked) {
       row.classList.add('completing');
-      await apiUpdate(id, 'complete', 'true');
-      setTimeout(() => {
+      if (completionTimeouts[id]) clearTimeout(completionTimeouts[id]);
+      completionTimeouts[id] = setTimeout(async () => {
+        await apiUpdate(id, 'complete', 'true');
         row.classList.remove('completing');
         row.classList.add('completed');
         if (!showDoneCb.checked) {
@@ -316,8 +320,15 @@ document.querySelectorAll('.done-cb').forEach(cb => {
           const nr = document.querySelector(`.note-row[data-id="${id}"]`);
           if (nr) nr.style.display = 'none';
         }
+        delete completionTimeouts[id];
       }, 2000);
     } else {
+      if (completionTimeouts[id]) {
+        clearTimeout(completionTimeouts[id]);
+        delete completionTimeouts[id];
+        row.classList.remove('completing');
+        return;
+      }
       row.classList.remove('completed');
       await apiUpdate(id, 'complete', 'false');
     }
@@ -338,14 +349,14 @@ function makeEditable(span) {
   const id    = parseInt(span.dataset.id);
   const field = span.dataset.field;
   const curText = span.textContent.trim();
-  const curVal  = (curText === '—' || curText === '') ? '' : curText;
+  const curVal  = (curText === '—' || curText === '') ? '' : curText.toLowerCase();
   const td = span.parentElement;
 
   let inp;
   if (field === 'priority') {
     inp = document.createElement('select');
     inp.className = 'edit-inline';
-    [['','—'],['top','top'],['high','high'],['medium','medium'],['low','low']].forEach(([v,l]) => {
+    [['','—'],['top','Top'],['high','High'],['medium','Medium'],['low','Low']].forEach(([v,l]) => {
       const o = new Option(l, v);
       if (v === curVal) o.selected = true;
       inp.appendChild(o);
@@ -372,7 +383,11 @@ function makeEditable(span) {
     if (field === 'recurrence' && val) {
       val = REPEAT_MAP[val.toLowerCase()] || val;
     }
-    span.textContent = val || '—';
+    let displayVal = val;
+    if (field === 'priority' && val) {
+      displayVal = val.charAt(0).toUpperCase() + val.slice(1);
+    }
+    span.textContent = displayVal || '—';
     span.classList.toggle('empty', !val);
     td.replaceChild(span, inp);
     apiUpdate(id, field, val);
@@ -461,17 +476,28 @@ document.querySelectorAll('.bulk-item').forEach(item => {
 // ── Column sort with date grouping ──────────────────────────
 const PRIORITY_ORDER = {top:0, high:1, medium:2, low:3};
 
-let sortCol = 'due', sortDir = 'asc';
+// Load sort preference from localStorage
+let sortCol = localStorage.getItem('tasks-sort-col') || 'due';
+let sortDir = localStorage.getItem('tasks-sort-dir') || 'asc';
+
+function setSortUI() {
+  document.querySelectorAll('.tasks-table th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
+  const th = document.querySelector(`.tasks-table th[data-col="${sortCol}"]`);
+  if (th) th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+}
+
 document.querySelectorAll('.tasks-table th[data-col]').forEach(th => {
   th.addEventListener('click', () => {
     const col = th.dataset.col;
     sortDir = (sortCol === col && sortDir === 'asc') ? 'desc' : 'asc';
     sortCol = col;
-    document.querySelectorAll('.tasks-table th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
-    th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+    localStorage.setItem('tasks-sort-col', sortCol);
+    localStorage.setItem('tasks-sort-dir', sortDir);
+    setSortUI();
     sortTable();
   });
 });
+setSortUI();
 
 function colVal(row, col) {
   const sp = row.querySelector(`.ecell[data-field="${col}"]`);
@@ -533,19 +559,41 @@ function sortTable() {
 
   pairs.forEach(({row,note}) => { tbody.appendChild(row); if (note) tbody.appendChild(note); });
 
-  // Inject date group headers when sorting by due asc
+  // Inject group headers when sorting by due date (ascending) or priority
   if (sortCol === 'due' && sortDir === 'asc') {
     let lastKey = null;
+    const groupTasks = {};
     for (const {row} of pairs) {
       const due = row.querySelector('.ecell[data-field="due"]')?.textContent.trim() || '—';
       const grp = dateGroup(due);
       const key = grp.label;
-      if (key !== lastKey) {
+      if (!groupTasks[key]) groupTasks[key] = [];
+      groupTasks[key].push({row, grp});
+    }
+    // Only show groups that have tasks
+    for (const {row, grp} of pairs) {
+      const due = row.querySelector('.ecell[data-field="due"]')?.textContent.trim() || '—';
+      const key = dateGroup(due).label;
+      if (key !== lastKey && groupTasks[key].length > 0) {
         const tr = document.createElement('tr');
         tr.className = `group-header-row ${grp.cls}`;
-        tr.innerHTML = `<td colspan="9">${grp.label}</td>`;
+        tr.innerHTML = `<td colspan="9">${key}</td>`;
         tbody.insertBefore(tr, row);
         lastKey = key;
+      }
+    }
+  } else if (sortCol === 'priority') {
+    let lastVal = null;
+    const PRIORITY_LABELS = {0: 'Top', 1: 'High', 2: 'Medium', 3: 'Low', 4: 'No Priority'};
+    for (const {row} of pairs) {
+      const val = colVal(row, 'priority');
+      const label = PRIORITY_LABELS[val] || 'No Priority';
+      if (val !== lastVal) {
+        const tr = document.createElement('tr');
+        tr.className = 'group-header-row';
+        tr.innerHTML = `<td colspan="9">${label}</td>`;
+        tbody.insertBefore(tr, row);
+        lastVal = val;
       }
     }
   }
@@ -574,8 +622,18 @@ async function addTask() {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({text: fullText, section:'Inbox'})
   });
-  if (res.ok) location.reload();
-  else alert('Error adding task');
+  if (res.ok) {
+    // Clear form fields
+    document.getElementById('f-task').value = '';
+    document.getElementById('f-ctx').value = '';
+    document.getElementById('f-pri').value = '';
+    document.getElementById('f-rep').value = '';
+    document.getElementById('f-due').value = today;
+    document.getElementById('f-start').value = today;
+    location.reload();
+  } else {
+    alert('Error adding task');
+  }
 }
 document.getElementById('f-task').addEventListener('keypress', e => {
   if (e.key === 'Enter') addTask();

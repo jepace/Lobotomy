@@ -5,7 +5,7 @@ Task manager for wiki/tasks.md. Parses, filters, and updates tasks.
 
 import re
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 TASKS_FILE = Path(__file__).resolve().parent.parent / "wiki" / "tasks.md"
 
@@ -111,6 +111,61 @@ class Task:
     def reopen_task(self):
         self.complete = False
         self.tags.pop('#done', None)
+
+    def get_next_recurrence(self):
+        """If task is recurring, return a new Task for the next occurrence."""
+        if not self.recurrence or not self.complete:
+            return None
+
+        rep = self.recurrence.lower()
+
+        # Parse recurrence: e.g. "1d", "1w+", "2m", etc.
+        match = re.match(r'^(\d+)([dwmy])(\+?)$', rep)
+        if not match:
+            return None
+
+        count = int(match.group(1))
+        unit = match.group(2)
+        relative = match.group(3) == '+'  # '+' means relative to completion date
+
+        # Get base date
+        if relative:
+            base = datetime.now().date()
+        else:
+            base = datetime.fromisoformat(self.due or datetime.now().isoformat()).date() if self.due else datetime.now().date()
+
+        # Calculate next due date
+        if unit == 'd':
+            next_due = base + timedelta(days=count)
+        elif unit == 'w':
+            next_due = base + timedelta(weeks=count)
+        elif unit == 'm':
+            # Month calculation
+            month = base.month + count
+            year = base.year
+            while month > 12:
+                month -= 12
+                year += 1
+            try:
+                next_due = base.replace(year=year, month=month)
+            except ValueError:  # Day doesn't exist in target month
+                next_due = base.replace(year=year, month=month, day=1) - timedelta(days=1)
+        elif unit == 'y':
+            next_due = base.replace(year=base.year + count)
+        else:
+            return None
+
+        # Create new task for next occurrence
+        next_task = Task("", -1)
+        next_task.indent = self.indent
+        next_task.complete = False
+        next_task.description = self.description
+        next_task.tags = self.tags.copy()
+        next_task.tags.pop('#done', None)  # Remove done tag
+        next_task.tags['#due'] = next_due.isoformat()
+        next_task.section = self.section
+
+        return next_task
 
 
 def read_tasks():
