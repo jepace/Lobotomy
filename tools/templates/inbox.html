@@ -1,118 +1,135 @@
 {% extends "base.html" %}
-{% block title %}Inbox — Wiki{% endblock %}
+{% block title %}Reading List{% endblock %}
 
 {% block head %}
 <style>
-  .inbox-topbar {
-    position: sticky;
-    top: 0;
-    background: var(--bg);
-    border-bottom: 1px solid var(--border);
+  .page-topbar {
+    position: sticky; top: 0;
+    background: var(--bg); border-bottom: 1px solid var(--border);
     padding: 10px 16px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    display: flex; align-items: center; justify-content: space-between;
     z-index: 100;
   }
-  .inbox-topbar h1 { font-size: 17px; font-weight: 600; }
+  .page-topbar h1 { font-size: 17px; font-weight: 600; }
 
-  .inbox-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 13px 16px;
-    border-bottom: 1px solid var(--border);
+  .save-panel {
+    margin: 12px; padding: 14px;
+    background: var(--bg2); border-radius: 12px;
+    display: none;
   }
-  .inbox-item-name {
-    flex: 1;
-    font-size: 15px;
-    word-break: break-all;
-    min-width: 0;
-  }
-  .inbox-del {
-    flex-shrink: 0;
-    width: 30px; height: 30px;
-    border-radius: 50%;
-    background: var(--bg3);
-    border: none;
-    color: var(--text2);
-    font-size: 18px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    -webkit-tap-highlight-color: transparent;
-  }
+  .save-panel.open { display: block; }
+  .save-panel h2  { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+  .save-panel textarea { min-height: 90px; resize: vertical; margin-bottom: 8px;
+                         font-size: 15px; font-family: inherit; }
+  .save-panel input  { margin-bottom: 8px; font-size: 15px; }
+  .save-panel label  { font-size: 12px; color: var(--text2); display: block; margin-bottom: 4px; }
 
-  .add-panel {
-    margin: 0 12px 12px;
-    background: var(--bg2);
-    border-radius: 12px;
-    padding: 14px;
+  .reading-item {
+    margin: 0 12px 10px;
+    background: var(--bg2); border-radius: 12px;
+    overflow: hidden;
   }
-  .add-panel h2 { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
-  .add-panel textarea { min-height: 100px; resize: vertical; margin-bottom: 8px; font-size: 15px; }
-  .add-panel input  { margin-bottom: 8px; font-size: 15px; }
-  .add-panel label  { font-size: 13px; color: var(--text2); display: block; margin-bottom: 4px; }
+  .item-header {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 12px 14px; cursor: pointer;
+  }
+  .item-body { flex: 1; min-width: 0; }
+  .item-title {
+    font-size: 15px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    margin-bottom: 3px;
+  }
+  .item-meta { font-size: 12px; color: var(--text2); margin-bottom: 4px; }
+  .item-excerpt {
+    font-size: 13px; color: var(--text2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .item-chevron {
+    flex-shrink: 0; font-size: 11px; color: var(--text2);
+    margin-top: 4px; transition: transform .2s;
+  }
+  .reading-item.expanded .item-chevron { transform: rotate(90deg); }
 
-  .process-bar {
-    margin: 12px;
-    padding: 14px;
-    background: var(--bg2);
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+  .item-actions {
+    display: flex; gap: 6px;
+    padding: 0 14px 12px; flex-wrap: wrap;
   }
-  .process-bar p { font-size: 14px; color: var(--text2); flex: 1; }
+  .act-btn {
+    padding: 5px 10px; border-radius: 8px; font-size: 12px; font-weight: 600;
+    cursor: pointer; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); white-space: nowrap;
+  }
+  .act-btn.archive { background: var(--success); color: #fff; border: none; }
+  .act-btn.wikify  { background: var(--accent);  color: #fff; border: none; }
+  .act-btn.delete  { color: var(--danger); border-color: var(--danger); background: transparent; }
+
+  .item-reader {
+    display: none; border-top: 1px solid var(--border);
+    padding: 14px; max-height: 60vh; overflow-y: auto;
+  }
+  .reading-item.expanded .item-reader { display: block; }
+  .reader-content {
+    font-size: 14px; line-height: 1.65; white-space: pre-wrap;
+    word-break: break-word; color: var(--text); font-family: inherit; margin: 0;
+  }
+  .reader-loading { color: var(--text2); font-size: 13px; padding: 20px 0; text-align: center; }
+
+  .empty-state { text-align: center; padding: 50px 20px; color: var(--text2); }
 </style>
 {% endblock %}
 
 {% block body %}
 <div class="page">
-  <div class="inbox-topbar">
-    <h1>Inbox</h1>
-    <span class="text-sm text2">{{ items|length }} item{{ 's' if items|length != 1 }}</span>
+  <div class="page-topbar">
+    <h1>Reading List</h1>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <span class="text-sm text2">{{ items|length }} saved</span>
+      <button class="btn btn-primary btn-sm" onclick="toggleSave()">+ Save</button>
+    </div>
   </div>
 
-  <!-- Capture form -->
-  <div style="height:12px;"></div>
-  <div class="add-panel">
+  <div class="save-panel" id="save-panel">
     <h2>Save article or URL</h2>
     <label>Paste article text, a URL, or notes</label>
     <textarea id="content" placeholder="Paste article text or a URL here…"></textarea>
     <label>Filename (optional — auto-generated if blank)</label>
     <input type="text" id="filename" placeholder="my-article.txt">
-    <button class="btn btn-primary" style="width:100%" onclick="saveToInbox()">Save to Inbox</button>
+    <div style="display:flex; gap:8px; margin-top:4px;">
+      <button class="btn btn-primary" style="flex:1" onclick="saveToInbox()">Save</button>
+      <button class="btn btn-ghost" style="flex:0 0 auto" onclick="toggleSave()">Cancel</button>
+    </div>
   </div>
 
-  <!-- Process all via AI -->
-  {% if items %}
-  <div class="process-bar">
-    <p>{{ items|length }} item{{ 's' if items|length != 1 }} waiting to be ingested.</p>
-    <a href="/chat" class="btn btn-primary btn-sm" onclick="setProcessPrompt()">Process with AI</a>
-  </div>
-  {% endif %}
+  <div style="height:4px;"></div>
 
-  <!-- Item list -->
   {% if items %}
-  <div class="section-header">Queued items</div>
-  <div style="background:var(--bg2); border-radius:12px; margin:0 12px 12px; overflow:hidden;">
     {% for item in items %}
-    <div class="inbox-item" id="item-{{ loop.index }}">
-      <div class="inbox-item-name">
-        <div>{{ item }}</div>
+    <div class="reading-item" id="item-{{ loop.index }}">
+      <div class="item-header" onclick="toggleItem({{ loop.index }}, '{{ item.name | e }}')">
+        <div class="item-body">
+          <div class="item-title">{{ item.title }}</div>
+          <div class="item-meta">{{ item.date }} &middot; {{ item.name }}</div>
+          {% if item.excerpt %}<div class="item-excerpt">{{ item.excerpt }}</div>{% endif %}
+        </div>
+        <span class="item-chevron">▶</span>
       </div>
-      <button class="inbox-del" onclick="deleteItem('{{ item }}', {{ loop.index }})" title="Remove">×</button>
+
+      <div class="item-actions">
+        <button class="act-btn archive" onclick="archiveItem('{{ item.name | e }}', {{ loop.index }})">Archive</button>
+        <button class="act-btn wikify"  onclick="wikifyItem('{{ item.name | e }}')">Wikify with AI</button>
+        <button class="act-btn delete"  onclick="deleteItem('{{ item.name | e }}', {{ loop.index }})">Delete</button>
+      </div>
+
+      <div class="item-reader" id="reader-{{ loop.index }}">
+        <div class="reader-loading">Loading…</div>
+      </div>
     </div>
     {% endfor %}
-  </div>
   {% else %}
-  <div style="text-align:center; padding:40px 20px; color:var(--text2);">
-    <div style="font-size:36px; margin-bottom:12px;">📥</div>
-    <div style="font-weight:600; margin-bottom:6px;">Inbox is empty</div>
-    <div style="font-size:14px;">Save an article above, then ask the AI to process it.</div>
+  <div class="empty-state">
+    <div style="font-size:36px; margin-bottom:12px;">📖</div>
+    <div style="font-weight:600; margin-bottom:6px;">Nothing saved yet</div>
+    <div style="font-size:14px;">Tap <strong>+ Save</strong> to add an article, URL, or notes.</div>
   </div>
   {% endif %}
 
@@ -120,44 +137,73 @@
 </div>
 
 <script>
-async function saveToInbox() {
-  var content  = document.getElementById('content').value.trim();
-  var filename = document.getElementById('filename').value.trim();
-  if (!content) { alert('Please paste some content first.'); return; }
+function toggleSave() {
+  const p = document.getElementById('save-panel');
+  p.classList.toggle('open');
+  if (p.classList.contains('open')) document.getElementById('content').focus();
+}
 
-  var resp = await fetch('/inbox/add', {
-    method:  'POST',
-    headers: {'Content-Type': 'application/json'},
-    body:    JSON.stringify({content: content, filename: filename}),
+async function saveToInbox() {
+  const content  = document.getElementById('content').value.trim();
+  const filename = document.getElementById('filename').value.trim();
+  if (!content) { alert('Please paste some content first.'); return; }
+  const resp = await fetch('/inbox/add', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({content, filename}),
   });
-  var data = await resp.json();
+  const data = await resp.json();
+  if (data.ok) location.reload();
+  else alert('Error: ' + (data.error || 'Unknown'));
+}
+
+const loaded = {};
+
+async function toggleItem(idx, name) {
+  const card   = document.getElementById('item-' + idx);
+  const reader = document.getElementById('reader-' + idx);
+  const isOpen = card.classList.toggle('expanded');
+
+  if (isOpen && !loaded[idx]) {
+    try {
+      const resp = await fetch('/inbox/view/' + encodeURIComponent(name));
+      const data = await resp.json();
+      const pre  = document.createElement('pre');
+      pre.className = 'reader-content';
+      pre.textContent = data.content;
+      reader.innerHTML = '';
+      reader.appendChild(pre);
+      loaded[idx] = true;
+    } catch(e) {
+      reader.innerHTML = '<div class="reader-loading">Could not load.</div>';
+    }
+  }
+}
+
+async function archiveItem(name, idx) {
+  const resp = await fetch('/inbox/archive', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({filename: name}),
+  });
+  const data = await resp.json();
   if (data.ok) {
-    document.getElementById('content').value  = '';
-    document.getElementById('filename').value = '';
-    location.reload();
+    document.getElementById('item-' + idx)?.remove();
   } else {
-    alert('Error: ' + (data.error || 'Unknown error'));
+    alert('Archive failed: ' + (data.error || 'Unknown'));
   }
 }
 
 async function deleteItem(name, idx) {
-  if (!confirm('Remove "' + name + '" from inbox?')) return;
+  if (!confirm('Delete "' + name + '"?')) return;
   await fetch('/inbox/delete', {
-    method:  'POST',
-    headers: {'Content-Type': 'application/json'},
-    body:    JSON.stringify({filename: name}),
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({filename: name}),
   });
-  var el = document.getElementById('item-' + idx);
-  if (el) el.remove();
+  document.getElementById('item-' + idx)?.remove();
 }
 
-function setProcessPrompt() {
-  localStorage.setItem('pendingChatPrompt', 'Process inbox');
+function wikifyItem(name) {
+  localStorage.setItem('pendingChatPrompt', 'Process inbox file: ' + name);
+  window.location.href = '/chat';
 }
-
-// If arriving at chat with a pending prompt, pre-fill the input
-window.addEventListener('load', function() {
-  // handled by chat.html
-});
 </script>
 {% endblock %}

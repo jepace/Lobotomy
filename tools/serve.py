@@ -477,10 +477,20 @@ def list_inbox() -> list:
     inbox = RAW_DIR / "inbox"
     if not inbox.is_dir():
         return []
-    return sorted(
-        f.name for f in inbox.iterdir()
-        if f.is_file() and f.name != ".gitkeep"
-    )
+    items = []
+    for f in sorted(inbox.iterdir(), key=lambda x: -x.stat().st_mtime):
+        if not f.is_file() or f.name.startswith("."):
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            text = ""
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        title   = lines[0][:100] if lines else f.stem
+        excerpt = " ".join(lines[1:4])[:200] if len(lines) > 1 else ""
+        mtime   = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
+        items.append({"name": f.name, "title": title, "excerpt": excerpt, "date": mtime})
+    return items
 
 # ---------------------------------------------------------------------------
 # Wiki navigation helpers
@@ -750,6 +760,45 @@ def inbox_delete():
         return {"error": "Invalid path"}, 400
     if p.exists():
         p.unlink()
+    return {"ok": True}
+
+
+@app.route("/inbox/view/<path:filename>")
+@require_login
+def inbox_view(filename):
+    p = RAW_DIR / "inbox" / filename
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        abort(404)
+    if not p.exists():
+        abort(404)
+    return {"content": p.read_text(encoding="utf-8", errors="replace")}
+
+
+@app.route("/inbox/archive", methods=["POST"])
+@require_login
+def inbox_archive():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("filename") or "").strip()
+    if not name:
+        return {"error": "No filename"}, 400
+    src = RAW_DIR / "inbox" / name
+    try:
+        src.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        return {"error": "Invalid path"}, 400
+    if not src.exists():
+        return {"error": "File not found"}, 404
+    dst = RAW_DIR / name
+    # Avoid overwriting existing files in raw/
+    if dst.exists():
+        stem, suffix = src.stem, src.suffix
+        i = 1
+        while dst.exists():
+            dst = RAW_DIR / f"{stem}-{i}{suffix}"
+            i += 1
+    src.rename(dst)
     return {"ok": True}
 
 # ---------------------------------------------------------------------------

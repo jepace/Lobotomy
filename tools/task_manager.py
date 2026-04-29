@@ -47,7 +47,7 @@ class Task:
             tag_full = m.group(0)
             if ':' in tag_full:
                 key, val = tag_full.split(':', 1)
-                self.tags[key] = val   # e.g. '#p': 'high'
+                self.tags[key] = val.lstrip(':')  # strip extra colons from old corrupted data
             else:
                 self.tags[tag_full] = None  # e.g. '#star': None
 

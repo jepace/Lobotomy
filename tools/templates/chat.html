@@ -434,10 +434,17 @@ async function clearChat() {
   location.reload();
 }
 
-// On load: scroll to bottom and check if a job is still running
+// On load: scroll to bottom, check for active job, and apply any pending prompt
 window.addEventListener('load', function() {
   scrollToBottom();
   checkActiveJob();
+  const pending = localStorage.getItem('pendingChatPrompt');
+  if (pending) {
+    localStorage.removeItem('pendingChatPrompt');
+    document.getElementById('msg-input').value = pending;
+    autoResize(document.getElementById('msg-input'));
+    document.getElementById('msg-input').focus();
+  }
 });
 // Keep bottom visible when iOS keyboard appears
 window.addEventListener('resize', scrollToBottom);
