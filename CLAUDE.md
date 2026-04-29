@@ -4,6 +4,10 @@ Read this file completely before doing anything else. It is the authoritative gu
 operation in this wiki. If you are an LLM session that has just been pointed at this repository,
 this file tells you everything you need to know to operate correctly.
 
+## Git Branch Policy
+
+Always push to **main**. Do not use feature branches unless the user explicitly requests one.
+
 ---
 
 ## 1. What This Wiki Is
