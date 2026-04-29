@@ -91,6 +91,10 @@ class Task:
         return self.tags.get('#rep:', None)
 
     @property
+    def start(self):
+        return self.tags.get('#start:', None)
+
+    @property
     def notes(self):
         return self.raw_notes.strip()
 
@@ -123,6 +127,18 @@ class Task:
             self.tags['#s:'] = val
         else:
             self.tags.pop('#s:', None)
+
+    def set_recurrence(self, val):
+        if val:
+            self.tags['#rep:'] = val
+        else:
+            self.tags.pop('#rep:', None)
+
+    def set_start(self, val):
+        if val:
+            self.tags['#start:'] = val
+        else:
+            self.tags.pop('#start:', None)
 
     def set_notes(self, val):
         self.raw_notes = val

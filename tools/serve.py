@@ -653,6 +653,10 @@ def tasks_update():
         task.set_priority(value if value else None)
     elif field == "project":
         task.set_project(value if value else None)
+    elif field == "recurrence":
+        task.set_recurrence(value if value else None)
+    elif field == "start":
+        task.set_start(value if value else None)
     elif field == "notes":
         task.set_notes(value)
     elif field == "complete":

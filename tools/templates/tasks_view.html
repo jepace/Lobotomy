@@ -4,80 +4,153 @@
 
 {% block head %}
 <style>
-  .tasks-container { padding: 16px; width: 100%; }
+  .tasks-container { padding: 12px; width: 100%; }
+  h1 { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
 
-  /* Add task form — compact on one line */
-  .add-task-form {
-    display: grid;
-    grid-template-columns: 1fr auto auto auto auto auto auto;
-    gap: 8px;
-    margin-bottom: 20px;
-    align-items: flex-end;
-    background: var(--bg2);
-    padding: 10px;
-    border-radius: 8px;
+  /* ── Table layout ──────────────────────────────────────── */
+  .tasks-table {
+    width: 100%;
+    border-collapse: collapse;
     font-size: 13px;
+    table-layout: fixed;
   }
-  .add-task-form input,
-  .add-task-form select {
+
+  /* Column widths */
+  .col-done    { width: 30px; }
+  .col-task    { width: 18%; }
+  .col-ctx     { width: 9%; }
+  .col-due     { width: 90px; }
+  .col-rep     { width: 9%; }
+  .col-pri     { width: 70px; }
+  .col-start   { width: 90px; }
+  .col-note    { width: 36px; }
+  .col-sel     { width: 30px; }
+
+  .tasks-table th {
+    background: var(--bg3);
+    padding: 7px 8px;
+    text-align: left;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text2);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .tasks-table th:hover { background: var(--accent); color: #fff; }
+  .tasks-table th.sort-asc::after  { content: ' ↑'; }
+  .tasks-table th.sort-desc::after { content: ' ↓'; }
+  .tasks-table th.sortable::after  { content: ' ↕'; opacity: 0.3; font-size: 9px; }
+  .tasks-table th.sort-asc::after,
+  .tasks-table th.sort-desc::after { opacity: 1; font-size: 9px; }
+
+  .tasks-table td {
     padding: 6px 8px;
     border: 1px solid var(--border);
+    height: 38px;
+    overflow: hidden;
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  .tasks-table tbody tr:nth-child(4n+1),
+  .tasks-table tbody tr:nth-child(4n+2) { background: var(--bg); }
+  .tasks-table tbody tr:nth-child(4n+3),
+  .tasks-table tbody tr:nth-child(4n+4) { background: var(--bg2); }
+  .tasks-table .note-row { background: var(--bg2) !important; }
+  .tasks-table tbody tr.task-row:hover { background: var(--bg3) !important; }
+
+  /* Priority left-border accent */
+  .task-row.pri-top    td:first-child { border-left: 3px solid #ff3b30; }
+  .task-row.pri-high   td:first-child { border-left: 3px solid #ff9500; }
+  .task-row.pri-medium td:first-child { border-left: 3px solid #007aff; }
+  .task-row.pri-low    td:first-child { border-left: 3px solid #8e8e93; }
+
+  .task-row.completing .task-name-text { text-decoration: line-through; opacity: 0.6; }
+
+  /* Done checkbox */
+  .done-cb {
+    width: 16px; height: 16px;
+    cursor: pointer;
+    accent-color: var(--success);
+  }
+
+  /* Editable cells */
+  .ecell {
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: block;
+    border-radius: 3px;
+    padding: 1px 3px;
+  }
+  .ecell:hover { background: var(--accent); color: #fff; border-radius: 3px; }
+  .ecell.empty { color: var(--text2); }
+  .ecell.empty:hover { color: #fff; }
+
+  /* Inline edit — hides the display span, shows input */
+  .edit-input {
+    display: none;
+    width: 100%;
+    padding: 3px 5px;
+    font-size: 12px;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+    box-sizing: border-box;
+  }
+  .edit-input.active { display: block; }
+
+  /* Note row */
+  .note-row { display: none; }
+  .note-row.open { display: table-row; }
+  .note-row td { height: auto; padding: 8px; white-space: normal; }
+  .note-textarea {
+    width: 100%;
+    min-height: 64px;
+    font-size: 13px;
+    padding: 6px 8px;
+    border: 1px solid var(--accent);
     border-radius: 6px;
     background: var(--bg);
     color: var(--text);
-    font-size: 13px;
-    outline: none;
-    -webkit-appearance: none;
+    resize: vertical;
+    font-family: inherit;
   }
-  .add-task-form input:focus,
-  .add-task-form select:focus {
-    border-color: var(--accent);
-  }
-  .add-task-form input[type="date"] {
-    max-width: 110px;
-  }
-  .add-task-form button {
-    background: var(--accent);
-    color: white;
+  .note-save { margin-top: 6px; }
+  .note-btn {
+    background: none;
     border: none;
-    border-radius: 6px;
-    padding: 6px 12px;
     cursor: pointer;
-    font-weight: 600;
-    font-size: 13px;
-  }
-  .add-task-form label {
+    font-size: 14px;
+    opacity: 0.5;
+    padding: 2px;
     display: block;
-    font-size: 11px;
-    color: var(--text2);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    margin-bottom: 3px;
+    margin: 0 auto;
   }
-  .form-group { display: flex; flex-direction: column; }
+  .note-btn:hover, .note-btn.has-note { opacity: 1; }
+
+  /* Select checkbox */
+  .sel-cb { width: 14px; height: 14px; cursor: pointer; display: block; margin: 0 auto; }
 
   /* Toolbar */
   .tasks-toolbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
     gap: 10px;
   }
-  .show-completed {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    font-size: 13px;
-  }
-  .show-completed input { cursor: pointer; }
-
-  .bulk-menu {
-    position: relative;
-    display: inline-block;
-  }
+  .show-completed { display: flex; gap: 6px; align-items: center; font-size: 12px; cursor: pointer; }
+  .bulk-menu { position: relative; }
   .bulk-menu-btn {
-    padding: 6px 10px;
+    display: none;
+    padding: 5px 10px;
     background: var(--bg2);
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -87,521 +160,527 @@
   .bulk-menu-dropdown {
     display: none;
     position: absolute;
+    right: 0;
+    top: 100%;
+    margin-top: 4px;
     background: var(--bg2);
     border: 1px solid var(--border);
     border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
     z-index: 100;
     min-width: 120px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    top: 100%;
-    right: 0;
-    margin-top: 4px;
   }
-  .bulk-menu-dropdown.active { display: block; }
-  .bulk-menu-item {
+  .bulk-menu-dropdown.open { display: block; }
+  .bulk-item {
     padding: 8px 12px;
-    cursor: pointer;
     font-size: 12px;
+    cursor: pointer;
     border-bottom: 1px solid var(--border);
   }
-  .bulk-menu-item:last-child { border-bottom: none; }
-  .bulk-menu-item:hover { background: var(--bg3); }
+  .bulk-item:last-child { border-bottom: none; }
+  .bulk-item:hover { background: var(--bg3); }
 
-  /* Table */
-  .tasks-table {
+  /* ── Add-task form ─────────────────────────────────────── */
+  .add-form {
     width: 100%;
     border-collapse: collapse;
-    font-size: 13px;
-  }
-  .tasks-table th {
-    background: var(--bg3);
-    padding: 8px 10px;
-    text-align: left;
-    font-weight: 600;
-    border: 1px solid var(--border);
-    font-size: 11px;
-    text-transform: uppercase;
-    color: var(--text2);
-    cursor: pointer;
-    user-select: none;
-    letter-spacing: 0.02em;
-  }
-  .tasks-table th:hover { background: var(--accent); color: white; }
-  .tasks-table th.sortable::after {
-    content: ' ↕';
-    opacity: 0.4;
-    font-size: 9px;
-  }
-  .tasks-table th.sort-asc::after { content: ' ↑'; opacity: 1; }
-  .tasks-table th.sort-desc::after { content: ' ↓'; opacity: 1; }
-
-  .tasks-table td {
-    padding: 8px 10px;
-    border: 1px solid var(--border);
-    vertical-align: middle;
-    height: 40px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .tasks-table tbody tr:nth-child(odd) { background: var(--bg); }
-  .tasks-table tbody tr:nth-child(even) { background: var(--bg2); }
-  .tasks-table tbody tr:hover { background: var(--accent) !important; color: white; }
-  .tasks-table tbody tr:hover td { color: white; }
-
-  .task-row.completed { opacity: 0.5; }
-  .task-row.completed .task-name { text-decoration: line-through; }
-
-  /* Priority coloring */
-  .task-row.pri-top { --pri-color: #ff3b30; }
-  .task-row.pri-high { --pri-color: #ff9500; }
-  .task-row.pri-medium { --pri-color: #007aff; }
-  .task-row.pri-low { --pri-color: #8e8e93; }
-
-  .task-select {
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-  .task-name {
-    font-weight: 500;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .task-done-btn {
-    width: 24px;
-    height: 24px;
-    border: none;
-    background: none;
-    cursor: pointer;
-    font-size: 16px;
-    padding: 0;
-    opacity: 0.4;
-    flex-shrink: 0;
-  }
-  .task-done-btn:hover { opacity: 1; }
-  .task-row.completed .task-done-btn { color: var(--success); opacity: 1; }
-
-  .editable-cell {
-    cursor: pointer;
-    padding: 2px 4px;
-    border-radius: 3px;
-    display: inline-block;
-    max-width: 100%;
-  }
-  .editable-cell:hover { background: var(--accent); color: white; }
-  .editable-cell.empty { color: var(--text2); font-style: italic; }
-
-  .inline-edit { display: none; }
-  .inline-edit.active { display: block; }
-  .inline-edit input,
-  .inline-edit select,
-  .inline-edit textarea {
-    width: 100%;
-    padding: 4px 6px;
-    border: 1px solid var(--accent);
-    border-radius: 4px;
     font-size: 12px;
+    table-layout: fixed;
+    margin-bottom: 12px;
+    background: var(--bg2);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .add-form td {
+    padding: 4px 6px;
+    vertical-align: bottom;
+  }
+  .add-form label {
+    display: block;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text2);
+    margin-bottom: 3px;
+  }
+  .add-form input,
+  .add-form select {
+    width: 100%;
+    padding: 5px 6px;
+    font-size: 12px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
     background: var(--bg);
     color: var(--text);
+    -webkit-appearance: none;
+    box-sizing: border-box;
   }
-  .inline-edit-buttons {
-    display: flex;
-    gap: 4px;
-    margin-top: 4px;
-  }
-  .inline-edit-buttons button {
-    padding: 3px 8px;
-    font-size: 11px;
-    border-radius: 4px;
+  .add-form input:focus,
+  .add-form select:focus { border-color: var(--accent); outline: none; }
+  .add-btn {
+    background: var(--accent);
+    color: #fff;
     border: none;
+    border-radius: 5px;
+    padding: 5px 10px;
     cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    white-space: nowrap;
+    width: 100%;
   }
-  .inline-edit-buttons .save { background: var(--success); color: white; }
-  .inline-edit-buttons .cancel { background: var(--bg3); }
 
-  .empty-state {
-    text-align: center;
-    padding: 60px 20px;
-    color: var(--text2);
-  }
-  .empty-state-icon { font-size: 48px; margin-bottom: 10px; }
-
-  @media (max-width: 1200px) {
-    .add-task-form {
-      grid-template-columns: 1fr auto;
-    }
-    .add-task-form > :nth-child(n+3):nth-child(-n+7) {
-      order: 10;
-    }
-  }
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--text2); }
 </style>
 {% endblock %}
 
 {% block body %}
 <div class="page">
-  <div class="tasks-container">
-    <h1>Tasks</h1>
+<div class="tasks-container">
+<h1>Tasks</h1>
 
-    <!-- Quick add form -->
-    <div class="add-task-form">
-      <div class="form-group">
-        <label>Task</label>
-        <input type="text" id="task-input" placeholder="Add task...">
-      </div>
-      <div class="form-group" style="max-width: 100px;">
-        <label>Context</label>
-        <input type="text" id="context-input" placeholder="home">
-      </div>
-      <div class="form-group" style="max-width: 90px;">
-        <label>Due</label>
-        <input type="date" id="due-input">
-      </div>
-      <div class="form-group" style="max-width: 100px;">
-        <label>Priority</label>
-        <select id="priority-input">
-          <option value="">—</option>
-          <option value="top">Top</option>
-          <option value="high">High</option>
-          <option value="medium">Medium</option>
-          <option value="low">Low</option>
-        </select>
-      </div>
-      <div class="form-group" style="max-width: 100px;">
-        <label>Recur</label>
-        <select id="recurrence-input">
-          <option value="">—</option>
-          <option value="1d">Daily</option>
-          <option value="7d">Weekly</option>
-          <option value="2w">Biweekly</option>
-          <option value="1m">Monthly</option>
-          <option value="1y">Yearly</option>
-          <option value="1d+">Daily (after done)</option>
-          <option value="1w+">Weekly (after done)</option>
-        </select>
-      </div>
-      <div class="form-group" style="max-width: 110px;">
-        <label>Project</label>
-        <input type="text" id="project-input" placeholder="project">
-      </div>
-      <button onclick="add_task()">+ Add</button>
+<!-- ── Add task form (mirrors table column order/widths) ─ -->
+<table class="add-form">
+  <tr>
+    <td style="width:30px;"></td>
+    <td class="col-task">
+      <label>Task</label>
+      <input id="f-task" type="text" placeholder="New task…">
+    </td>
+    <td class="col-ctx">
+      <label>Context</label>
+      <input id="f-ctx" type="text" placeholder="home">
+    </td>
+    <td class="col-due">
+      <label>Due</label>
+      <input id="f-due" type="date">
+    </td>
+    <td class="col-rep">
+      <label>Repeat</label>
+      <input id="f-rep" type="text" placeholder="every 2 weeks">
+    </td>
+    <td class="col-pri">
+      <label>Priority</label>
+      <select id="f-pri">
+        <option value="">—</option>
+        <option value="top">Top</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
+    </td>
+    <td class="col-start">
+      <label>Start</label>
+      <input id="f-start" type="date">
+    </td>
+    <td class="col-note">
+      <label>&nbsp;</label>
+      <button class="add-btn" onclick="add_task()">+</button>
+    </td>
+    <td style="width:30px;"></td>
+  </tr>
+</table>
+
+<!-- ── Toolbar ─────────────────────────────────────────── -->
+<div class="tasks-toolbar">
+  <label class="show-completed">
+    <input type="checkbox" id="show-done"> Show completed
+  </label>
+  <div class="bulk-menu">
+    <button class="bulk-menu-btn" id="bulk-btn">⋯ Bulk</button>
+    <div class="bulk-menu-dropdown" id="bulk-drop">
+      <div class="bulk-item" data-action="set-priority">Set priority</div>
+      <div class="bulk-item" data-action="set-context">Set context</div>
+      <div class="bulk-item" data-action="set-due">Set due date</div>
+      <div class="bulk-item" data-action="set-project">Set project</div>
+      <div class="bulk-item" data-action="delete">Delete</div>
     </div>
-
-    <!-- Toolbar -->
-    <div class="tasks-toolbar">
-      <label class="show-completed">
-        <input type="checkbox" id="show-completed-checkbox">
-        Show completed
-      </label>
-      <div class="bulk-menu">
-        <button class="bulk-menu-btn" id="bulk-menu-btn" style="display: none;">
-          ⋯ Bulk
-        </button>
-        <div class="bulk-menu-dropdown" id="bulk-menu-dropdown">
-          <div class="bulk-menu-item" data-action="set-priority">Set priority</div>
-          <div class="bulk-menu-item" data-action="set-context">Set context</div>
-          <div class="bulk-menu-item" data-action="set-due">Set due date</div>
-          <div class="bulk-menu-item" data-action="set-project">Set project</div>
-          <div class="bulk-menu-item" data-action="delete">Delete</div>
-        </div>
-      </div>
-    </div>
-
-    {% if tasks %}
-    <!-- Task table -->
-    <table class="tasks-table">
-      <thead>
-        <tr>
-          <th style="width: 24px;"><input type="checkbox" id="select-all-checkbox"></th>
-          <th>Task</th>
-          <th style="width: 90px;">Context</th>
-          <th style="width: 90px;">Due</th>
-          <th style="width: 70px;">Priority</th>
-          <th style="width: 24px;"></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for task in tasks %}
-        <tr class="task-row {% if task.complete %}completed{% endif %} pri-{{ task.priority or 'none' }}" data-task-id="{{ loop.index0 }}">
-          <td><input type="checkbox" class="task-select" data-task-id="{{ loop.index0 }}"></td>
-          <td>
-            <div class="task-name editable" data-task-id="{{ loop.index0 }}" data-field="description">
-              {{ task.description }}
-            </div>
-            <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="description">
-              <input type="text" value="{{ task.description }}">
-              <div class="inline-edit-buttons">
-                <button class="save">✓</button>
-                <button class="cancel">✕</button>
-              </div>
-            </div>
-          </td>
-          <td>
-            <div class="editable-cell {% if not task.context %}empty{% endif %}" data-task-id="{{ loop.index0 }}" data-field="context">
-              {{ task.context or "—" }}
-            </div>
-            <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="context">
-              <input type="text" value="{{ task.context or '' }}" placeholder="home, work, etc">
-              <div class="inline-edit-buttons">
-                <button class="save">✓</button>
-                <button class="cancel">✕</button>
-              </div>
-            </div>
-          </td>
-          <td>
-            <div class="editable-cell {% if not task.due %}empty{% endif %}" data-task-id="{{ loop.index0 }}" data-field="due">
-              {{ task.due or "—" }}
-            </div>
-            <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="due">
-              <input type="date" value="{{ task.due or '' }}">
-              <div class="inline-edit-buttons">
-                <button class="save">✓</button>
-                <button class="cancel">✕</button>
-              </div>
-            </div>
-          </td>
-          <td>
-            <div class="editable-cell {% if not task.priority %}empty{% endif %}" data-task-id="{{ loop.index0 }}" data-field="priority">
-              {{ task.priority or "—" }}
-            </div>
-            <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="priority">
-              <select>
-                <option value="">—</option>
-                <option value="top" {% if task.priority == "top" %}selected{% endif %}>top</option>
-                <option value="high" {% if task.priority == "high" %}selected{% endif %}>high</option>
-                <option value="medium" {% if task.priority == "medium" %}selected{% endif %}>medium</option>
-                <option value="low" {% if task.priority == "low" %}selected{% endif %}>low</option>
-              </select>
-              <div class="inline-edit-buttons">
-                <button class="save">✓</button>
-                <button class="cancel">✕</button>
-              </div>
-            </div>
-          </td>
-          <td>
-            <button class="task-done-btn" data-task-id="{{ loop.index0 }}" onclick="toggle_done({{ loop.index0 }})">
-              {% if task.complete %}✓{% else %}○{% endif %}
-            </button>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-
-    {% else %}
-    <div class="empty-state">
-      <div class="empty-state-icon">📝</div>
-      <p>No tasks yet.</p>
-    </div>
-    {% endif %}
   </div>
 </div>
 
+{% if tasks %}
+<table class="tasks-table">
+  <colgroup>
+    <col class="col-done">
+    <col class="col-task">
+    <col class="col-ctx">
+    <col class="col-due">
+    <col class="col-rep">
+    <col class="col-pri">
+    <col class="col-start">
+    <col class="col-note">
+    <col class="col-sel">
+  </colgroup>
+  <thead>
+    <tr>
+      <th></th>
+      <th class="sortable" data-col="description">Task</th>
+      <th class="sortable" data-col="context">Context</th>
+      <th class="sortable" data-col="due">Due Date</th>
+      <th data-col="recurrence">Repeat</th>
+      <th class="sortable" data-col="priority">Priority</th>
+      <th class="sortable" data-col="start">Start</th>
+      <th></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for task in tasks %}
+    <tr class="task-row pri-{{ task.priority or 'none' }} {% if task.complete %}completed{% endif %}"
+        data-id="{{ loop.index0 }}">
+      <td><input type="checkbox" class="done-cb" data-id="{{ loop.index0 }}"
+          {% if task.complete %}checked{% endif %}></td>
+      <td>
+        <span class="ecell task-name-text" data-id="{{ loop.index0 }}" data-field="description">{{ task.description }}</span>
+        <input class="edit-input" data-id="{{ loop.index0 }}" data-field="description" value="{{ task.description }}">
+      </td>
+      <td>
+        <span class="ecell {% if not task.context %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="context">{{ task.context or '—' }}</span>
+        <input class="edit-input" data-id="{{ loop.index0 }}" data-field="context" value="{{ task.context or '' }}" placeholder="home, work…">
+      </td>
+      <td>
+        <span class="ecell {% if not task.due %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="due">{{ task.due or '—' }}</span>
+        <input class="edit-input" type="date" data-id="{{ loop.index0 }}" data-field="due" value="{{ task.due or '' }}">
+      </td>
+      <td>
+        <span class="ecell {% if not task.recurrence %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="recurrence">{{ task.recurrence or '—' }}</span>
+        <input class="edit-input" data-id="{{ loop.index0 }}" data-field="recurrence" value="{{ task.recurrence or '' }}" placeholder="every 2 weeks">
+      </td>
+      <td>
+        <span class="ecell {% if not task.priority %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="priority">{{ task.priority or '—' }}</span>
+        <select class="edit-input" data-id="{{ loop.index0 }}" data-field="priority">
+          <option value="">—</option>
+          <option value="top" {% if task.priority=='top' %}selected{% endif %}>top</option>
+          <option value="high" {% if task.priority=='high' %}selected{% endif %}>high</option>
+          <option value="medium" {% if task.priority=='medium' %}selected{% endif %}>medium</option>
+          <option value="low" {% if task.priority=='low' %}selected{% endif %}>low</option>
+        </select>
+      </td>
+      <td>
+        <span class="ecell {% if not task.start %}empty{% endif %}" data-id="{{ loop.index0 }}" data-field="start">{{ task.start or '—' }}</span>
+        <input class="edit-input" type="date" data-id="{{ loop.index0 }}" data-field="start" value="{{ task.start or '' }}">
+      </td>
+      <td>
+        <button class="note-btn {% if task.notes %}has-note{% endif %}"
+            data-id="{{ loop.index0 }}" title="{{ task.notes or 'Add note' }}">
+          {% if task.notes %}📝{% else %}+{% endif %}
+        </button>
+      </td>
+      <td><input type="checkbox" class="sel-cb" data-id="{{ loop.index0 }}"></td>
+    </tr>
+    <tr class="note-row" data-id="{{ loop.index0 }}">
+      <td colspan="9">
+        <textarea class="note-textarea" data-id="{{ loop.index0 }}" placeholder="Notes…">{{ task.notes }}</textarea>
+        <div class="note-save">
+          <button onclick="save_note({{ loop.index0 }})">Save note</button>
+          <button onclick="close_note({{ loop.index0 }})">Cancel</button>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+  <div style="font-size:48px;">📝</div>
+  <p>No tasks yet.</p>
+</div>
+{% endif %}
+</div>
+</div>
+
 <script>
-  const showCompletedCheckbox = document.getElementById('show-completed-checkbox');
-  const selectAllCheckbox = document.getElementById('select-all-checkbox');
-  const bulkMenuBtn = document.getElementById('bulk-menu-btn');
-  const bulkMenuDropdown = document.getElementById('bulk-menu-dropdown');
-  const taskSelects = document.querySelectorAll('.task-select');
-  const taskRows = document.querySelectorAll('.task-row');
-  const editableCells = document.querySelectorAll('.editable-cell, .task-name.editable');
+  let activeEditId = null;
+  let activeEditField = null;
 
-  let currentEditingTaskId = null;
+  // ── Show/hide completed ──────────────────────────────────
+  const showDoneCb = document.getElementById('show-done');
+  function applyShowDone() {
+    document.querySelectorAll('.task-row.completed').forEach(r => {
+      r.style.display = showDoneCb.checked ? '' : 'none';
+      const note = document.querySelector(`.note-row[data-id="${r.dataset.id}"]`);
+      if (note) note.style.display = showDoneCb.checked ? '' : 'none';
+    });
+  }
+  showDoneCb.addEventListener('change', () => {
+    localStorage.setItem('tasks-show-done', showDoneCb.checked);
+    applyShowDone();
+  });
+  showDoneCb.checked = localStorage.getItem('tasks-show-done') === 'true';
+  applyShowDone();
 
-  // Show/hide completed
-  showCompletedCheckbox.addEventListener('change', () => {
-    taskRows.forEach(row => {
-      if (row.classList.contains('completed') && !showCompletedCheckbox.checked) {
-        row.style.display = 'none';
+  // ── Done checkbox ────────────────────────────────────────
+  document.querySelectorAll('.done-cb').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const id = parseInt(cb.dataset.id);
+      const row = document.querySelector(`.task-row[data-id="${id}"]`);
+      const newDone = cb.checked;
+
+      if (newDone) {
+        row.classList.add('completing');
+        await api_update(id, 'complete', 'true');
+        setTimeout(() => {
+          row.classList.add('completed');
+          row.classList.remove('completing');
+          if (!showDoneCb.checked) {
+            row.style.display = 'none';
+            const note = document.querySelector(`.note-row[data-id="${id}"]`);
+            if (note) note.style.display = 'none';
+          }
+        }, 2000);
       } else {
-        row.style.display = '';
+        row.classList.remove('completed');
+        await api_update(id, 'complete', 'false');
       }
     });
-    localStorage.setItem('tasks-show-completed', showCompletedCheckbox.checked);
   });
 
-  const savedShowCompleted = localStorage.getItem('tasks-show-completed') === 'true';
-  showCompletedCheckbox.checked = savedShowCompleted;
-  showCompletedCheckbox.dispatchEvent(new Event('change'));
+  // ── Inline editing ───────────────────────────────────────
+  function open_edit(id, field) {
+    if (activeEditId !== null) close_edit(activeEditId, activeEditField, false);
 
-  // Select all
-  selectAllCheckbox.addEventListener('change', () => {
-    taskSelects.forEach(cb => cb.checked = selectAllCheckbox.checked);
-    updateBulkMenu();
-  });
+    activeEditId = id;
+    activeEditField = field;
 
-  taskSelects.forEach(cb => cb.addEventListener('change', updateBulkMenu));
+    const span = document.querySelector(`.ecell[data-id="${id}"][data-field="${field}"]`);
+    const inp  = document.querySelector(`.edit-input[data-id="${id}"][data-field="${field}"]`);
+    if (!span || !inp) return;
 
-  function updateBulkMenu() {
-    const selected = document.querySelectorAll('.task-select:checked').length;
-    bulkMenuBtn.style.display = selected > 0 ? 'block' : 'none';
-    selectAllCheckbox.checked = selected === taskSelects.length;
+    span.style.display = 'none';
+    inp.classList.add('active');
+    inp.focus();
+    if (inp.tagName === 'INPUT' && inp.type !== 'date') inp.select();
   }
 
-  // Bulk menu
-  document.querySelectorAll('.bulk-menu-item').forEach(item => {
-    item.addEventListener('click', async (e) => {
-      const action = e.target.dataset.action;
-      const selected = Array.from(document.querySelectorAll('.task-select:checked'))
-        .map(cb => parseInt(cb.dataset.taskId));
+  function close_edit(id, field, save) {
+    const span = document.querySelector(`.ecell[data-id="${id}"][data-field="${field}"]`);
+    const inp  = document.querySelector(`.edit-input[data-id="${id}"][data-field="${field}"]`);
+    if (!span || !inp) return;
+
+    if (save) {
+      const val = inp.value.trim();
+      api_update(id, field, val);
+      span.textContent = val || '—';
+      span.classList.toggle('empty', !val);
+    }
+
+    inp.classList.remove('active');
+    span.style.display = '';
+    activeEditId = null;
+    activeEditField = null;
+  }
+
+  // Click on display span → open edit
+  document.querySelectorAll('.ecell').forEach(span => {
+    span.addEventListener('click', () => {
+      open_edit(parseInt(span.dataset.id), span.dataset.field);
+    });
+  });
+
+  // Enter = save, Esc = cancel, Tab = save + move to next
+  document.querySelectorAll('.edit-input').forEach(inp => {
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        close_edit(parseInt(inp.dataset.id), inp.dataset.field, true);
+      } else if (e.key === 'Escape') {
+        close_edit(parseInt(inp.dataset.id), inp.dataset.field, false);
+      }
+    });
+    // For selects, also save on change
+    if (inp.tagName === 'SELECT') {
+      inp.addEventListener('change', () => {
+        close_edit(parseInt(inp.dataset.id), inp.dataset.field, true);
+      });
+    }
+  });
+
+  // Click outside → save
+  document.addEventListener('click', e => {
+    if (activeEditId !== null) {
+      const inp = document.querySelector(`.edit-input[data-id="${activeEditId}"][data-field="${activeEditField}"]`);
+      if (inp && !inp.contains(e.target) && !e.target.closest('.ecell')) {
+        close_edit(activeEditId, activeEditField, true);
+      }
+    }
+  });
+
+  // ── Note toggle ──────────────────────────────────────────
+  document.querySelectorAll('.note-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const noteRow = document.querySelector(`.note-row[data-id="${id}"]`);
+      noteRow.classList.toggle('open');
+      if (noteRow.classList.contains('open')) {
+        noteRow.querySelector('.note-textarea').focus();
+      }
+    });
+  });
+
+  function close_note(id) {
+    const noteRow = document.querySelector(`.note-row[data-id="${id}"]`);
+    noteRow.classList.remove('open');
+  }
+
+  async function save_note(id) {
+    const ta = document.querySelector(`.note-textarea[data-id="${id}"]`);
+    await api_update(id, 'notes', ta.value);
+    const btn = document.querySelector(`.note-btn[data-id="${id}"]`);
+    const hasNote = ta.value.trim().length > 0;
+    btn.textContent = hasNote ? '📝' : '+';
+    btn.classList.toggle('has-note', hasNote);
+    btn.title = ta.value.trim() || 'Add note';
+    close_note(id);
+  }
+
+  // ── Multiselect ──────────────────────────────────────────
+  const bulkBtn  = document.getElementById('bulk-btn');
+  const bulkDrop = document.getElementById('bulk-drop');
+
+  document.querySelectorAll('.sel-cb').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const selected = document.querySelectorAll('.sel-cb:checked').length;
+      bulkBtn.style.display = selected > 0 ? 'block' : 'none';
+    });
+  });
+
+  bulkBtn.addEventListener('click', () => bulkDrop.classList.toggle('open'));
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.bulk-menu')) bulkDrop.classList.remove('open');
+  });
+
+  document.querySelectorAll('.bulk-item').forEach(item => {
+    item.addEventListener('click', async () => {
+      const action = item.dataset.action;
+      const ids = Array.from(document.querySelectorAll('.sel-cb:checked'))
+        .map(cb => parseInt(cb.dataset.id));
+      bulkDrop.classList.remove('open');
 
       if (action === 'delete') {
-        if (confirm(`Delete ${selected.length} task(s)?`)) {
-          await bulk_action('delete', selected, null);
-        }
+        if (!confirm(`Delete ${ids.length} task(s)?`)) return;
+        await fetch('/tasks/bulk-update', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({action: 'delete', task_ids: ids, value: ''})
+        });
+        location.reload();
+        return;
+      }
+
+      const field = action.replace('set-', '');
+      const value = prompt(`Set ${field} for ${ids.length} task(s):`);
+      if (value === null) return;
+      await fetch('/tasks/bulk-update', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action, task_ids: ids, value})
+      });
+      location.reload();
+    });
+  });
+
+  // ── Column sort ──────────────────────────────────────────
+  let sortState = {col: 'due', dir: 'asc'};
+
+  document.querySelectorAll('.tasks-table th[data-col]').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (sortState.col === col) {
+        sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
       } else {
-        const match = action.match(/^set-(.+)$/);
-        if (match) {
-          const field = match[1];
-          const value = prompt(`Enter ${field}:`);
-          if (value !== null) {
-            await bulk_action('set-' + field, selected, value);
-          }
-        }
+        sortState.col = col;
+        sortState.dir = 'asc';
       }
-      bulkMenuDropdown.classList.remove('active');
+      document.querySelectorAll('.tasks-table th').forEach(h => {
+        h.classList.remove('sort-asc', 'sort-desc');
+        if (h.classList.contains('sortable')) h.classList.add('sortable');
+      });
+      th.classList.remove('sortable');
+      th.classList.add(sortState.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+      sort_table();
     });
   });
 
-  bulkMenuBtn.addEventListener('click', () => {
-    bulkMenuDropdown.classList.toggle('active');
-  });
-
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('.bulk-menu')) {
-      bulkMenuDropdown.classList.remove('active');
+  function col_val(row, col) {
+    const span = row.querySelector(`.ecell[data-field="${col}"]`);
+    const text = span ? span.textContent.trim() : '';
+    if (col === 'priority') {
+      return {top: 0, high: 1, medium: 2, low: 3, '—': 4}[text] ?? 4;
     }
-  });
+    return text === '—' ? '￿' : text.toLowerCase();
+  }
 
-  // Inline editing (only 1 at a time)
-  editableCells.forEach(cell => {
-    cell.addEventListener('click', () => {
-      // Close any currently open edit
-      if (currentEditingTaskId !== null) {
-        const openEdits = document.querySelectorAll(`.inline-edit[data-task-id="${currentEditingTaskId}"].active`);
-        openEdits.forEach(edit => {
-          const cellDiv = document.querySelector(`.editable-cell[data-task-id="${currentEditingTaskId}"], .task-name[data-task-id="${currentEditingTaskId}"]`);
-          if (cellDiv) cellDiv.style.display = '';
-          edit.classList.remove('active');
-        });
-      }
-
-      const taskId = cell.dataset.taskId;
-      const field = cell.dataset.field;
-      const editDiv = document.querySelector(`.inline-edit[data-task-id="${taskId}"][data-field="${field}"]`);
-
-      if (editDiv) {
-        currentEditingTaskId = taskId;
-        cell.style.display = 'none';
-        editDiv.classList.add('active');
-
-        const saveBtn = editDiv.querySelector('.save');
-        const cancelBtn = editDiv.querySelector('.cancel');
-        const input = editDiv.querySelector('input, textarea, select');
-
-        saveBtn.addEventListener('click', async () => {
-          await save_task(taskId, field, input.value);
-          location.reload();
-        });
-
-        cancelBtn.addEventListener('click', () => {
-          editDiv.classList.remove('active');
-          cell.style.display = '';
-          currentEditingTaskId = null;
-        });
-
-        input.focus();
-      }
+  function sort_table() {
+    const tbody = document.querySelector('.tasks-table tbody');
+    if (!tbody) return;
+    const pairs = [];
+    const rows = tbody.querySelectorAll('.task-row');
+    rows.forEach(row => {
+      const noteRow = tbody.querySelector(`.note-row[data-id="${row.dataset.id}"]`);
+      pairs.push({row, noteRow});
     });
-  });
-
-  async function toggle_done(taskId) {
-    const row = document.querySelector(`.task-row[data-task-id="${taskId}"]`);
-    const isComplete = row.classList.contains('completed');
-    const newState = !isComplete;
-
-    await save_task(taskId, 'complete', newState ? 'true' : 'false');
-    location.reload();
+    pairs.sort((a, b) => {
+      const av = col_val(a.row, sortState.col);
+      const bv = col_val(b.row, sortState.col);
+      if (av < bv) return sortState.dir === 'asc' ? -1 : 1;
+      if (av > bv) return sortState.dir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    pairs.forEach(({row, noteRow}) => {
+      tbody.appendChild(row);
+      if (noteRow) tbody.appendChild(noteRow);
+    });
   }
 
-  async function save_task(taskId, field, value) {
-    try {
-      const response = await fetch('/tasks/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task_id: parseInt(taskId), field, value })
-      });
-      if (!response.ok) alert('Error saving task');
-    } catch (err) {
-      alert('Error: ' + err);
-    }
-  }
-
-  async function bulk_action(action, taskIds, value) {
-    try {
-      const response = await fetch('/tasks/bulk-update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, task_ids: taskIds, value })
-      });
-      if (response.ok) location.reload();
-      else alert('Error');
-    } catch (err) {
-      alert('Error: ' + err);
-    }
-  }
-
+  // ── Add task ─────────────────────────────────────────────
   async function add_task() {
-    const text = document.getElementById('task-input').value.trim();
-    if (!text) {
-      alert('Task description required');
-      return;
-    }
+    const text = document.getElementById('f-task').value.trim();
+    if (!text) { document.getElementById('f-task').focus(); return; }
+
+    const today = new Date().toISOString().split('T')[0];
+    const start = document.getElementById('f-start').value || today;
 
     let tags = [];
-    const priority = document.getElementById('priority-input').value.trim();
-    const context = document.getElementById('context-input').value.trim();
-    const due = document.getElementById('due-input').value.trim();
-    const recurrence = document.getElementById('recurrence-input').value.trim();
-    const project = document.getElementById('project-input').value.trim();
-    const today = new Date().toISOString().split('T')[0];
+    const pri = document.getElementById('f-pri').value;
+    const ctx = document.getElementById('f-ctx').value.trim();
+    const due = document.getElementById('f-due').value;
+    const rep = document.getElementById('f-rep').value.trim();
 
-    if (priority) tags.push(`#p:${priority}`);
+    if (pri) tags.push(`#p:${pri}`);
     if (due) tags.push(`#due:${due}`);
-    if (context) tags.push(`#ctx:${context}`);
-    if (recurrence) tags.push(`#rep:${recurrence}`);
-    if (project) tags.push(`#proj:${project}`);
-    tags.push(`#start:${today}`);
+    if (ctx) tags.push(`#ctx:${ctx}`);
+    if (rep) tags.push(`#rep:${rep}`);
+    tags.push(`#start:${start}`);
 
-    const fullText = tags.length > 0 ? `${text} ${tags.join(' ')}` : text;
+    const fullText = tags.length ? `${text} ${tags.join(' ')}` : text;
 
-    try {
-      const response = await fetch('/tasks/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: fullText, section: 'Inbox' })
-      });
-      if (response.ok) {
-        document.getElementById('task-input').value = '';
-        document.getElementById('context-input').value = '';
-        document.getElementById('due-input').value = '';
-        document.getElementById('priority-input').value = '';
-        document.getElementById('recurrence-input').value = '';
-        document.getElementById('project-input').value = '';
-        location.reload();
-      } else {
-        alert('Error adding task');
-      }
-    } catch (err) {
-      alert('Error: ' + err);
+    const res = await fetch('/tasks/add', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: fullText, section: 'Inbox'})
+    });
+    if (res.ok) {
+      ['f-task','f-ctx','f-due','f-rep'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('f-pri').value = '';
+      document.getElementById('f-start').value = '';
+      location.reload();
+    } else {
+      alert('Error adding task');
     }
   }
 
-  document.getElementById('task-input')?.addEventListener('keypress', (e) => {
+  document.getElementById('f-task').addEventListener('keypress', e => {
     if (e.key === 'Enter') add_task();
   });
-</script>
 
+  // ── API helper ───────────────────────────────────────────
+  async function api_update(id, field, value) {
+    await fetch('/tasks/update', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({task_id: id, field, value})
+    });
+  }
+</script>
 {% endblock %}
