@@ -333,13 +333,17 @@ def _rewrite_md_link(href: str, from_page: Path) -> str:
     # Try wiki directory first
     try:
         rel = resolved.relative_to(WIKI_DIR.resolve())
-        return f"/wiki/{rel}"
+        # Strip .md extension for wiki links (router adds it back)
+        path_str = str(rel).replace("\\", "/")
+        if path_str.endswith(".md"):
+            path_str = path_str[:-3]
+        return f"/wiki/{path_str}"
     except ValueError:
         pass
-    # Then try raw directory
+    # Then try raw directory (keep extension for raw files)
     try:
         rel = resolved.relative_to(RAW_DIR.resolve())
-        return f"/raw/{rel}"
+        return f"/raw/{rel}".replace("\\", "/")
     except ValueError:
         return href
 
