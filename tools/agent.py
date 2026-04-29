@@ -572,14 +572,9 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
         if content:
             stored["content"] = content
         if tool_calls:
-            stored["tool_calls"] = [
-                {
-                    "id":       tc["id"],
-                    "type":     "function",
-                    "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]},
-                }
-                for tc in tool_calls
-            ]
+            # Pass through raw tool_calls unchanged — Gemini thinking mode attaches
+            # a thought_signature to each call that must be echoed back verbatim.
+            stored["tool_calls"] = tool_calls
         messages.append(stored)
 
         if not tool_calls:
@@ -679,14 +674,9 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
         if content:
             stored["content"] = content
         if tool_calls:
-            stored["tool_calls"] = [
-                {
-                    "id":       tc["id"],
-                    "type":     "function",
-                    "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]},
-                }
-                for tc in tool_calls
-            ]
+            # Pass through raw tool_calls unchanged — Gemini thinking mode attaches
+            # a thought_signature to each call that must be echoed back verbatim.
+            stored["tool_calls"] = tool_calls
         messages.append(stored)
 
         if content:
