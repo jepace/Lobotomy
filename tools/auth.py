@@ -8,9 +8,8 @@ Files (all gitignored):
   wiki/.tokens.json      Active verification and reset tokens
   wiki/.login_log.json   Recent login attempts (for rate limiting)
 
-Configuration: set admin.email and admin.password in config.json.
-Email verification requires email.resend_api_key in config.json.
-Without it, accounts are auto-verified on creation.
+First run: no credentials needed in config.json.
+Visit /setup to create your account through the web UI.
 """
 
 import hashlib
@@ -18,13 +17,9 @@ import hmac
 import json
 import os
 import secrets
-import sys
 import time
 from datetime import timezone, datetime
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent))
-from config import cfg_get
 
 REPO_ROOT  = Path(__file__).resolve().parent.parent
 WIKI_DIR   = REPO_ROOT / "wiki"
@@ -70,74 +65,25 @@ def _verify(password: str, stored_hex: str) -> bool:
 # User account  (single user, stored in wiki/.user.json)
 # ---------------------------------------------------------------------------
 
-def _clear_config_password() -> None:
-    """Erase plaintext password from config.json. Called after hashing it into .user.json."""
-    config_file = REPO_ROOT / "config.json"
-    try:
-        data = json.loads(config_file.read_text(encoding="utf-8"))
-        if data.get("admin", {}).get("password"):
-            data["admin"]["password"] = ""
-            config_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
-            print("[wiki] Plaintext password erased from config.json (hash stored in wiki/.user.json).")
-    except Exception as e:
-        print(f"[wiki] Warning: could not clear password from config.json: {e}")
-
-
-def _print_verify_link(email: str) -> None:
-    """Print a console verification link — fallback when email delivery fails."""
-    base = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
-    try:
-        token = create_token("verify", hours=24 * 7)
-        print(f"[wiki] Verify '{email}' by visiting: {base}/auth/verify/{token}")
-    except Exception:
-        pass
-
-
-def init_auth() -> None:
-    """Provision the admin account from config.json if it doesn't exist yet."""
-    email    = cfg_get("admin", "email").strip().lower()
-    password = cfg_get("admin", "password").strip()
-
-    if not email or not password:
-        return
-
-    if _USER_FILE.exists():
-        _clear_config_password()
-        # Warn on every restart if the account is still unverified.
-        user = get_user()
-        if user and not user.get("verified"):
-            print(f"[wiki] WARNING: account '{user['email']}' is not verified — login will fail.")
-            _print_verify_link(user["email"])
-        return
-
-    # Create new account (unverified until we confirm email works)
-    _write(_USER_FILE, {
-        "email":      email,
-        "pw_hash":    _hash(password),
-        "verified":   False,
-        "created_at": _now_iso(),
-    })
-    _clear_config_password()
-
-    if not _resend_ready():
-        set_verified()
-        print(f"[wiki] Admin account created for {email} (auto-verified — Resend not configured).")
-        return
-
-    # Try to send verification email; auto-verify on failure so user isn't locked out.
-    try:
-        token = create_token("verify", hours=24 * 7)
-        send_verification_email(email, token)
-        print(f"[wiki] Admin account created for {email}. Verification email sent.")
-    except Exception as e:
-        set_verified()
-        print(f"[wiki] Admin account created for {email}.")
-        print(f"[wiki] WARNING: verification email failed: {e}")
-        print(f"[wiki] Account auto-verified — fix email config to require it in future.")
+def user_exists() -> bool:
+    return _USER_FILE.exists()
 
 
 def get_user() -> dict | None:
     return _read(_USER_FILE, None)
+
+
+def create_user(email: str, password: str) -> None:
+    """Create the admin account. Raises if one already exists."""
+    if user_exists():
+        raise RuntimeError("Account already exists.")
+    _write(_USER_FILE, {
+        "email":      email.strip().lower(),
+        "pw_hash":    _hash(password),
+        "verified":   True,
+        "created_at": _now_iso(),
+    })
+    print(f"[wiki] Account created for {email}.")
 
 
 def set_verified() -> None:
@@ -193,15 +139,14 @@ def authenticate(email: str, password: str) -> tuple[bool, str]:
         mins = seconds_until_unlock() // 60 + 1
         return False, f"Too many failed attempts. Try again in {mins} minute(s)."
 
-    expected = cfg_get("admin", "email").strip().lower()
-    if not expected:
-        return False, "Server not configured (admin.email missing from config.json)."
+    user = get_user()
+    if not user:
+        return False, "No account set up. Visit /setup to create one."
 
-    if email.strip().lower() != expected:
+    if email.strip().lower() != user["email"]:
         return False, "Invalid email or password."
 
-    user = get_user()
-    if not user or not _verify(password, user["pw_hash"]):
+    if not _verify(password, user["pw_hash"]):
         return False, "Invalid email or password."
 
     if not user.get("verified"):
@@ -215,7 +160,6 @@ def authenticate(email: str, password: str) -> tuple[bool, str]:
 
 def create_token(token_type: str, hours: int = 24) -> str:
     tokens = _read(_TOKENS_FILE, {})
-    # Invalidate any existing unused token of this type
     tokens = {k: v for k, v in tokens.items()
               if not (v["type"] == token_type and not v["used"])}
     token = secrets.token_urlsafe(32)
@@ -247,14 +191,16 @@ def consume_token(token: str, token_type: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _resend_ready() -> bool:
+    from config import cfg_get
     return bool(cfg_get("email", "resend_api_key"))
 
 
 def _send_email(to: str, subject: str, html: str) -> None:
     """Send via Resend API using stdlib urllib — no resend package needed."""
     import urllib.request, urllib.error
+    from config import cfg_get
     data = json.dumps({
-        "from":    _from_addr(),
+        "from":    cfg_get("email", "from_address", "onboarding@resend.dev"),
         "to":      [to],
         "subject": subject,
         "html":    html,
@@ -277,20 +223,17 @@ def _send_email(to: str, subject: str, html: str) -> None:
 
 
 def _base_url() -> str:
+    from config import cfg_get
     return cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
-
-
-def _from_addr() -> str:
-    return cfg_get("email", "from_address", "onboarding@resend.dev")
 
 
 def send_verification_email(email: str, token: str) -> None:
     link = f"{_base_url()}/auth/verify/{token}"
     _send_email(
         email,
-        "Verify your wiki account",
+        "Verify your Lobotomy account",
         (
-            f"<p>Click the link below to verify your wiki account:</p>"
+            f"<p>Click the link below to verify your account:</p>"
             f"<p><a href='{link}'>{link}</a></p>"
             f"<p>This link expires in 24 hours.</p>"
         ),
@@ -301,9 +244,9 @@ def send_reset_email(email: str, token: str) -> None:
     link = f"{_base_url()}/auth/reset/{token}"
     _send_email(
         email,
-        "Reset your wiki password",
+        "Reset your Lobotomy password",
         (
-            f"<p>Click the link below to reset your wiki password:</p>"
+            f"<p>Click the link below to reset your password:</p>"
             f"<p><a href='{link}'>{link}</a></p>"
             f"<p>This link expires in 1 hour. If you didn't request this, ignore it.</p>"
         ),
@@ -311,7 +254,6 @@ def send_reset_email(email: str, token: str) -> None:
 
 
 def maybe_send_verification() -> bool:
-    """Send a verification email if Resend is configured and account is unverified."""
     if not _resend_ready():
         return False
     user = get_user()

@@ -54,9 +54,9 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
 BLOG_DIR = REPO_ROOT / "blog"
 from job_queue import JobQueue
 from task_manager import read_tasks, write_tasks, get_all_contexts, get_all_projects
-from auth  import (init_auth, authenticate, get_user, update_password, set_verified,
-                   create_token, consume_token, record_attempt, is_locked_out,
-                   send_verification_email, send_reset_email,
+from auth  import (user_exists, create_user, authenticate, get_user, update_password,
+                   set_verified, create_token, consume_token, record_attempt,
+                   is_locked_out, send_verification_email, send_reset_email,
                    maybe_send_verification, _resend_ready)
 
 # ---------------------------------------------------------------------------
@@ -89,10 +89,39 @@ app.config.update(
 def require_login(f):
     @functools.wraps(f)
     def decorated(*args, **kwargs):
+        if not user_exists():
+            return redirect(url_for("setup"))
         if not session.get("logged_in"):
             return redirect(url_for("auth_login", next=request.path))
         return f(*args, **kwargs)
     return decorated
+
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup():
+    if user_exists():
+        return redirect(url_for("auth_login"))
+    error = None
+    email = ""
+    if request.method == "POST":
+        email    = request.form.get("email", "").strip()
+        password = request.form.get("password", "")
+        confirm  = request.form.get("confirm", "")
+        if not email or not password:
+            error = "Email and password are required."
+        elif password != confirm:
+            error = "Passwords do not match."
+        elif len(password) < 8:
+            error = "Password must be at least 8 characters."
+        else:
+            try:
+                create_user(email, password)
+                session["logged_in"] = True
+                session["email"] = email
+                return redirect(url_for("chat"))
+            except RuntimeError as e:
+                error = str(e)
+    return render_template("setup.html", error=error, email=email)
 
 
 @app.context_processor
@@ -843,19 +872,18 @@ if __name__ == "__main__":
     host = cfg_get("server", "host", "127.0.0.1")
     port = cfg_int("server", "port", default=8080)
 
-    init_auth()
-
     issues = validate_config()
-    has_errors = False
     for level, msg in issues:
         prefix = "ERROR" if level == "error" else "WARNING"
         print(f"[{prefix}] {msg}")
-        if level == "error":
-            has_errors = True
 
-    if has_errors:
+    errors = [m for l, m in issues if l == "error"]
+    if errors:
         print("\nFix these errors and restart.")
         sys.exit(1)
+
+    if not user_exists():
+        print(f"[INFO] No account found. Visit http://{host}:{port}/setup to create one.")
 
     provider = cfg_get("llm", "provider", "openai")
     print(f"\nLobotomy  http://{host}:{port}  (provider: {provider})\n")

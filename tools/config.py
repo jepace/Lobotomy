@@ -46,14 +46,6 @@ def validate_config() -> list:
     """
     issues = []
 
-    # Admin account
-    admin_email = cfg_get("admin", "email", "").strip()
-    admin_pass = cfg_get("admin", "password", "").strip()
-    if not admin_email:
-        issues.append(("error", "admin.email not set — you won't be able to log in"))
-    if not admin_pass:
-        issues.append(("error", "admin.password not set — you won't be able to log in"))
-
     # LLM provider
     provider = cfg_get("llm", "provider", "openai").lower()
     valid_providers = {"gemini", "openai", "ollama", "openrouter"}
@@ -72,8 +64,8 @@ def validate_config() -> list:
     resend_key = cfg_get("email", "resend_api_key", "").strip()
     from_addr = cfg_get("email", "from_address", "").strip()
     if not resend_key:
-        issues.append(("warning", "email.resend_api_key not set — email verification disabled"))
+        issues.append(("warning", "email.resend_api_key not set — email features disabled"))
     elif not from_addr:
-        issues.append(("warning", "email.from_address not set — email verification may fail"))
+        issues.append(("warning", "email.from_address not set — email may fail"))
 
     return issues
