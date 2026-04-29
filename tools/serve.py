@@ -330,9 +330,16 @@ def _rewrite_md_link(href: str, from_page: Path) -> str:
     if href.startswith(("http://", "https://", "/", "#", "mailto:")):
         return href
     resolved = (from_page.parent / href).resolve()
+    # Try wiki directory first
     try:
         rel = resolved.relative_to(WIKI_DIR.resolve())
         return f"/wiki/{rel}"
+    except ValueError:
+        pass
+    # Then try raw directory
+    try:
+        rel = resolved.relative_to(RAW_DIR.resolve())
+        return f"/raw/{rel}"
     except ValueError:
         return href
 
