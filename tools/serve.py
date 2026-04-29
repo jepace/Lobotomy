@@ -92,7 +92,8 @@ def require_login(f):
         if not user_exists():
             return redirect(url_for("setup"))
         if not session.get("logged_in"):
-            return redirect(url_for("auth_login", next=request.path))
+            next_url = request.full_path.rstrip("?")
+            return redirect(url_for("auth_login", next=next_url))
         return f(*args, **kwargs)
     return decorated
 
@@ -225,8 +226,8 @@ def auth_login():
             session.permanent     = True
             app.permanent_session_lifetime = datetime.timedelta(days=30)
             next_url = request.args.get("next") or ""
-            # Only follow safe relative paths (no scheme, no host, no encoded ?)
-            if not next_url.startswith("/") or "//" in next_url or "%3" in next_url.lower():
+            # Only follow safe relative paths (no scheme, no host, no path traversal)
+            if not next_url.startswith("/") or "//" in next_url or "%2f" in next_url.lower():
                 next_url = url_for("index")
             return redirect(next_url)
         error = msg
