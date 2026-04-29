@@ -510,7 +510,7 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
                                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept":                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language":         "en-US,en;q=0.9",
-        "Accept-Encoding":         "gzip, deflate, br",
+        "Accept-Encoding":         "gzip, deflate",
         "Sec-Fetch-Dest":          "document",
         "Sec-Fetch-Mode":          "navigate",
         "Sec-Fetch-Site":          "none",
@@ -528,26 +528,38 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
             raw = resp.read(1_000_000)
         # Decompress if needed — check both header and magic bytes
         # (some servers send gzip without declaring Content-Encoding)
-        if raw.startswith(b'\x1f\x8b'):
+        if raw.startswith(b'\x1f\x8b'):  # gzip magic bytes
             import gzip as _gzip
-            raw = _gzip.decompress(raw)
+            try:
+                raw = _gzip.decompress(raw)
+            except Exception as e:
+                raise Exception(f"gzip decompression failed: {e}")
+        elif raw.startswith(b'\x78\x9c') or raw.startswith(b'\x78\xda'):  # deflate magic bytes
+            import zlib as _zlib
+            try:
+                raw = _zlib.decompress(raw)
+            except Exception as e:
+                raise Exception(f"deflate decompression failed: {e}")
         elif "gzip" in ce.lower():
             import gzip as _gzip
             try:
                 raw = _gzip.decompress(raw)
-            except Exception:
-                # Header claimed gzip but decompression failed; still try to use it
-                pass
-        if "deflate" in ce.lower():
+            except Exception as e:
+                raise Exception(f"gzip decompression (header-based) failed: {e}")
+        elif "deflate" in ce.lower():
             import zlib as _zlib
             try:
                 raw = _zlib.decompress(raw)
-            except Exception:
-                pass
+            except Exception as e:
+                raise Exception(f"deflate decompression (header-based) failed: {e}")
     except urllib.error.HTTPError as e:
         return None, f"HTTP {e.code}: {e.reason}"
     except Exception as e:
         return None, str(e)
+
+    # Sanity check: if we still have gzipped data, something went wrong
+    if raw.startswith(b'\x1f\x8b'):
+        return None, "Failed to decompress gzipped content"
 
     if "html" in ct.lower():
         parser = _Reader()
@@ -560,7 +572,10 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
             return None, "No text extracted — site may require JavaScript or be paywalled"
         return text[:100_000], None
     else:
-        return raw.decode("utf-8", errors="replace")[:100_000], None
+        text = raw.decode("utf-8", errors="replace")[:100_000]
+        if text.startswith('�'):  # Unicode replacement character, likely binary garbage
+            return None, "Response appears to be binary or unreadable"
+        return text, None
 
 
 def list_inbox() -> list:
