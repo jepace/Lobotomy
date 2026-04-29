@@ -557,6 +557,12 @@ def chat_stream(job_id):
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
 
 
+@app.route("/chat/status")
+@require_login
+def chat_status():
+    return job_queue.status()
+
+
 @app.route("/chat/clear", methods=["POST"])
 @require_login
 def chat_clear():
