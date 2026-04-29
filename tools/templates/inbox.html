@@ -175,6 +175,89 @@
 </div>
 
 <script>
+// Auto-refresh inbox list every 3 seconds
+const seenItems = new Set();
+(function initItems() {
+  document.querySelectorAll('.reading-item').forEach(el => {
+    const match = el.id.match(/^item-(\d+)$/);
+    if (match) {
+      const idx = match[1];
+      const name = el.querySelector('.item-header')?.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
+      if (name) seenItems.add(name);
+    }
+  });
+})();
+
+async function pollInbox() {
+  try {
+    const resp = await fetch('/inbox/list');
+    const data = await resp.json();
+    const items = data.items || [];
+
+    // Find new items
+    const newItems = items.filter(item => !seenItems.has(item.name));
+    if (newItems.length === 0) return;
+
+    newItems.forEach(item => seenItems.add(item.name));
+
+    // Find first reading-item or empty-state
+    const page = document.querySelector('.page');
+    const firstItem = page?.querySelector('.reading-item');
+    const emptyState = page?.querySelector('.empty-state');
+
+    // If showing empty state, reload to update properly
+    if (emptyState) {
+      location.reload();
+      return;
+    }
+
+    if (!firstItem) return;
+
+    // Insert new items at the top
+    newItems.forEach(item => {
+      const idx = items.indexOf(item) + 1;
+      const html = `<div class="reading-item" id="item-${idx}">
+      <div class="item-header" onclick="toggleItem(${idx}, '${item.name.replace(/'/g, "\\'")}')">
+        <div class="item-body">
+          <div class="item-title">${item.title.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+          <div class="item-meta">${item.date} &middot; ${item.name.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+          ${item.excerpt ? `<div class="item-excerpt">${item.excerpt.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>` : ''}
+        </div>
+        <span class="item-chevron">▶</span>
+      </div>
+
+      <div class="item-actions">
+        ${item.has_content ? `<a class="act-btn read" href="/inbox/read/${encodeURIComponent(item.name)}">Read</a>` : item.source_url ? `<a class="act-btn open" href="${item.source_url.replace(/"/g, '&quot;')}" target="_blank" rel="noopener">Open ↗</a>` : ''}
+        <button class="act-btn archive" onclick="archiveItem('${item.name.replace(/'/g, "\\'")}', ${idx})">Archive</button>
+        <button class="act-btn wikify" id="wikify-${idx}"
+                onclick="wikifyItem('${item.name.replace(/'/g, "\\'")}', ${idx})">Wikify with AI</button>
+        <button class="act-btn delete"  onclick="deleteItem('${item.name.replace(/'/g, "\\'")}', ${idx})">Delete</button>
+      </div>
+
+      <div class="item-progress" id="progress-${idx}"></div>
+
+      <div class="item-reader" id="reader-${idx}">
+        <div class="reader-loading">Loading…</div>
+      </div>
+    </div>`;
+
+      const div = document.createElement('div');
+      div.innerHTML = html;
+      firstItem.parentNode.insertBefore(div.firstElementChild, firstItem);
+    });
+
+    // Update item count
+    const countEl = document.querySelector('.text-sm.text2');
+    if (countEl) {
+      countEl.textContent = items.length + ' saved';
+    }
+  } catch(e) {
+    console.error('Auto-refresh error:', e);
+  }
+}
+
+setInterval(pollInbox, 3000);
+
 // Build bookmarklet and shortcut URL from current origin
 (function() {
   const base = location.origin + '/inbox/clip';

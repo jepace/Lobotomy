@@ -852,6 +852,14 @@ def inbox():
     return render_template("inbox.html", items=list_inbox())
 
 
+@app.route("/inbox/list")
+@require_login
+def inbox_list():
+    """API endpoint that returns inbox items as JSON for polling/auto-refresh."""
+    items = list_inbox()
+    return {"items": items}
+
+
 @app.route("/inbox/clip")
 @require_login
 def inbox_clip():
