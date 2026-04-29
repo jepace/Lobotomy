@@ -498,6 +498,7 @@ document.querySelectorAll('.tasks-table th[data-col]').forEach(th => {
   });
 });
 setSortUI();
+sortTable();
 
 function colVal(row, col) {
   const sp = row.querySelector(`.ecell[data-field="${col}"]`);
