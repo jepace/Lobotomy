@@ -655,6 +655,12 @@ def tasks_update():
         task.set_project(value if value else None)
     elif field == "notes":
         task.set_notes(value)
+    elif field == "complete":
+        if value == "true":
+            task.complete_task()
+        else:
+            task.complete = False
+            task.tags.pop('#done:', None)
     else:
         return {"error": "unknown field"}, 400
 

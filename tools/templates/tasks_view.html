@@ -5,43 +5,93 @@
 {% block head %}
 <style>
   .tasks-container { padding: 16px; width: 100%; }
+
+  /* Add task form — compact on one line */
+  .add-task-form {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto auto auto auto;
+    gap: 8px;
+    margin-bottom: 20px;
+    align-items: flex-end;
+    background: var(--bg2);
+    padding: 10px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .add-task-form input,
+  .add-task-form select {
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+    -webkit-appearance: none;
+  }
+  .add-task-form input:focus,
+  .add-task-form select:focus {
+    border-color: var(--accent);
+  }
+  .add-task-form input[type="date"] {
+    max-width: 110px;
+  }
+  .add-task-form button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .add-task-form label {
+    display: block;
+    font-size: 11px;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 3px;
+  }
+  .form-group { display: flex; flex-direction: column; }
+
+  /* Toolbar */
   .tasks-toolbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
     gap: 10px;
-    flex-wrap: wrap;
   }
-  .toolbar-left { display: flex; gap: 10px; align-items: center; }
-  .toolbar-right { display: flex; gap: 10px; align-items: center; }
   .show-completed {
     display: flex;
     gap: 6px;
     align-items: center;
-    font-size: 14px;
+    font-size: 13px;
   }
   .show-completed input { cursor: pointer; }
+
   .bulk-menu {
     position: relative;
     display: inline-block;
   }
   .bulk-menu-btn {
-    padding: 8px 12px;
+    padding: 6px 10px;
     background: var(--bg2);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 6px;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12px;
   }
   .bulk-menu-dropdown {
     display: none;
     position: absolute;
     background: var(--bg2);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 6px;
     z-index: 100;
-    min-width: 140px;
+    min-width: 120px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     top: 100%;
     right: 0;
@@ -49,99 +99,128 @@
   }
   .bulk-menu-dropdown.active { display: block; }
   .bulk-menu-item {
-    padding: 10px 14px;
+    padding: 8px 12px;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12px;
     border-bottom: 1px solid var(--border);
   }
   .bulk-menu-item:last-child { border-bottom: none; }
   .bulk-menu-item:hover { background: var(--bg3); }
 
+  /* Table */
   .tasks-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 14px;
-    margin-bottom: 20px;
+    font-size: 13px;
   }
   .tasks-table th {
-    background: var(--bg2);
-    padding: 10px;
+    background: var(--bg3);
+    padding: 8px 10px;
     text-align: left;
     font-weight: 600;
-    border-bottom: 1px solid var(--border);
-    font-size: 12px;
+    border: 1px solid var(--border);
+    font-size: 11px;
     text-transform: uppercase;
     color: var(--text2);
     cursor: pointer;
     user-select: none;
+    letter-spacing: 0.02em;
   }
-  .tasks-table th:hover { background: var(--bg3); }
+  .tasks-table th:hover { background: var(--accent); color: white; }
   .tasks-table th.sortable::after {
     content: ' ↕';
-    opacity: 0.3;
-    font-size: 10px;
+    opacity: 0.4;
+    font-size: 9px;
   }
   .tasks-table th.sort-asc::after { content: ' ↑'; opacity: 1; }
   .tasks-table th.sort-desc::after { content: ' ↓'; opacity: 1; }
 
   .tasks-table td {
-    padding: 10px;
-    border-bottom: 1px solid var(--border);
+    padding: 8px 10px;
+    border: 1px solid var(--border);
     vertical-align: middle;
-    height: 44px;
+    height: 40px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .tasks-table tbody tr:nth-child(odd) { background: var(--bg); }
   .tasks-table tbody tr:nth-child(even) { background: var(--bg2); }
-  .tasks-table tbody tr:hover { background: var(--bg3) !important; }
+  .tasks-table tbody tr:hover { background: var(--accent) !important; color: white; }
+  .tasks-table tbody tr:hover td { color: white; }
 
-  .task-row.completed { opacity: 0.6; }
+  .task-row.completed { opacity: 0.5; }
   .task-row.completed .task-name { text-decoration: line-through; }
 
-  .task-select { width: 20px; height: 20px; cursor: pointer; flex-shrink: 0; }
+  /* Priority coloring */
+  .task-row.pri-top { --pri-color: #ff3b30; }
+  .task-row.pri-high { --pri-color: #ff9500; }
+  .task-row.pri-medium { --pri-color: #007aff; }
+  .task-row.pri-low { --pri-color: #8e8e93; }
+
+  .task-select {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
   .task-name {
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .task-name.editable { cursor: pointer; }
-  .task-name.editable:hover { color: var(--accent); }
+  .task-done-btn {
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0;
+    opacity: 0.4;
+    flex-shrink: 0;
+  }
+  .task-done-btn:hover { opacity: 1; }
+  .task-row.completed .task-done-btn { color: var(--success); opacity: 1; }
 
   .editable-cell {
     cursor: pointer;
-    padding: 6px;
-    border-radius: 4px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    display: inline-block;
+    max-width: 100%;
   }
-  .editable-cell:hover { background: var(--bg3); }
-  .editable-cell.empty { color: var(--text2); }
+  .editable-cell:hover { background: var(--accent); color: white; }
+  .editable-cell.empty { color: var(--text2); font-style: italic; }
 
   .inline-edit { display: none; }
   .inline-edit.active { display: block; }
   .inline-edit input,
-  .inline-edit select {
+  .inline-edit select,
+  .inline-edit textarea {
     width: 100%;
-    padding: 6px;
+    padding: 4px 6px;
     border: 1px solid var(--accent);
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 12px;
+    background: var(--bg);
+    color: var(--text);
   }
   .inline-edit-buttons {
     display: flex;
-    gap: 6px;
-    margin-top: 6px;
+    gap: 4px;
+    margin-top: 4px;
   }
   .inline-edit-buttons button {
-    padding: 4px 10px;
-    font-size: 12px;
+    padding: 3px 8px;
+    font-size: 11px;
     border-radius: 4px;
     border: none;
     cursor: pointer;
   }
   .inline-edit-buttons .save { background: var(--success); color: white; }
-  .inline-edit-buttons .cancel { background: var(--bg3); color: var(--text); }
+  .inline-edit-buttons .cancel { background: var(--bg3); }
 
   .empty-state {
     text-align: center;
@@ -150,29 +229,13 @@
   }
   .empty-state-icon { font-size: 48px; margin-bottom: 10px; }
 
-  .add-task-form {
-    margin-bottom: 20px;
-    padding: 14px;
-    background: var(--bg2);
-    border-radius: 10px;
-  }
-  .add-task-form input {
-    margin-bottom: 10px;
-  }
-  .add-task-form .form-row {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 10px;
-  }
-  .add-task-form .form-row > * { flex: 1; }
-  .add-task-form button {
-    background: var(--accent);
-    color: white;
-    padding: 10px 16px;
-    border: none;
-    border-radius: 8px;
-    font-weight: 600;
-    cursor: pointer;
+  @media (max-width: 1200px) {
+    .add-task-form {
+      grid-template-columns: 1fr auto;
+    }
+    .add-task-form > :nth-child(n+3):nth-child(-n+7) {
+      order: 10;
+    }
   }
 </style>
 {% endblock %}
@@ -184,46 +247,64 @@
 
     <!-- Quick add form -->
     <div class="add-task-form">
-      <input type="text" id="task-input" placeholder="Add a new task..." style="margin-bottom: 10px;">
-      <div class="form-row">
-        <select id="context-input">
-          <option value="">Context (optional)</option>
-          {% for ctx in all_contexts %}
-            <option value="{{ ctx }}">{{ ctx }}</option>
-          {% endfor %}
-        </select>
-        <input type="date" id="due-input" placeholder="Due date">
+      <div class="form-group">
+        <label>Task</label>
+        <input type="text" id="task-input" placeholder="Add task...">
+      </div>
+      <div class="form-group" style="max-width: 100px;">
+        <label>Context</label>
+        <input type="text" id="context-input" placeholder="home">
+      </div>
+      <div class="form-group" style="max-width: 90px;">
+        <label>Due</label>
+        <input type="date" id="due-input">
+      </div>
+      <div class="form-group" style="max-width: 100px;">
+        <label>Priority</label>
         <select id="priority-input">
-          <option value="">Priority (optional)</option>
+          <option value="">—</option>
           <option value="top">Top</option>
           <option value="high">High</option>
           <option value="medium">Medium</option>
           <option value="low">Low</option>
         </select>
       </div>
-      <button onclick="add_task()">+ Add Task</button>
+      <div class="form-group" style="max-width: 100px;">
+        <label>Recur</label>
+        <select id="recurrence-input">
+          <option value="">—</option>
+          <option value="1d">Daily</option>
+          <option value="7d">Weekly</option>
+          <option value="2w">Biweekly</option>
+          <option value="1m">Monthly</option>
+          <option value="1y">Yearly</option>
+          <option value="1d+">Daily (after done)</option>
+          <option value="1w+">Weekly (after done)</option>
+        </select>
+      </div>
+      <div class="form-group" style="max-width: 110px;">
+        <label>Project</label>
+        <input type="text" id="project-input" placeholder="project">
+      </div>
+      <button onclick="add_task()">+ Add</button>
     </div>
 
     <!-- Toolbar -->
     <div class="tasks-toolbar">
-      <div class="toolbar-left">
-        <label class="show-completed">
-          <input type="checkbox" id="show-completed-checkbox">
-          Show completed
-        </label>
-      </div>
-      <div class="toolbar-right">
-        <div class="bulk-menu">
-          <button class="bulk-menu-btn" id="bulk-menu-btn" style="display: none;">
-            ⋯ Bulk edit
-          </button>
-          <div class="bulk-menu-dropdown" id="bulk-menu-dropdown">
-            <div class="bulk-menu-item" data-action="set-priority">Set priority</div>
-            <div class="bulk-menu-item" data-action="set-context">Set context</div>
-            <div class="bulk-menu-item" data-action="set-due">Set due date</div>
-            <div class="bulk-menu-item" data-action="set-project">Set project</div>
-            <div class="bulk-menu-item" data-action="delete">Delete</div>
-          </div>
+      <label class="show-completed">
+        <input type="checkbox" id="show-completed-checkbox">
+        Show completed
+      </label>
+      <div class="bulk-menu">
+        <button class="bulk-menu-btn" id="bulk-menu-btn" style="display: none;">
+          ⋯ Bulk
+        </button>
+        <div class="bulk-menu-dropdown" id="bulk-menu-dropdown">
+          <div class="bulk-menu-item" data-action="set-priority">Set priority</div>
+          <div class="bulk-menu-item" data-action="set-context">Set context</div>
+          <div class="bulk-menu-item" data-action="set-due">Set due date</div>
+          <div class="bulk-menu-item" data-action="set-project">Set project</div>
+          <div class="bulk-menu-item" data-action="delete">Delete</div>
         </div>
       </div>
     </div>
@@ -233,17 +314,17 @@
     <table class="tasks-table">
       <thead>
         <tr>
-          <th style="width: 30px;"><input type="checkbox" id="select-all-checkbox"></th>
+          <th style="width: 24px;"><input type="checkbox" id="select-all-checkbox"></th>
           <th>Task</th>
-          <th style="width: 100px;">Context</th>
-          <th style="width: 100px;">Due</th>
-          <th style="width: 80px;">Priority</th>
-          <th style="width: 120px;">Notes</th>
+          <th style="width: 90px;">Context</th>
+          <th style="width: 90px;">Due</th>
+          <th style="width: 70px;">Priority</th>
+          <th style="width: 24px;"></th>
         </tr>
       </thead>
       <tbody>
         {% for task in tasks %}
-        <tr class="task-row {% if task.complete %}completed{% endif %}" data-task-id="{{ loop.index0 }}">
+        <tr class="task-row {% if task.complete %}completed{% endif %} pri-{{ task.priority or 'none' }}" data-task-id="{{ loop.index0 }}">
           <td><input type="checkbox" class="task-select" data-task-id="{{ loop.index0 }}"></td>
           <td>
             <div class="task-name editable" data-task-id="{{ loop.index0 }}" data-field="description">
@@ -252,8 +333,8 @@
             <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="description">
               <input type="text" value="{{ task.description }}">
               <div class="inline-edit-buttons">
-                <button class="save">Save</button>
-                <button class="cancel">Cancel</button>
+                <button class="save">✓</button>
+                <button class="cancel">✕</button>
               </div>
             </div>
           </td>
@@ -262,15 +343,10 @@
               {{ task.context or "—" }}
             </div>
             <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="context">
-              <select>
-                <option value="">none</option>
-                {% for ctx in all_contexts %}
-                  <option value="{{ ctx }}" {% if task.context == ctx %}selected{% endif %}>{{ ctx }}</option>
-                {% endfor %}
-              </select>
+              <input type="text" value="{{ task.context or '' }}" placeholder="home, work, etc">
               <div class="inline-edit-buttons">
-                <button class="save">Save</button>
-                <button class="cancel">Cancel</button>
+                <button class="save">✓</button>
+                <button class="cancel">✕</button>
               </div>
             </div>
           </td>
@@ -281,8 +357,8 @@
             <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="due">
               <input type="date" value="{{ task.due or '' }}">
               <div class="inline-edit-buttons">
-                <button class="save">Save</button>
-                <button class="cancel">Cancel</button>
+                <button class="save">✓</button>
+                <button class="cancel">✕</button>
               </div>
             </div>
           </td>
@@ -292,29 +368,22 @@
             </div>
             <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="priority">
               <select>
-                <option value="">none</option>
+                <option value="">—</option>
                 <option value="top" {% if task.priority == "top" %}selected{% endif %}>top</option>
                 <option value="high" {% if task.priority == "high" %}selected{% endif %}>high</option>
                 <option value="medium" {% if task.priority == "medium" %}selected{% endif %}>medium</option>
                 <option value="low" {% if task.priority == "low" %}selected{% endif %}>low</option>
               </select>
               <div class="inline-edit-buttons">
-                <button class="save">Save</button>
-                <button class="cancel">Cancel</button>
+                <button class="save">✓</button>
+                <button class="cancel">✕</button>
               </div>
             </div>
           </td>
           <td>
-            <div class="editable-cell {% if not task.notes %}empty{% endif %}" data-task-id="{{ loop.index0 }}" data-field="notes">
-              {{ task.notes[:40] or "—" }}{% if task.notes|length > 40 %}...{% endif %}
-            </div>
-            <div class="inline-edit" data-task-id="{{ loop.index0 }}" data-field="notes">
-              <textarea style="font-size: 13px; min-height: 80px;">{{ task.notes }}</textarea>
-              <div class="inline-edit-buttons">
-                <button class="save">Save</button>
-                <button class="cancel">Cancel</button>
-              </div>
-            </div>
+            <button class="task-done-btn" data-task-id="{{ loop.index0 }}" onclick="toggle_done({{ loop.index0 }})">
+              {% if task.complete %}✓{% else %}○{% endif %}
+            </button>
           </td>
         </tr>
         {% endfor %}
@@ -324,7 +393,7 @@
     {% else %}
     <div class="empty-state">
       <div class="empty-state-icon">📝</div>
-      <p>No tasks yet. Add one to get started.</p>
+      <p>No tasks yet.</p>
     </div>
     {% endif %}
   </div>
@@ -339,7 +408,9 @@
   const taskRows = document.querySelectorAll('.task-row');
   const editableCells = document.querySelectorAll('.editable-cell, .task-name.editable');
 
-  // Show/hide completed tasks
+  let currentEditingTaskId = null;
+
+  // Show/hide completed
   showCompletedCheckbox.addEventListener('change', () => {
     taskRows.forEach(row => {
       if (row.classList.contains('completed') && !showCompletedCheckbox.checked) {
@@ -351,23 +422,17 @@
     localStorage.setItem('tasks-show-completed', showCompletedCheckbox.checked);
   });
 
-  // Restore show-completed preference
   const savedShowCompleted = localStorage.getItem('tasks-show-completed') === 'true';
   showCompletedCheckbox.checked = savedShowCompleted;
   showCompletedCheckbox.dispatchEvent(new Event('change'));
 
-  // Select all checkbox
+  // Select all
   selectAllCheckbox.addEventListener('change', () => {
-    taskSelects.forEach(checkbox => {
-      checkbox.checked = selectAllCheckbox.checked;
-    });
+    taskSelects.forEach(cb => cb.checked = selectAllCheckbox.checked);
     updateBulkMenu();
   });
 
-  // Individual task selection
-  taskSelects.forEach(checkbox => {
-    checkbox.addEventListener('change', updateBulkMenu);
-  });
+  taskSelects.forEach(cb => cb.addEventListener('change', updateBulkMenu));
 
   function updateBulkMenu() {
     const selected = document.querySelectorAll('.task-select:checked').length;
@@ -375,13 +440,12 @@
     selectAllCheckbox.checked = selected === taskSelects.length;
   }
 
-  // Bulk menu items
+  // Bulk menu
   document.querySelectorAll('.bulk-menu-item').forEach(item => {
     item.addEventListener('click', async (e) => {
       const action = e.target.dataset.action;
-      const selected = Array.from(document.querySelectorAll('.task-select:checked')).map(cb => {
-        return parseInt(cb.dataset.taskId);
-      });
+      const selected = Array.from(document.querySelectorAll('.task-select:checked'))
+        .map(cb => parseInt(cb.dataset.taskId));
 
       if (action === 'delete') {
         if (confirm(`Delete ${selected.length} task(s)?`)) {
@@ -391,7 +455,7 @@
         const match = action.match(/^set-(.+)$/);
         if (match) {
           const field = match[1];
-          const value = prompt(`Enter new ${field}:`);
+          const value = prompt(`Enter ${field}:`);
           if (value !== null) {
             await bulk_action('set-' + field, selected, value);
           }
@@ -405,46 +469,62 @@
     bulkMenuDropdown.classList.toggle('active');
   });
 
-  // Close menu when clicking outside
   document.addEventListener('click', (e) => {
     if (!e.target.closest('.bulk-menu')) {
       bulkMenuDropdown.classList.remove('active');
     }
   });
 
-  // Inline editing
+  // Inline editing (only 1 at a time)
   editableCells.forEach(cell => {
     cell.addEventListener('click', () => {
+      // Close any currently open edit
+      if (currentEditingTaskId !== null) {
+        const openEdits = document.querySelectorAll(`.inline-edit[data-task-id="${currentEditingTaskId}"].active`);
+        openEdits.forEach(edit => {
+          const cellDiv = document.querySelector(`.editable-cell[data-task-id="${currentEditingTaskId}"], .task-name[data-task-id="${currentEditingTaskId}"]`);
+          if (cellDiv) cellDiv.style.display = '';
+          edit.classList.remove('active');
+        });
+      }
+
       const taskId = cell.dataset.taskId;
       const field = cell.dataset.field;
       const editDiv = document.querySelector(`.inline-edit[data-task-id="${taskId}"][data-field="${field}"]`);
 
       if (editDiv) {
+        currentEditingTaskId = taskId;
         cell.style.display = 'none';
         editDiv.classList.add('active');
 
         const saveBtn = editDiv.querySelector('.save');
         const cancelBtn = editDiv.querySelector('.cancel');
+        const input = editDiv.querySelector('input, textarea, select');
 
         saveBtn.addEventListener('click', async () => {
-          const input = editDiv.querySelector('input, textarea, select');
-          const newValue = input.value;
-          await save_task(taskId, field, newValue);
-          editDiv.classList.remove('active');
-          cell.style.display = '';
+          await save_task(taskId, field, input.value);
           location.reload();
         });
 
         cancelBtn.addEventListener('click', () => {
           editDiv.classList.remove('active');
           cell.style.display = '';
+          currentEditingTaskId = null;
         });
 
-        const input = editDiv.querySelector('input, textarea, select');
         input.focus();
       }
     });
   });
+
+  async function toggle_done(taskId) {
+    const row = document.querySelector(`.task-row[data-task-id="${taskId}"]`);
+    const isComplete = row.classList.contains('completed');
+    const newState = !isComplete;
+
+    await save_task(taskId, 'complete', newState ? 'true' : 'false');
+    location.reload();
+  }
 
   async function save_task(taskId, field, value) {
     try {
@@ -467,7 +547,7 @@
         body: JSON.stringify({ action, task_ids: taskIds, value })
       });
       if (response.ok) location.reload();
-      else alert('Error performing bulk action');
+      else alert('Error');
     } catch (err) {
       alert('Error: ' + err);
     }
@@ -475,19 +555,25 @@
 
   async function add_task() {
     const text = document.getElementById('task-input').value.trim();
-    const context = document.getElementById('context-input').value.trim();
-    const due = document.getElementById('due-input').value.trim();
-    const priority = document.getElementById('priority-input').value.trim();
-
     if (!text) {
-      alert('Task description is required');
+      alert('Task description required');
       return;
     }
 
     let tags = [];
+    const priority = document.getElementById('priority-input').value.trim();
+    const context = document.getElementById('context-input').value.trim();
+    const due = document.getElementById('due-input').value.trim();
+    const recurrence = document.getElementById('recurrence-input').value.trim();
+    const project = document.getElementById('project-input').value.trim();
+    const today = new Date().toISOString().split('T')[0];
+
     if (priority) tags.push(`#p:${priority}`);
     if (due) tags.push(`#due:${due}`);
     if (context) tags.push(`#ctx:${context}`);
+    if (recurrence) tags.push(`#rep:${recurrence}`);
+    if (project) tags.push(`#proj:${project}`);
+    tags.push(`#start:${today}`);
 
     const fullText = tags.length > 0 ? `${text} ${tags.join(' ')}` : text;
 
@@ -502,6 +588,8 @@
         document.getElementById('context-input').value = '';
         document.getElementById('due-input').value = '';
         document.getElementById('priority-input').value = '';
+        document.getElementById('recurrence-input').value = '';
+        document.getElementById('project-input').value = '';
         location.reload();
       } else {
         alert('Error adding task');
@@ -511,86 +599,9 @@
     }
   }
 
-  // Allow Enter key in task input
   document.getElementById('task-input')?.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') add_task();
   });
-
-  // Column sorting
-  let sortState = { column: 'due', direction: 'asc' }; // Default sort by due date
-
-  document.querySelectorAll('.tasks-table th').forEach((th, index) => {
-    const columns = ['select', 'description', 'context', 'due', 'priority', 'notes'];
-    const column = columns[index];
-
-    if (column && column !== 'select') {
-      th.classList.add('sortable');
-      th.addEventListener('click', () => sortTable(column, th));
-    }
-  });
-
-  function sortTable(column, headerEl) {
-    const tbody = document.querySelector('.tasks-table tbody');
-    if (!tbody) return;
-
-    // Toggle direction if same column clicked
-    if (sortState.column === column) {
-      sortState.direction = sortState.direction === 'asc' ? 'desc' : 'asc';
-    } else {
-      sortState.column = column;
-      sortState.direction = 'asc';
-    }
-
-    // Update header styling
-    document.querySelectorAll('.tasks-table th').forEach(th => {
-      th.classList.remove('sort-asc', 'sort-desc');
-    });
-    headerEl.classList.add(sortState.direction === 'asc' ? 'sort-asc' : 'sort-desc');
-
-    // Get and sort rows
-    const rows = Array.from(tbody.querySelectorAll('.task-row'));
-    rows.sort((a, b) => {
-      let aVal, bVal;
-
-      switch(column) {
-        case 'description':
-          aVal = a.querySelector('.task-name')?.textContent || '';
-          bVal = b.querySelector('.task-name')?.textContent || '';
-          break;
-        case 'context':
-          aVal = a.querySelectorAll('.editable-cell')[0]?.textContent || '';
-          bVal = b.querySelectorAll('.editable-cell')[0]?.textContent || '';
-          break;
-        case 'due':
-          aVal = a.querySelectorAll('.editable-cell')[1]?.textContent || '9999-12-31';
-          bVal = b.querySelectorAll('.editable-cell')[1]?.textContent || '9999-12-31';
-          aVal = aVal === '—' ? '9999-12-31' : aVal;
-          bVal = bVal === '—' ? '9999-12-31' : bVal;
-          break;
-        case 'priority':
-          const priorityOrder = { 'top': 0, 'high': 1, 'medium': 2, 'low': 3, '—': 4 };
-          aVal = priorityOrder[a.querySelectorAll('.editable-cell')[2]?.textContent?.trim() || '—'] || 4;
-          bVal = priorityOrder[b.querySelectorAll('.editable-cell')[2]?.textContent?.trim() || '—'] || 4;
-          break;
-        case 'notes':
-          aVal = a.querySelectorAll('.editable-cell')[3]?.textContent || '';
-          bVal = b.querySelectorAll('.editable-cell')[3]?.textContent || '';
-          break;
-        default:
-          return 0;
-      }
-
-      if (typeof aVal === 'string') aVal = aVal.toLowerCase();
-      if (typeof bVal === 'string') bVal = bVal.toLowerCase();
-
-      if (aVal < bVal) return sortState.direction === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortState.direction === 'asc' ? 1 : -1;
-      return 0;
-    });
-
-    // Re-insert sorted rows
-    rows.forEach(row => tbody.appendChild(row));
-  }
 </script>
 
 {% endblock %}
