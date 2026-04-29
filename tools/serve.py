@@ -1008,6 +1008,24 @@ def inbox_view(filename):
     return {"content": body.strip(), "url": source_url}
 
 
+@app.route("/inbox/debug-fetch")
+@require_login
+def inbox_debug_fetch():
+    """Debug endpoint: test what _clip_fetch returns for a URL."""
+    url = request.args.get("url", "").strip()
+    if not url:
+        return {"error": "Missing url parameter"}, 400
+    text, err = _clip_fetch(url)
+    return {
+        "url": url,
+        "success": text is not None,
+        "error": err,
+        "text_length": len(text) if text else 0,
+        "text_preview": (text[:200] if text else "") if text and not text.startswith('�') else "[binary or error]",
+        "starts_with_gzip": text.startswith('\x1f\x8b') if text else False,
+    }
+
+
 @app.route("/inbox/archive", methods=["POST"])
 @require_login
 def inbox_archive():
