@@ -302,7 +302,23 @@ MAX_HISTORY  = 80
 def load_history() -> list:
     if HISTORY_FILE.exists():
         try:
-            return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+            messages = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+            # Backfill 'name' in tool messages from preceding assistant tool_calls.
+            # Needed because old history was saved without the name field,
+            # and Gemini requires it.
+            id_to_name = {}
+            for msg in messages:
+                if msg.get("role") == "assistant":
+                    for tc in (msg.get("tool_calls") or []):
+                        tc_id = tc.get("id") or ""
+                        tc_name = (tc.get("function") or {}).get("name") or ""
+                        if tc_id and tc_name:
+                            id_to_name[tc_id] = tc_name
+                elif msg.get("role") == "tool" and not msg.get("name"):
+                    tc_id = msg.get("tool_call_id") or ""
+                    if tc_id in id_to_name:
+                        msg["name"] = id_to_name[tc_id]
+            return messages
         except Exception:
             pass
     return []
