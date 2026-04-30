@@ -303,25 +303,59 @@ def load_history() -> list:
     if HISTORY_FILE.exists():
         try:
             messages = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
-            # Backfill 'name' in tool messages from preceding assistant tool_calls.
-            # Needed because old history was saved without the name field,
-            # and Gemini requires it.
-            id_to_name = {}
-            for msg in messages:
-                if msg.get("role") == "assistant":
-                    for tc in (msg.get("tool_calls") or []):
-                        tc_id = tc.get("id") or ""
-                        tc_name = (tc.get("function") or {}).get("name") or ""
-                        if tc_id and tc_name:
-                            id_to_name[tc_id] = tc_name
-                elif msg.get("role") == "tool" and not msg.get("name"):
-                    tc_id = msg.get("tool_call_id") or ""
-                    if tc_id in id_to_name:
-                        msg["name"] = id_to_name[tc_id]
+            messages = _sanitize_history(messages)
             return messages
         except Exception:
             pass
     return []
+
+
+def _sanitize_history(messages: list) -> list:
+    """
+    Fix history for Gemini compatibility:
+    1. Backfill 'name' in tool messages from preceding assistant tool_calls.
+    2. Remove incomplete tool-call sequences (assistant with tool_calls but
+       no following tool responses) — these are left by interrupted ingests
+       and cause "function call turn must come after user/function response" errors.
+    """
+    # Pass 1: backfill tool response names
+    id_to_name = {}
+    for msg in messages:
+        if msg.get("role") == "assistant":
+            for tc in (msg.get("tool_calls") or []):
+                tc_id = tc.get("id") or ""
+                tc_name = (tc.get("function") or {}).get("name") or ""
+                if tc_id and tc_name:
+                    id_to_name[tc_id] = tc_name
+        elif msg.get("role") == "tool" and not msg.get("name"):
+            tc_id = msg.get("tool_call_id") or ""
+            if tc_id in id_to_name:
+                msg["name"] = id_to_name[tc_id]
+
+    # Pass 2: drop incomplete tool-call blocks
+    # An assistant message with tool_calls must be immediately followed by
+    # tool response(s). If it's the last message or followed by something else,
+    # strip it and everything after it.
+    clean = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            # Check that the next messages are tool responses
+            j = i + 1
+            while j < len(messages) and messages[j].get("role") == "tool":
+                j += 1
+            if j == i + 1:
+                # No tool responses follow — incomplete block, drop it and stop
+                break
+            # Include the assistant message and all its tool responses
+            clean.extend(messages[i:j])
+            i = j
+        else:
+            clean.append(msg)
+            i += 1
+
+    return clean
 
 
 def save_history(messages: list) -> None:
