@@ -149,7 +149,10 @@
   </td>
   <td class="col-ctx">
     <label>Context</label>
-    <input id="f-ctx" type="text" placeholder="home">
+    <input id="f-ctx" type="text" placeholder="home" list="ctx-options">
+    <datalist id="ctx-options">
+      {% for ctx in all_contexts %}<option value="{{ ctx }}">{% endfor %}
+    </datalist>
   </td>
   <td class="col-due">
     <label>Due</label>
@@ -252,9 +255,11 @@
       <span class="ecell{% if not task.start %} empty{% endif %}"
             data-id="{{ task.line_num }}" data-field="start">{{ task.start or '—' }}</span>
     </td>
-    <td>
+    <td style="display:flex; gap:4px; justify-content:center; align-items:center;">
       <button class="note-btn{% if task.notes %} has-note{% endif %}"
               data-id="{{ task.line_num }}">{% if task.notes %}📝{% else %}+{% endif %}</button>
+      <button class="note-btn" title="Delete" style="color:var(--danger); opacity:.6;"
+              onclick="deleteTask({{ task.line_num }})">✕</button>
     </td>
     <td><input type="checkbox" class="sel-cb" data-id="{{ task.line_num }}"></td>
   </tr>
@@ -525,8 +530,8 @@ function dateGroup(due) {
   const isNextMo = (yr === thisYr && mo === thisMo + 2) ||
                    (thisMo === 11 && yr === thisYr + 1 && mo === 1);
   const label = new Date(yr, mo - 1, 1).toLocaleString('default', {month:'long', year:'numeric'});
-  if (isCurMo)  return {cls:'grp-month', label: label + ' (this month)'};
-  if (isNextMo) return {cls:'grp-month', label: label + ' (next month)'};
+  if (isCurMo || isNextMo) return {cls:'grp-month', label};
+  // For future months, just show month/year without parenthetical
   return {cls:'grp-future', label};
 }
 
@@ -637,6 +642,16 @@ async function addTask() {
 document.getElementById('f-task').addEventListener('keypress', e => {
   if (e.key === 'Enter') addTask();
 });
+
+// ── Delete task ──────────────────────────────────────────────
+async function deleteTask(id) {
+  if (!confirm('Delete this task?')) return;
+  await fetch('/tasks/bulk-update', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({action:'delete', task_ids:[id], value:''})
+  });
+  location.reload();
+}
 
 // ── API helper ───────────────────────────────────────────────
 async function apiUpdate(id, field, value) {
