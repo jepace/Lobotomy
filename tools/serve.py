@@ -334,11 +334,20 @@ def load_history() -> list:
 def _sanitize_history(messages: list) -> list:
     """
     Fix history for Gemini compatibility:
+    0. Strip content from assistant messages that also have tool_calls — storing
+       both causes Gemini's layer to split them into two model turns, placing a
+       function-call turn after a text turn which violates ordering rules.
     1. Backfill 'name' in tool messages from preceding assistant tool_calls.
     2. Remove incomplete tool-call sequences (assistant with tool_calls but
        no following tool responses) — these are left by interrupted ingests
        and cause "function call turn must come after user/function response" errors.
+    3. Drop any complete tool-call sequence where responses have unfixable empty names.
     """
+    # Pass 0: strip content from tool-call messages to prevent Gemini ordering errors
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("tool_calls") and "content" in msg:
+            del msg["content"]
+
     # Pass 1: backfill tool response names
     id_to_name = {}
     for msg in messages:

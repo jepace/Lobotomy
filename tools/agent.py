@@ -569,12 +569,16 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
         stored: dict = {"role": "assistant"}
         content    = msg.get("content")
         tool_calls = msg.get("tool_calls") or []
-        if content:
-            stored["content"] = content
         if tool_calls:
             # Pass through raw tool_calls unchanged — Gemini thinking mode attaches
             # a thought_signature to each call that must be echoed back verbatim.
+            # Do NOT store content alongside tool_calls: Gemini's OpenAI-compatible
+            # layer may split a message with both into two separate model turns,
+            # putting the text turn before the function-call turn, which violates
+            # Gemini's ordering rules and causes a 400 error on subsequent calls.
             stored["tool_calls"] = tool_calls
+        elif content:
+            stored["content"] = content
         messages.append(stored)
 
         if not tool_calls:
@@ -676,12 +680,15 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
         tool_calls = msg.get("tool_calls") or []
 
         stored: dict = {"role": "assistant"}
-        if content:
-            stored["content"] = content
         if tool_calls:
             # Pass through raw tool_calls unchanged — Gemini thinking mode attaches
             # a thought_signature to each call that must be echoed back verbatim.
+            # Do NOT store content alongside tool_calls: Gemini's OpenAI-compatible
+            # layer may split a message with both into two separate model turns,
+            # violating ordering rules and causing 400 errors on subsequent calls.
             stored["tool_calls"] = tool_calls
+        elif content:
+            stored["content"] = content
         messages.append(stored)
 
         if content:
