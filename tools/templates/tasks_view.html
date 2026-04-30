@@ -69,11 +69,10 @@
   .tasks-table td { padding: 3px 8px; border: 1px solid var(--border); height: 32px;
                     overflow: hidden; white-space: nowrap; vertical-align: middle;
                     color: var(--text); }
-  .tasks-table tbody tr:nth-child(odd)  { background: var(--bg); }
-  .tasks-table tbody tr:nth-child(even) { background: var(--bg2); }
+  .tasks-table tbody tr.task-row.row-odd  { background: var(--bg); }
+  .tasks-table tbody tr.task-row.row-even { background: var(--bg2); }
   .tasks-table .note-row { background: var(--bg2) !important; }
   .tasks-table tr.task-row:hover { background: var(--bg3) !important; }
-  .tasks-table tr.task-row:hover td { color: var(--text); }
 
   /* Priority left border */
   .pri-top    > td:first-child { border-left: 3px solid #ff3b30; }
@@ -225,7 +224,7 @@
   </tr></thead>
   <tbody>
   {% for task in tasks %}
-  <tr class="task-row pri-{{ task.priority or 'none' }}{% if task.complete %} completed{% endif %}"
+  <tr class="task-row pri-{{ task.priority or 'none' }}{% if task.complete %} completed{% endif %} {% if loop.index0 % 2 == 0 %}row-odd{% else %}row-even{% endif %}"
       data-id="{{ task.line_num }}">
     <td><input type="checkbox" class="done-cb" data-id="{{ task.line_num }}"
         {% if task.complete %}checked{% endif %}></td>
@@ -560,44 +559,40 @@ function sortTable() {
 
   pairs.forEach(({row,note}) => { tbody.appendChild(row); if (note) tbody.appendChild(note); });
 
-  // Inject group headers when sorting by due date (ascending) or priority
+  // Inject group headers
   if (sortCol === 'due' && sortDir === 'asc') {
     let lastKey = null;
-    const groupTasks = {};
     for (const {row} of pairs) {
       const due = row.querySelector('.ecell[data-field="due"]')?.textContent.trim() || '—';
       const grp = dateGroup(due);
-      const key = grp.label;
-      if (!groupTasks[key]) groupTasks[key] = [];
-      groupTasks[key].push({row, grp});
-    }
-    // Only show groups that have tasks
-    for (const {row, grp} of pairs) {
-      const due = row.querySelector('.ecell[data-field="due"]')?.textContent.trim() || '—';
-      const key = dateGroup(due).label;
-      if (key !== lastKey && groupTasks[key].length > 0) {
+      if (grp.label !== lastKey) {
         const tr = document.createElement('tr');
         tr.className = `group-header-row ${grp.cls}`;
-        tr.innerHTML = `<td colspan="9">${key}</td>`;
+        tr.innerHTML = `<td colspan="9">${grp.label}</td>`;
         tbody.insertBefore(tr, row);
-        lastKey = key;
+        lastKey = grp.label;
       }
     }
   } else if (sortCol === 'priority') {
     let lastVal = null;
-    const PRIORITY_LABELS = {0: 'Top', 1: 'High', 2: 'Medium', 3: 'Low', 4: 'No Priority'};
+    const PRIORITY_LABELS = {0:'Top', 1:'High', 2:'Medium', 3:'Low', 4:'No Priority'};
     for (const {row} of pairs) {
       const val = colVal(row, 'priority');
-      const label = PRIORITY_LABELS[val] || 'No Priority';
       if (val !== lastVal) {
         const tr = document.createElement('tr');
         tr.className = 'group-header-row';
-        tr.innerHTML = `<td colspan="9">${label}</td>`;
+        tr.innerHTML = `<td colspan="9">${PRIORITY_LABELS[val] || 'No Priority'}</td>`;
         tbody.insertBefore(tr, row);
         lastVal = val;
       }
     }
   }
+
+  // Reapply alternating row colors (nth-child breaks after DOM reorder)
+  pairs.forEach(({row}, i) => {
+    row.classList.toggle('row-odd',  i % 2 === 0);
+    row.classList.toggle('row-even', i % 2 !== 0);
+  });
 }
 
 // ── Add task ─────────────────────────────────────────────────
