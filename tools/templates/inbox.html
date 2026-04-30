@@ -259,7 +259,7 @@ setInterval(pollInbox, 3000);
 // Build bookmarklet and shortcut URL from current origin
 (function() {
   const base = location.origin + '/inbox/clip';
-  const bm   = `javascript:(function(){var u=encodeURIComponent(location.href),t=encodeURIComponent(document.title);location.href='${base}?url='+u+'&title='+t;})();`;
+  const bm   = `javascript:(function(){var u=encodeURIComponent(location.href),t=encodeURIComponent(document.title);fetch('${base}?url='+u+'&title='+t).then(r=>r.text()).then(h=>{var d=document.createElement('div');d.innerHTML=h;d.id='lobotomy-popup';d.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;z-index:99999';document.body.appendChild(d);setTimeout(()=>d.remove(),2000)}).catch(e=>alert('Error: '+e))})();`;
   document.getElementById('bookmarklet-link').href = bm;
   document.getElementById('shortcut-url').textContent = base + '?url=[URL]&title=[Page Title]';
 })();

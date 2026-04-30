@@ -594,6 +594,19 @@ function sortTable() {
         lastVal = val;
       }
     }
+  } else if (sortCol === 'context') {
+    let lastVal = null;
+    for (const {row} of pairs) {
+      const val = colVal(row, 'context');
+      if (val !== lastVal) {
+        const tr = document.createElement('tr');
+        tr.className = 'group-header-row';
+        const label = val === '￿' ? 'No Context' : val.toUpperCase();
+        tr.innerHTML = `<td colspan="9">${label}</td>`;
+        tbody.insertBefore(tr, row);
+        lastVal = val;
+      }
+    }
   }
 
   // Reapply alternating row colors (nth-child breaks after DOM reorder)
@@ -660,5 +673,22 @@ async function apiUpdate(id, field, value) {
     body: JSON.stringify({task_id:id, field, value})
   });
 }
+
+// ── Keyboard shortcuts ────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  // Don't trigger shortcuts when typing in inputs
+  if (document.activeElement.matches('input, textarea, select')) return;
+
+  if (e.key === 'r' || e.key === 'R') {
+    e.preventDefault();
+    location.reload();
+  } else if (e.key === 'n' || e.key === 'N') {
+    e.preventDefault();
+    document.getElementById('f-task').focus();
+  } else if (e.key === '?') {
+    e.preventDefault();
+    alert('Keyboard shortcuts:\n\nR - Refresh list\nN - New task\n? - Help');
+  }
+});
 </script>
 {% endblock %}
