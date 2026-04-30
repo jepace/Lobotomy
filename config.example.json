@@ -23,5 +23,8 @@
   "email": {
     "resend_api_key": "",
     "from_address": "wiki@yourdomain.com"
+  },
+  "api": {
+    "push_key": ""
   }
 }

@@ -82,6 +82,20 @@ app.config.update(
     SESSION_COOKIE_SECURE   = cfg_bool("server", "https"),
 )
 
+@app.after_request
+def add_cors_headers(response):
+    """Add CORS headers to /api/push for cross-origin requests."""
+    if request.path.startswith("/api/"):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    return response
+
+@app.route("/api/push", methods=["OPTIONS"])
+def api_push_options():
+    """CORS preflight for /api/push."""
+    return "", 204
+
 # ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
@@ -1007,6 +1021,68 @@ def inbox_list():
     """API endpoint that returns inbox items as JSON for polling/auto-refresh."""
     items = list_inbox()
     return {"items": items}
+
+
+@app.route("/api/push", methods=["POST"])
+def api_push():
+    """
+    External push API — save articles from other apps (TubeNews, etc).
+    Auth: Bearer token from config.json api.push_key
+    Body: {title, content, source_url, tags}
+    """
+    auth_header = request.headers.get("Authorization", "").strip()
+    push_key = cfg_get("api", "push_key", "")
+
+    if not push_key:
+        return {"error": "API push not configured"}, 501
+
+    if not auth_header.startswith("Bearer "):
+        return {"error": "Missing Authorization header"}, 401
+
+    token = auth_header[7:].strip()
+    if token != push_key:
+        return {"error": "Invalid API key"}, 403
+
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    content = (data.get("content") or "").strip()
+    source_url = (data.get("source_url") or "").strip()
+    tags = data.get("tags") or []
+
+    if not title or not content:
+        return {"error": "Missing title or content"}, 400
+
+    # Generate filename from title
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "article"
+
+    # Make unique filename
+    (RAW_DIR / "inbox").mkdir(parents=True, exist_ok=True)
+    base_name = f"{slug}.md"
+    dest = RAW_DIR / "inbox" / base_name
+    if dest.exists():
+        import time as _t
+        base_name = f"{slug}-{int(_t.time())}.md"
+        dest = RAW_DIR / "inbox" / base_name
+
+    # Build YAML frontmatter
+    today = datetime.date.today().isoformat()
+    fm_lines = [
+        "---",
+        f'title: "{title}"',
+    ]
+    if source_url:
+        fm_lines.append(f"url: {source_url}")
+    fm_lines.append(f"saved: {today}")
+    fm_lines.append(f"source: external-api")
+    if tags:
+        fm_lines.append(f"tags: {json.dumps(tags)}")
+    fm_lines.append("---")
+    fm_lines.append("")
+
+    full_content = "\n".join(fm_lines) + content
+    dest.write_text(full_content, encoding="utf-8")
+
+    return {"ok": True, "filename": base_name}
 
 
 @app.route("/inbox/clip")
