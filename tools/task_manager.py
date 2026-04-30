@@ -164,6 +164,7 @@ class Task:
         next_task.tags.pop('#done', None)  # Remove done tag
         next_task.tags['#due'] = next_due.isoformat()
         next_task.section = self.section
+        next_task.raw_notes = self.raw_notes  # Preserve notes from completed task
 
         return next_task
 

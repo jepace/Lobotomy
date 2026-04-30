@@ -983,6 +983,10 @@ def tasks_update():
     elif field == "complete":
         if value == "true":
             task.complete_task()
+            # Handle recurrence: create next occurrence if recurring
+            next_task = task.get_next_recurrence()
+            if next_task:
+                tasks_list.insert(task_id + 1, next_task)
         else:
             task.reopen_task()
     else:

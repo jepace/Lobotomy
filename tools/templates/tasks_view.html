@@ -278,7 +278,7 @@
 </div>
 
 <script>
-const today = new Date().toISOString().split('T')[0];
+const today = new Date().toLocaleDateString('en-CA');
 document.getElementById('f-due').value = today;
 document.getElementById('f-start').value = today;
 
@@ -348,7 +348,8 @@ function makeEditable(span) {
   const id    = parseInt(span.dataset.id);
   const field = span.dataset.field;
   const curText = span.textContent.trim();
-  const curVal  = (curText === '—' || curText === '') ? '' : curText.toLowerCase();
+  const curVal  = (curText === '—' || curText === '') ? '' : curText;
+  const curValLower = curVal.toLowerCase();  // For case-insensitive matching
   const td = span.parentElement;
 
   let inp;
@@ -357,7 +358,7 @@ function makeEditable(span) {
     inp.className = 'edit-inline';
     [['','—'],['top','Top'],['high','High'],['medium','Medium'],['low','Low']].forEach(([v,l]) => {
       const o = new Option(l, v);
-      if (v === curVal) o.selected = true;
+      if (v === curValLower) o.selected = true;
       inp.appendChild(o);
     });
   } else if (field === 'due' || field === 'start') {
@@ -559,10 +560,12 @@ function sortTable() {
 
   pairs.forEach(({row,note}) => { tbody.appendChild(row); if (note) tbody.appendChild(note); });
 
-  // Inject group headers
+  // Inject group headers (only for non-completed tasks to avoid empty overdue headers)
   if (sortCol === 'due' && sortDir === 'asc') {
     let lastKey = null;
     for (const {row} of pairs) {
+      const isCompleted = row.classList.contains('completed');
+      if (isCompleted) continue;  // Skip completed tasks for grouping
       const due = row.querySelector('.ecell[data-field="due"]')?.textContent.trim() || '—';
       const grp = dateGroup(due);
       if (grp.label !== lastKey) {
