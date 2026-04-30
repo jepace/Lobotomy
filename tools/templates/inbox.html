@@ -62,8 +62,8 @@
   .act-btn.read    { background: var(--accent);  color: #fff; border: none; text-decoration: none; }
   .act-btn.open    { background: var(--bg3);    color: var(--text); }
   .act-btn.archive { background: var(--success); color: #fff; border: none; }
-  .act-btn.wikify  { background: var(--bg3);    color: var(--text); }
-  .act-btn.wikify:disabled { opacity: .6; cursor: default; }
+  .act-btn.wikify  { background: var(--accent); color: #fff; border: none; }
+  .act-btn.wikify:disabled { opacity: .5; cursor: default; }
   .act-btn.delete  { color: var(--danger); border-color: var(--danger); background: transparent; }
 
   /* Inline wikify progress */
@@ -97,6 +97,7 @@
     <h1>Reading List</h1>
     <div style="display:flex; gap:8px; align-items:center;">
       <span class="text-sm text2">{{ items|length }} saved</span>
+      {% if items %}<button class="btn btn-ghost btn-sm" id="wikify-all-btn" onclick="wikifyAll()">Wikify All</button>{% endif %}
       <button class="btn btn-primary btn-sm" onclick="toggleSave()">+ Save</button>
     </div>
   </div>
@@ -135,7 +136,7 @@
         {% endif %}
         <button class="act-btn archive" onclick="archiveItem('{{ item.name | e }}', {{ loop.index }})">Archive</button>
         <button class="act-btn wikify" id="wikify-{{ loop.index }}"
-                onclick="wikifyItem('{{ item.name | e }}', {{ loop.index }})">Wikify with AI</button>
+                onclick="wikifyItem('{{ item.name | e }}', {{ loop.index }})">Wikify</button>
         <button class="act-btn delete"  onclick="deleteItem('{{ item.name | e }}', {{ loop.index }})">Delete</button>
       </div>
 
@@ -154,22 +155,19 @@
   </div>
   {% endif %}
 
-  <!-- Bookmarklet / Shortcut setup -->
-  <div style="margin:16px 12px 0; padding:14px; background:var(--bg2); border-radius:12px;">
-    <div style="font-size:13px; font-weight:700; margin-bottom:10px;">Save from your browser</div>
-
-    <div style="font-size:12px; color:var(--text2); margin-bottom:6px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;">Bookmarklet — Firefox &amp; Safari</div>
-    <div style="font-size:12px; color:var(--text2); margin-bottom:8px;">Drag this link to your bookmarks bar. Tap it on any page to save to your reading list.</div>
-    <a id="bookmarklet-link" href="#" style="display:inline-block; padding:7px 14px; background:var(--accent); color:#fff; border-radius:8px; font-size:13px; font-weight:700; text-decoration:none; margin-bottom:14px;">📖 Lobotomize</a>
-    <div style="font-size:11px; color:var(--text2);">On iOS: tap the link, choose <em>Add Bookmark</em>, save it to Favorites. Then tap it from any article.</div>
-
-    <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
-      <div style="font-size:12px; color:var(--text2); margin-bottom:6px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;">iOS Shortcut (share sheet)</div>
-      <div style="font-size:12px; color:var(--text2); margin-bottom:6px;">Create a Shortcut that sends the current URL to Lobotomy — then it appears in your iOS share sheet.</div>
-      <div style="font-size:11px; font-family:monospace; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px; color:var(--text); white-space:pre-wrap; word-break:break-all;" id="shortcut-url"></div>
-      <div style="font-size:11px; color:var(--text2); margin-top:6px;">In Shortcuts app: New → <em>Get Contents of URL</em> → paste the URL above with <code>?url=[Shortcut Input]&amp;title=[Name]</code> → set method GET → add <em>Show Result</em>. Enable in share sheet under Shortcut settings.</div>
+  <!-- Bookmarklet / Shortcut setup — collapsed -->
+  <details style="margin:12px 12px 0; background:var(--bg2); border-radius:12px; overflow:hidden;">
+    <summary style="padding:10px 14px; font-size:12px; font-weight:600; color:var(--text2); cursor:pointer; list-style:none; display:flex; align-items:center; gap:6px;">
+      <span>▶</span> Save from browser (bookmarklet &amp; iOS shortcut)
+    </summary>
+    <div style="padding:0 14px 14px; border-top:1px solid var(--border); margin-top:0;">
+      <div style="font-size:12px; color:var(--text2); margin:10px 0 6px;">Drag to bookmarks bar — tap on any page to save:</div>
+      <a id="bookmarklet-link" href="#" style="display:inline-block; padding:6px 12px; background:var(--accent); color:#fff; border-radius:8px; font-size:13px; font-weight:700; text-decoration:none; margin-bottom:8px;">📖 Lobotomize</a>
+      <div style="font-size:11px; color:var(--text2); margin-bottom:12px;">iOS: tap link → Add Bookmark → save to Favorites.</div>
+      <div style="font-size:11px; color:var(--text2); font-weight:600; margin-bottom:4px;">iOS Shortcut URL:</div>
+      <div style="font-size:11px; font-family:monospace; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:6px 8px; color:var(--text); white-space:pre-wrap; word-break:break-all;" id="shortcut-url"></div>
     </div>
-  </div>
+  </details>
 
   <div style="height:20px;"></div>
 </div>
@@ -230,7 +228,7 @@ async function pollInbox() {
         ${item.has_content ? `<a class="act-btn read" href="/inbox/read/${encodeURIComponent(item.name)}">Read</a>` : item.source_url ? `<a class="act-btn open" href="${item.source_url.replace(/"/g, '&quot;')}" target="_blank" rel="noopener">Open ↗</a>` : ''}
         <button class="act-btn archive" onclick="archiveItem('${item.name.replace(/'/g, "\\'")}', ${idx})">Archive</button>
         <button class="act-btn wikify" id="wikify-${idx}"
-                onclick="wikifyItem('${item.name.replace(/'/g, "\\'")}', ${idx})">Wikify with AI</button>
+                onclick="wikifyItem('${item.name.replace(/'/g, "\\'")}', ${idx})">Wikify</button>
         <button class="act-btn delete"  onclick="deleteItem('${item.name.replace(/'/g, "\\'")}', ${idx})">Delete</button>
       </div>
 
@@ -395,8 +393,29 @@ async function wikifyItem(name, idx) {
   } catch(e) {
     progress.innerHTML += `<div class="prog-error">Failed: ${e.message}</div>`;
     btn.disabled = false;
-    btn.textContent = 'Wikify with AI';
+    btn.textContent = 'Wikify';
   }
+}
+
+async function wikifyAll() {
+  const allBtn = document.getElementById('wikify-all-btn');
+  const btns = [...document.querySelectorAll('.act-btn.wikify:not(:disabled)')];
+  if (!btns.length) return;
+  allBtn.disabled = true;
+  allBtn.textContent = `Wikifying… 0/${btns.length}`;
+  let done = 0;
+  for (const btn of btns) {
+    const m = btn.id.match(/wikify-(\d+)/);
+    if (!m) continue;
+    const idx = m[1];
+    const onclick = btn.getAttribute('onclick') || '';
+    const nameMatch = onclick.match(/'([^']+)'/);
+    if (!nameMatch) continue;
+    await wikifyItem(nameMatch[1], idx);
+    done++;
+    allBtn.textContent = `Wikifying… ${done}/${btns.length}`;
+  }
+  allBtn.textContent = `All Done ✓`;
 }
 </script>
 {% endblock %}
