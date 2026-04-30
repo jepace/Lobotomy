@@ -590,7 +590,8 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
             # Tool content must be a string for maximum provider compatibility
             if not isinstance(result, str):
                 result = json.dumps(result)
-            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+            messages.append({"role": "tool", "tool_call_id": tc["id"],
+                             "name": tc["function"]["name"], "content": result})
 
     return messages
 
@@ -698,6 +699,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
             yield json.dumps({"type": "tool", "name": tc["function"]["name"], "arg": arg_preview}) + "\n"
             if not isinstance(result, str):
                 result = json.dumps(result)
-            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+            messages.append({"role": "tool", "tool_call_id": tc["id"],
+                             "name": tc["function"]["name"], "content": result})
 
     yield json.dumps({"type": "done"}) + "\n"
