@@ -31,7 +31,7 @@ missing = []
 try:
     from flask import (Flask, Response, abort, flash, redirect,
                        render_template, request, session,
-                       stream_with_context, url_for, send_file)
+                       stream_with_context, url_for, send_file, make_response)
 except ImportError:
     missing.append("flask")
 
@@ -87,14 +87,21 @@ def add_cors_headers(response):
     """Add CORS headers to /api/push for cross-origin requests."""
     if request.path.startswith("/api/"):
         response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        response.headers["Access-Control-Max-Age"] = "3600"
     return response
 
-@app.route("/api/push", methods=["OPTIONS"])
-def api_push_options():
-    """CORS preflight for /api/push."""
-    return "", 204
+@app.before_request
+def handle_preflight():
+    """Handle CORS preflight requests."""
+    if request.method == "OPTIONS" and request.path.startswith("/api/"):
+        response = make_response("", 204)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        response.headers["Access-Control-Max-Age"] = "3600"
+        return response
 
 # ---------------------------------------------------------------------------
 # Auth helpers
