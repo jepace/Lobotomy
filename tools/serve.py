@@ -353,23 +353,27 @@ def _sanitize_history(messages: list) -> list:
             if tc_id in id_to_name:
                 msg["name"] = id_to_name[tc_id]
 
-    # Pass 2: drop incomplete tool-call blocks
+    # Pass 2: drop incomplete or broken tool-call blocks
     # An assistant message with tool_calls must be immediately followed by
-    # tool response(s). If it's the last message or followed by something else,
-    # strip it and everything after it.
+    # tool response(s) that all have non-empty names.  If the block is absent
+    # or any tool response still has an empty name after Pass 1, drop it.
     clean = []
     i = 0
     while i < len(messages):
         msg = messages[i]
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
-            # Check that the next messages are tool responses
+            # Collect the span of tool responses that follow
             j = i + 1
             while j < len(messages) and messages[j].get("role") == "tool":
                 j += 1
             if j == i + 1:
                 # No tool responses follow — incomplete block, drop it and stop
                 break
-            # Include the assistant message and all its tool responses
+            # Drop the block if any tool response still has an empty name
+            if any(not m.get("name") for m in messages[i + 1 : j]):
+                i = j  # skip to after the broken sequence; keep scanning
+                continue
+            # Valid block — include it
             clean.extend(messages[i:j])
             i = j
         else:

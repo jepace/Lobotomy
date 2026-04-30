@@ -581,17 +581,21 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
             break
 
         for tc in tool_calls:
-            fn = TOOL_FNS.get(tc["function"]["name"])
+            fn_name = (tc.get("function") or {}).get("name") or ""
+            fn = TOOL_FNS.get(fn_name)
             try:
-                args   = json.loads(tc["function"]["arguments"])
-                result = fn(args) if fn else f"Unknown tool: {tc['function']['name']}"
+                args   = json.loads((tc.get("function") or {}).get("arguments") or "{}")
+                result = fn(args) if fn else f"Unknown tool: {fn_name}"
             except Exception as e:
                 result = f"Error: {e}"
             # Tool content must be a string for maximum provider compatibility
             if not isinstance(result, str):
                 result = json.dumps(result)
-            messages.append({"role": "tool", "tool_call_id": tc["id"],
-                             "name": tc["function"]["name"], "content": result})
+            # Gemini requires a non-empty name on every tool response
+            if not fn_name:
+                fn_name = "unknown_tool"
+            messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
+                             "name": fn_name, "content": result})
 
     return messages
 
@@ -687,19 +691,23 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
             break
 
         for tc in tool_calls:
-            fn = TOOL_FNS.get(tc["function"]["name"])
+            fn_name = (tc.get("function") or {}).get("name") or ""
+            fn = TOOL_FNS.get(fn_name)
             try:
-                args        = json.loads(tc["function"]["arguments"])
+                args        = json.loads((tc.get("function") or {}).get("arguments") or "{}")
                 arg_preview = str(list(args.values())[0])[:80] if args else ""
-                result      = fn(args) if fn else f"Unknown tool: {tc['function']['name']}"
+                result      = fn(args) if fn else f"Unknown tool: {fn_name}"
             except Exception as e:
                 arg_preview = ""
                 result      = f"Error: {e}"
 
-            yield json.dumps({"type": "tool", "name": tc["function"]["name"], "arg": arg_preview}) + "\n"
+            yield json.dumps({"type": "tool", "name": fn_name or "(unknown)", "arg": arg_preview}) + "\n"
             if not isinstance(result, str):
                 result = json.dumps(result)
-            messages.append({"role": "tool", "tool_call_id": tc["id"],
-                             "name": tc["function"]["name"], "content": result})
+            # Gemini requires a non-empty name on every tool response
+            if not fn_name:
+                fn_name = "unknown_tool"
+            messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
+                             "name": fn_name, "content": result})
 
     yield json.dumps({"type": "done"}) + "\n"
