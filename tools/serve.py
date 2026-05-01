@@ -1047,66 +1047,233 @@ def inbox_list():
     return {"items": items}
 
 
+# ---------------------------------------------------------------------------
+# External API — /api/*
+# ---------------------------------------------------------------------------
+
+def _api_auth():
+    """
+    Validate Bearer token for external API routes.
+    Returns (True, None) on success, or (False, (body, status)) on failure.
+    """
+    push_key = cfg_get("api", "push_key", "").strip()
+    if not push_key:
+        return False, ({"error": "API not configured — set api.push_key in config.json",
+                        "code": "NOT_CONFIGURED"}, 501)
+    auth = request.headers.get("Authorization", "").strip()
+    if not auth.startswith("Bearer "):
+        return False, ({"error": "Authorization header required: Bearer <token>",
+                        "code": "UNAUTHORIZED"}, 401)
+    if auth[7:].strip() != push_key:
+        return False, ({"error": "Invalid API key", "code": "FORBIDDEN"}, 403)
+    return True, None
+
+
+@app.route("/api/status")
+def api_status():
+    """
+    Health check — no auth required.
+    Returns whether the push API is configured and the API version.
+    """
+    return {
+        "ok": True,
+        "version": "1",
+        "push_configured": bool(cfg_get("api", "push_key", "").strip()),
+    }
+
+
 @app.route("/api/push", methods=["POST"])
 def api_push():
     """
-    External push API — save articles from other apps (TubeNews, etc).
-    Auth: Bearer token from config.json api.push_key
-    Body: {title, content, source_url, tags}
+    Push an article into the Lobotomy reading list inbox.
+
+    Auth: Authorization: Bearer <push_key>
+
+    Body (JSON):
+      url        string   URL of the article. If content is omitted, Lobotomy
+                          fetches the page automatically.
+      title      string   Article title. Auto-extracted if omitted.
+      content    string   Full article body text. Skips the fetch if provided.
+      tags       string[] Optional tag list.
+      source     string   Identifier for the calling application.
+      author     string   Article author.
+
+    At least one of url or content is required.
+    If only content is given, title is also required.
     """
-    auth_header = request.headers.get("Authorization", "").strip()
-    push_key = cfg_get("api", "push_key", "")
+    ok, err = _api_auth()
+    if not ok:
+        return err
 
-    if not push_key:
-        return {"error": "API push not configured"}, 501
+    data       = request.get_json(silent=True) or {}
+    url        = (data.get("url")     or "").strip()
+    title      = (data.get("title")   or "").strip()
+    content    = (data.get("content") or "").strip()
+    tags       = data.get("tags")   or []
+    source     = (data.get("source") or "external-api").strip()
+    author     = (data.get("author") or "").strip()
 
-    if not auth_header.startswith("Bearer "):
-        return {"error": "Missing Authorization header"}, 401
+    if not isinstance(tags, list):
+        tags = [str(tags)]
+    tags = [str(t).strip() for t in tags if str(t).strip()]
 
-    token = auth_header[7:].strip()
-    if token != push_key:
-        return {"error": "Invalid API key"}, 403
+    # Validation
+    if not url and not content:
+        return {"error": "Provide url, content, or both", "code": "MISSING_FIELDS"}, 400
+    if not url and not title:
+        return {"error": "title is required when url is not provided",
+                "code": "MISSING_FIELDS"}, 400
 
-    data = request.get_json(silent=True) or {}
-    title = (data.get("title") or "").strip()
-    content = (data.get("content") or "").strip()
-    source_url = (data.get("source_url") or "").strip()
-    tags = data.get("tags") or []
+    # Deduplication: if the same URL already exists in inbox, return it
+    inbox_dir = RAW_DIR / "inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    if url:
+        for existing in inbox_dir.glob("*.md"):
+            try:
+                meta, _ = _parse_frontmatter(
+                    existing.read_text(encoding="utf-8", errors="replace"))
+                if meta.get("url", "").strip() == url:
+                    return {
+                        "ok":        True,
+                        "duplicate": True,
+                        "id":        existing.stem,
+                        "filename":  existing.name,
+                        "title":     meta.get("title", existing.stem),
+                        "url":       url,
+                        "saved":     meta.get("saved", ""),
+                    }
+            except Exception:
+                pass
 
-    if not title or not content:
-        return {"error": "Missing title or content"}, 400
+    # If URL given but no content, fetch the page
+    if url and not content:
+        fetched, _ = _clip_fetch(url)
+        if fetched:
+            content = fetched
+            # Auto-extract title from first non-empty non-markup line
+            if not title:
+                for line in content.splitlines():
+                    line = line.strip().lstrip("#").strip()
+                    if line and not line.startswith("<"):
+                        title = line[:120]
+                        break
 
-    # Generate filename from title
+    # Final title fallback
+    if not title:
+        title = url.rstrip("/").split("/")[-1].split("?")[0].replace("-", " ").replace("_", " ") or url
+
+    # Build unique slug filename
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "article"
-
-    # Make unique filename
-    (RAW_DIR / "inbox").mkdir(parents=True, exist_ok=True)
     base_name = f"{slug}.md"
-    dest = RAW_DIR / "inbox" / base_name
+    dest = inbox_dir / base_name
     if dest.exists():
         import time as _t
         base_name = f"{slug}-{int(_t.time())}.md"
-        dest = RAW_DIR / "inbox" / base_name
+        dest = inbox_dir / base_name
 
-    # Build YAML frontmatter
+    # Write file with YAML frontmatter
     today = datetime.date.today().isoformat()
-    fm_lines = [
-        "---",
-        f'title: "{title}"',
-    ]
-    if source_url:
-        fm_lines.append(f"url: {source_url}")
-    fm_lines.append(f"saved: {today}")
-    fm_lines.append(f"source: external-api")
+    fm    = ["---", f'title: "{title}"']
+    if url:
+        fm.append(f"url: {url}")
+    fm.append(f"saved: {today}")
+    fm.append(f"source: {source}")
+    if author:
+        fm.append(f"author: {author}")
     if tags:
-        fm_lines.append(f"tags: {json.dumps(tags)}")
-    fm_lines.append("---")
-    fm_lines.append("")
+        fm.append(f"tags: {json.dumps(tags)}")
+    fm += ["---", ""]
 
-    full_content = "\n".join(fm_lines) + content
-    dest.write_text(full_content, encoding="utf-8")
+    dest.write_text("\n".join(fm) + (content or ""), encoding="utf-8")
 
-    return {"ok": True, "filename": base_name}
+    return {
+        "ok":        True,
+        "duplicate": False,
+        "id":        dest.stem,
+        "filename":  base_name,
+        "title":     title,
+        "url":       url or None,
+        "saved":     today,
+    }, 201
+
+
+@app.route("/api/inbox")
+def api_inbox_list():
+    """
+    List items currently in the inbox.
+
+    Auth: Authorization: Bearer <push_key>
+
+    Query params:
+      limit   int    Max items to return (default 20, max 100).
+      since   date   ISO date — only return items saved on or after this date.
+      source  str    Filter by source application name.
+    """
+    ok, err = _api_auth()
+    if not ok:
+        return err
+
+    limit  = min(max(int(request.args.get("limit", 20)), 1), 100)
+    since  = request.args.get("since",  "").strip()
+    source = request.args.get("source", "").strip()
+
+    items = []
+    inbox_dir = RAW_DIR / "inbox"
+    if inbox_dir.is_dir():
+        candidates = sorted(inbox_dir.glob("*.md"),
+                            key=lambda f: -f.stat().st_mtime)
+        for f in candidates:
+            try:
+                meta, _ = _parse_frontmatter(
+                    f.read_text(encoding="utf-8", errors="replace"))
+                saved = meta.get("saved", "")
+                if since and saved and saved < since:
+                    continue
+                if source and meta.get("source", "") != source:
+                    continue
+                items.append({
+                    "id":       f.stem,
+                    "filename": f.name,
+                    "title":    meta.get("title", f.stem),
+                    "url":      meta.get("url")    or None,
+                    "saved":    saved,
+                    "source":   meta.get("source", ""),
+                    "author":   meta.get("author", "") or None,
+                    "tags":     meta.get("tags")   or [],
+                })
+                if len(items) >= limit:
+                    break
+            except Exception:
+                pass
+
+    return {"ok": True, "items": items, "count": len(items)}
+
+
+@app.route("/api/inbox/<path:filename>", methods=["DELETE"])
+def api_inbox_delete(filename):
+    """
+    Delete an item from the inbox by filename.
+
+    Auth: Authorization: Bearer <push_key>
+
+    Only items still in raw/inbox/ can be deleted this way. Items that have
+    already been archived or ingested into the wiki are not affected.
+    """
+    ok, err = _api_auth()
+    if not ok:
+        return err
+
+    p = RAW_DIR / "inbox" / filename
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        return {"error": "Invalid filename", "code": "INVALID_PATH"}, 400
+
+    if not p.exists():
+        return {"error": "Item not found in inbox", "code": "NOT_FOUND"}, 404
+
+    p.unlink()
+    return {"ok": True, "deleted": filename}
 
 
 @app.route("/inbox/clip")
