@@ -53,7 +53,7 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
 
 BLOG_DIR = REPO_ROOT / "blog"
 from job_queue import JobQueue
-from task_manager import read_tasks, write_tasks, get_all_contexts, get_all_projects
+from task_manager import read_tasks, write_tasks, get_all_contexts, get_all_projects, TASKS_FILE
 from auth  import (user_exists, create_user, authenticate, get_user, update_password,
                    set_verified, create_token, consume_token, record_attempt,
                    is_locked_out, send_verification_email, send_reset_email,
@@ -963,6 +963,7 @@ def tasks_update():
         return {"error": "task not found"}, 404
 
     task = tasks_list[task_id]
+    next_task = None
 
     if field == "description":
         task.description = value
@@ -985,14 +986,25 @@ def tasks_update():
             task.complete_task()
             # Handle recurrence: create next occurrence if recurring
             next_task = task.get_next_recurrence()
-            if next_task:
-                tasks_list.insert(task_id + 1, next_task)
         else:
             task.reopen_task()
     else:
         return {"error": "unknown field"}, 400
 
+    # Write the updated tasks
     write_tasks(tasks_list)
+
+    # If a new recurring task was created, append it to the file
+    if next_task:
+        next_line = next_task.to_line()
+        next_notes = next_task.raw_notes.strip()
+
+        with open(TASKS_FILE, 'a', encoding='utf-8') as f:
+            f.write('\n' + next_line)
+            if next_notes:
+                for note_line in next_notes.split('\n'):
+                    f.write('\n' + note_line)
+
     return {"ok": True}
 
 
