@@ -84,12 +84,18 @@ app.config.update(
 
 @app.after_request
 def add_cors_headers(response):
-    """Add CORS headers to /api/push for cross-origin requests."""
+    """Add CORS headers for cross-origin requests."""
     if request.path.startswith("/api/"):
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         response.headers["Access-Control-Max-Age"] = "3600"
+    elif request.path == "/inbox/clip":
+        # Bookmarklet runs on third-party origins and needs to send session cookie
+        origin = request.headers.get("Origin")
+        if origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
     return response
 
 @app.before_request
