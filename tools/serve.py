@@ -90,12 +90,6 @@ def add_cors_headers(response):
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         response.headers["Access-Control-Max-Age"] = "3600"
-    elif request.path == "/inbox/clip":
-        # Bookmarklet runs on third-party origins and needs to send session cookie
-        origin = request.headers.get("Origin")
-        if origin:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Credentials"] = "true"
     return response
 
 @app.before_request
@@ -1362,7 +1356,7 @@ def inbox_clip():
   <p class="sub">{display_title[:80]}</p>
   {read_link}
   <a class="pri" href="{inbox_url}">Reading List</a>
-  <a class="sec" href="javascript:history.back()">Back</a>
+  <a class="sec" href="javascript:window.close()">Close</a>
 </div>
 <script>
 setTimeout(()=>window.close(),2000)
