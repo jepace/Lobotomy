@@ -399,6 +399,9 @@ function makeEditable(span) {
   const curValLower = curVal.toLowerCase();  // For case-insensitive matching
   const td = span.parentElement;
 
+  // Get available contexts from datalist
+  const contextOptions = [...document.querySelectorAll('#ctx-options option')].map(o => o.value);
+
   let inp;
   if (field === 'priority') {
     inp = document.createElement('select');
@@ -406,6 +409,17 @@ function makeEditable(span) {
     [['','—'],['top','Top'],['high','High'],['medium','Medium'],['low','Low']].forEach(([v,l]) => {
       const o = new Option(l, v);
       if (v === curValLower) o.selected = true;
+      inp.appendChild(o);
+    });
+  } else if (field === 'context') {
+    inp = document.createElement('select');
+    inp.className = 'edit-inline';
+    const o0 = new Option('—', '');
+    if (!curVal) o0.selected = true;
+    inp.appendChild(o0);
+    contextOptions.forEach(ctx => {
+      const o = new Option(ctx, ctx);
+      if (ctx.toLowerCase() === curValLower) o.selected = true;
       inp.appendChild(o);
     });
   } else if (field === 'due' || field === 'start') {
@@ -448,7 +462,7 @@ function makeEditable(span) {
     else if (e.key === 'Escape') cancel();
   });
 
-  if (field === 'priority') {
+  if (field === 'priority' || field === 'context') {
     inp.addEventListener('change', commit);
   } else if (field === 'due' || field === 'start') {
     let picked = false;
