@@ -365,6 +365,17 @@ def settings_preferences():
     return {"ok": True}
 
 
+@app.route("/settings/profile", methods=["POST"])
+@require_login
+def settings_profile():
+    data = request.get_json(silent=True) or {}
+    allowed = {"display_name", "timezone"}
+    patch = {k: str(v).strip() for k, v in data.items() if k in allowed}
+    if patch:
+        update_settings(patch)
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # Chat history
 # ---------------------------------------------------------------------------

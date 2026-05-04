@@ -163,7 +163,12 @@
     padding: 10px 12px; box-shadow: 0 4px 16px rgba(0,0,0,.25); white-space: nowrap; }
   .bulk-date-overlay label { font-size: 11px; color: var(--text2); display: block; margin-bottom: 6px; }
   .bulk-date-overlay input { padding: 5px 8px; font-size: 13px; border: 1px solid var(--border);
-    border-radius: 5px; background: var(--bg); color: var(--text); }
+    border-radius: 5px; background: var(--bg); color: var(--text); display: block; margin-bottom: 8px; }
+  .bulk-date-overlay .apply-btn { background: var(--accent); color: #fff; border: none;
+    border-radius: 6px; padding: 5px 14px; font-size: 12px; font-weight: 700; cursor: pointer;
+    margin-right: 6px; }
+  .bulk-date-overlay .cancel-btn { background: var(--bg3); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
 </style>
 {% endblock %}
 
@@ -509,13 +514,16 @@ document.querySelectorAll('.bulk-item').forEach(item => {
     }
 
     if (action === 'set-due') {
-      // Show inline date-picker overlay instead of prompt()
+      // Show inline date-picker overlay with explicit Apply button
       const wrap = document.querySelector('.bulk-wrap');
       const existing = wrap.querySelector('.bulk-date-overlay');
       if (existing) existing.remove();
       const ov = document.createElement('div');
       ov.className = 'bulk-date-overlay';
-      ov.innerHTML = `<label>Set due date for ${ids.length} task(s)</label><input type="date" value="${today}">`;
+      ov.innerHTML = `<label>Set due date for ${ids.length} task(s)</label>`
+        + `<input type="date" value="${today}">`
+        + `<button class="apply-btn">Apply</button>`
+        + `<button class="cancel-btn">Cancel</button>`;
       wrap.appendChild(ov);
       const inp = ov.querySelector('input');
       inp.focus();
@@ -530,9 +538,17 @@ document.querySelectorAll('.bulk-item').forEach(item => {
         });
         location.reload();
       };
-      inp.addEventListener('change', submit);
-      inp.addEventListener('keydown', e => { if (e.key === 'Escape') ov.remove(); });
-      inp.addEventListener('blur', () => setTimeout(() => { if (wrap.contains(ov)) ov.remove(); }, 150));
+      ov.querySelector('.apply-btn').addEventListener('click', submit);
+      ov.querySelector('.cancel-btn').addEventListener('click', () => ov.remove());
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter') submit();
+        else if (e.key === 'Escape') ov.remove();
+      });
+      document.addEventListener('click', function outsideClick(e) {
+        if (!ov.contains(e.target) && !e.target.closest('.bulk-wrap')) {
+          ov.remove(); document.removeEventListener('click', outsideClick);
+        }
+      });
       return;
     }
 
@@ -550,9 +566,19 @@ document.querySelectorAll('.bulk-item').forEach(item => {
 // ── Column sort with date grouping ──────────────────────────
 const PRIORITY_ORDER = {top:0, high:1, medium:2, low:3};
 
-// Load sort preference from localStorage
+// Load sort preference — supports multi-level configured sort
 let sortCol = localStorage.getItem('tasks-sort-col') || 'due';
 let sortDir = localStorage.getItem('tasks-sort-dir') || 'asc';
+function getSortLevels() {
+  // Returns [{col,dir}, ...] for tiebreaker cascade
+  const lvls = [];
+  for (let i = 1; i <= 3; i++) {
+    const c = localStorage.getItem(`tasks-sort-level-${i}-col`);
+    const d = localStorage.getItem(`tasks-sort-level-${i}-dir`) || 'asc';
+    if (c) lvls.push({col:c, dir:d});
+  }
+  return lvls;
+}
 
 function setSortUI() {
   document.querySelectorAll('.tasks-table th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
@@ -617,19 +643,28 @@ function sortTable() {
     row, note: document.querySelector(`.note-row[data-id="${row.dataset.id}"]`)
   }));
 
+  const extraLevels = getSortLevels();
   pairs.sort((a,b) => {
     const av = colVal(a.row, sortCol), bv = colVal(b.row, sortCol);
     let cmp = 0;
     if (av < bv) cmp = sortDir === 'asc' ? -1 : 1;
     else if (av > bv) cmp = sortDir === 'asc' ?  1 : -1;
     if (cmp !== 0) return cmp;
-    // Sub-sort: due→priority, priority→due, others→description
+    // Configured multi-level tiebreakers from settings
+    for (const {col, dir} of extraLevels) {
+      if (col === sortCol) continue;
+      const xv = colVal(a.row, col), yv = colVal(b.row, col);
+      if (xv < yv) return dir === 'asc' ? -1 : 1;
+      if (xv > yv) return dir === 'asc' ?  1 : -1;
+    }
+    // Built-in sub-sort: due→priority, priority→due
     if (sortCol === 'due')      return colVal(a.row,'priority') - colVal(b.row,'priority');
     if (sortCol === 'priority') {
       const adv = colVal(a.row,'due'), bdv = colVal(b.row,'due');
       return adv < bdv ? -1 : adv > bdv ? 1 : 0;
     }
-    return 0;
+    // Final tiebreaker: alphabetical by description
+    return colVal(a.row,'description').localeCompare(colVal(b.row,'description'));
   });
 
   pairs.forEach(({row,note}) => { tbody.appendChild(row); if (note) tbody.appendChild(note); });
@@ -733,8 +768,16 @@ async function addTask() {
     alert('Error adding task');
   }
 }
-document.getElementById('f-task').addEventListener('keypress', e => {
-  if (e.key === 'Enter') addTask();
+// Enter commits the add form from any field; date fields open picker on click
+['f-task','f-ctx','f-rep'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addTask(); } });
+});
+document.getElementById('f-pri').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addTask(); } });
+['f-due','f-start'].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addTask(); } });
+  el.addEventListener('click', () => { try { el.showPicker(); } catch(e) {} });
+  el.addEventListener('focus', () => { try { el.showPicker(); } catch(e) {} });
 });
 
 // ── Delete task ──────────────────────────────────────────────

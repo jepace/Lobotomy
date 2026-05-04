@@ -37,11 +37,14 @@
   .field-group:last-child { border-bottom: none; }
   .field-group label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 6px; }
   .field-group input[type=password],
-  .field-group input[type=email] {
+  .field-group input[type=email],
+  .field-group input[type=text],
+  .field-group select {
     padding: 9px 12px; font-size: 14px; border-radius: 9px; border: 1px solid var(--border);
     background: var(--bg); color: var(--text); width: 100%; margin-bottom: 0;
+    -webkit-appearance: none; box-sizing: border-box;
   }
-  .field-group input:focus { border-color: var(--accent); outline: none; }
+  .field-group input:focus, .field-group select:focus { border-color: var(--accent); outline: none; }
 
   .save-btn {
     margin: 12px 16px 4px; display: block; width: calc(100% - 32px);
@@ -118,9 +121,9 @@
     </div>
   </div>
 
-  <!-- Account -->
+  <!-- Profile -->
   <div class="settings-section">
-    <h2>Account</h2>
+    <h2>Profile</h2>
     <div class="settings-card">
       <div class="settings-row">
         <div>
@@ -128,6 +131,27 @@
           <div class="hint">{{ user.get('email', '—') }}</div>
         </div>
       </div>
+      <div class="field-group">
+        <label>Display name</label>
+        <input type="text" id="display-name"
+               value="{{ settings.get('display_name', '') }}"
+               placeholder="Your name"
+               oninput="scheduleProfileSave()">
+      </div>
+      <div class="field-group">
+        <label>Timezone</label>
+        <select id="timezone" onchange="scheduleProfileSave()">
+          <option value="">— use browser default —</option>
+        </select>
+      </div>
+      <div class="form-msg" id="profile-msg"></div>
+    </div>
+  </div>
+
+  <!-- Account -->
+  <div class="settings-section">
+    <h2>Change Password</h2>
+    <div class="settings-card">
       <div class="field-group">
         <label>Current password</label>
         <input type="password" id="pw-current" autocomplete="current-password">
@@ -142,6 +166,33 @@
       </div>
       <button class="save-btn" id="pw-btn" onclick="changePassword()">Change Password</button>
       <div class="form-msg" id="pw-msg"></div>
+    </div>
+  </div>
+
+  <!-- Task Sort Order -->
+  <div class="settings-section">
+    <h2>Task Sort Order</h2>
+    <div class="settings-card">
+      <div class="settings-row" style="flex-direction:column; align-items:flex-start; gap:0;">
+        <div style="padding-bottom:8px;">
+          <label>Default sort cascade</label>
+          <div class="hint">Applied as tiebreakers in order. Column-header clicks override for the session.</div>
+        </div>
+      </div>
+      {% for lvl in [1,2,3,4] %}
+      <div class="field-group">
+        <label>Level {{ lvl }}</label>
+        <select id="sort-level-{{ lvl }}" onchange="saveSortLevels()">
+          <option value="">— none —</option>
+          <option value="due">Due Date</option>
+          <option value="priority">Priority</option>
+          <option value="context">Context</option>
+          <option value="description">Task Name (A–Z)</option>
+          <option value="start">Start Date</option>
+        </select>
+      </div>
+      {% endfor %}
+      <div class="form-msg" id="sort-msg"></div>
     </div>
   </div>
 
@@ -251,6 +302,60 @@ async function changePassword() {
     }
   } catch(e) { showMsg(msg, 'Network error', 'err'); }
   btn.disabled = false;
+}
+
+// ── Profile (display name, timezone) ──────────────────────
+(function populateTimezones() {
+  const sel = document.getElementById('timezone');
+  const saved = '{{ settings.get("timezone", "") }}';
+  const zones = Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : [];
+  zones.forEach(z => {
+    const o = new Option(z, z);
+    if (z === saved) o.selected = true;
+    sel.appendChild(o);
+  });
+  if (!zones.length && saved) {
+    sel.appendChild(new Option(saved, saved, true, true));
+  }
+})();
+
+let profileSaveTimer = null;
+function scheduleProfileSave() {
+  clearTimeout(profileSaveTimer);
+  profileSaveTimer = setTimeout(saveProfile, 800);
+}
+async function saveProfile() {
+  clearTimeout(profileSaveTimer);
+  const name = document.getElementById('display-name').value.trim();
+  const tz   = document.getElementById('timezone').value;
+  const msg  = document.getElementById('profile-msg');
+  try {
+    const r = await fetch('/settings/profile', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({display_name: name, timezone: tz})
+    });
+    const d = await r.json();
+    if (d.ok) showMsg(msg, 'Saved ✓', 'ok');
+    else showMsg(msg, d.error || 'Error', 'err');
+  } catch(e) { showMsg(msg, 'Network error', 'err'); }
+}
+
+// ── Sort levels ────────────────────────────────────────────
+(function loadSortLevels() {
+  for (let i = 1; i <= 4; i++) {
+    const val = localStorage.getItem(`tasks-sort-level-${i}-col`) || '';
+    const sel = document.getElementById(`sort-level-${i}`);
+    if (sel) sel.value = val;
+  }
+})();
+function saveSortLevels() {
+  for (let i = 1; i <= 4; i++) {
+    const val = document.getElementById(`sort-level-${i}`)?.value || '';
+    if (val) localStorage.setItem(`tasks-sort-level-${i}-col`, val);
+    else localStorage.removeItem(`tasks-sort-level-${i}-col`);
+  }
+  const msg = document.getElementById('sort-msg');
+  showMsg(msg, 'Saved ✓', 'ok');
 }
 
 // ── Email preferences ──────────────────────────────────────

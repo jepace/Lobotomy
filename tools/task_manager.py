@@ -229,6 +229,9 @@ def write_tasks(tasks):
                 new_lines.append(task.to_line())
                 if task.raw_notes.strip():
                     for note_line in task.raw_notes.split('\n'):
+                        # Ensure notes are indented so read_tasks picks them up
+                        if note_line.strip() and note_line[:1] not in (' ', '\t'):
+                            note_line = '  ' + note_line
                         new_lines.append(note_line)
             task_count += 1
             i += 1
