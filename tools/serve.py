@@ -450,6 +450,10 @@ def _sanitize_history(messages: list) -> list:
             clean.extend(messages[i:j])
             i = j
         else:
+            # Drop orphaned tool messages with empty names — they'd cause a 400
+            if msg.get("role") == "tool" and not msg.get("name"):
+                i += 1
+                continue
             clean.append(msg)
             i += 1
 
