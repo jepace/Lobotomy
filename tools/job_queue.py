@@ -135,8 +135,8 @@ class JobQueue:
                             "content": "Server restarted — job was interrupted. Please resubmit."
                         }) + "\n").encode())
                         fp.write((json.dumps({"type": "done"}) + "\n").encode())
-            except Exception:
-                pass
+            except OSError as e:
+                log.warning("Could not recover job file %s: %s", f.name, e)
         self._cleanup()
 
     def _cleanup(self, keep: int = 50):
@@ -145,7 +145,7 @@ class JobQueue:
         for f in files[:-keep]:
             try:
                 f.unlink()
-            except Exception:
+            except OSError:
                 pass
 
     def _worker(self):

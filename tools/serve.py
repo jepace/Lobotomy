@@ -727,28 +727,16 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
         # (some servers send gzip without declaring Content-Encoding)
         if raw.startswith(b'\x1f\x8b'):  # gzip magic bytes
             import gzip as _gzip
-            try:
-                raw = _gzip.decompress(raw)
-            except Exception as e:
-                raise Exception(f"gzip decompression failed: {e}")
+            raw = _gzip.decompress(raw)
         elif raw.startswith(b'\x78\x9c') or raw.startswith(b'\x78\xda'):  # deflate magic bytes
             import zlib as _zlib
-            try:
-                raw = _zlib.decompress(raw)
-            except Exception as e:
-                raise Exception(f"deflate decompression failed: {e}")
+            raw = _zlib.decompress(raw)
         elif "gzip" in ce.lower():
             import gzip as _gzip
-            try:
-                raw = _gzip.decompress(raw)
-            except Exception as e:
-                raise Exception(f"gzip decompression (header-based) failed: {e}")
+            raw = _gzip.decompress(raw)
         elif "deflate" in ce.lower():
             import zlib as _zlib
-            try:
-                raw = _zlib.decompress(raw)
-            except Exception as e:
-                raise Exception(f"deflate decompression (header-based) failed: {e}")
+            raw = _zlib.decompress(raw)
     except urllib.error.HTTPError as e:
         return None, f"HTTP {e.code}: {e.reason}"
     except Exception as e:
@@ -762,8 +750,8 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
         parser = _Reader()
         try:
             parser.feed(raw.decode("utf-8", errors="replace"))
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("HTML parse warning for %s: %s", url, e)
         text = re.sub(r"\n{3,}", "\n\n", "".join(parser.parts)).strip()
         if not text:
             return None, "No text extracted — site may require JavaScript or be paywalled"
@@ -1302,8 +1290,8 @@ def api_push():
                         "url":       url,
                         "saved":     meta.get("saved", ""),
                     }
-            except Exception:
-                pass
+            except (OSError, ValueError, KeyError) as e:
+                log.debug("Skipping unreadable inbox file %s: %s", existing.name, e)
 
     # If URL given but no content, fetch the page
     if url and not content:
@@ -1403,8 +1391,8 @@ def api_inbox_list():
                 })
                 if len(items) >= limit:
                     break
-            except Exception:
-                pass
+            except (OSError, ValueError, KeyError) as e:
+                log.debug("Skipping unreadable inbox file %s: %s", f.name, e)
 
     return {"ok": True, "items": items, "count": len(items)}
 
@@ -1812,9 +1800,9 @@ def _send_daily_tasks_email() -> None:
     today_str = datetime.date.today().isoformat()
     try:
         _send_email(recipient, f"Tasks for {today_str}", html)
-        print(f"[daily-email] Sent to {recipient}")
+        log.info("Daily email sent to %s", recipient)
     except Exception as e:
-        print(f"[daily-email] Failed: {e}")
+        log.error("Daily email send failed: %s", e, exc_info=True)
 
 
 def _daily_email_loop() -> None:
@@ -1832,7 +1820,7 @@ def _daily_email_loop() -> None:
                 _send_daily_tasks_email()
                 last_sent = today_str
         except Exception as e:
-            print(f"[daily-email] Loop error: {e}")
+            log.error("Daily email loop error: %s", e, exc_info=True)
 
 
 import threading as _threading

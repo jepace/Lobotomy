@@ -108,7 +108,7 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
         try:
             raw_body = e.read().decode("utf-8", errors="replace")
             body = json.loads(raw_body)
-        except Exception:
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
             pass
         msg = (
             body.get("error", {}).get("message", "") if isinstance(body, dict) else ""
@@ -118,7 +118,7 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
             ra = e.headers.get("Retry-After")
             if ra:
                 retry_after = float(ra)
-        except Exception:
+        except (TypeError, ValueError):
             pass
         code = e.code
         log.warning("LLM HTTP %d: %s", code, msg)
@@ -192,8 +192,8 @@ def _read_pdf(p) -> "str | list":
             return text
     except ImportError:
         pass
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("pypdf failed for %s: %s", p.name, e)
 
     # 2. pdftotext (poppler) — better text extraction for some PDFs
     if shutil.which("pdftotext"):
@@ -205,8 +205,8 @@ def _read_pdf(p) -> "str | list":
             text = result.stdout.decode("utf-8", errors="replace").strip()
             if text:
                 return text
-        except Exception:
-            pass
+        except (OSError, subprocess.SubprocessError) as e:
+            log.debug("pdftotext failed for %s: %s", p.name, e)
 
     # 3. pdftoppm (poppler) — render pages as images for vision
     if shutil.which("pdftoppm"):
@@ -228,8 +228,8 @@ def _read_pdf(p) -> "str | list":
                         blocks.append({"type": "image_url",
                                        "image_url": {"url": f"data:image/png;base64,{b64}"}})
                     return blocks
-        except Exception:
-            pass
+        except (OSError, subprocess.SubprocessError) as e:
+            log.debug("pdftoppm failed for %s: %s", p.name, e)
 
     return (
         f"Could not extract text from '{p.name}'. "
@@ -316,8 +316,10 @@ def _fetch_url(url: str) -> str:
     if "html" in ct.lower():
         import re as _re
         p = _Stripper()
-        try: p.feed(raw.decode("utf-8", errors="replace"))
-        except Exception: pass
+        try:
+            p.feed(raw.decode("utf-8", errors="replace"))
+        except Exception as e:
+            log.debug("HTML parse warning for %s: %s", url, e)
         text = _re.sub(r"\s+", " ", "".join(p.chunks)).strip()
         if not text:
             return (
@@ -610,7 +612,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
             try:
                 args   = json.loads((tc.get("function") or {}).get("arguments") or "{}")
                 result = fn(args) if fn else f"Unknown tool: {fn_name}"
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, ValueError, OSError) as e:
                 result = f"Error: {e}"
             log.debug("Tool call: %s", fn_name)
             # Tool content must be a string for maximum provider compatibility
@@ -747,7 +749,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                 args        = json.loads((tc.get("function") or {}).get("arguments") or "{}")
                 arg_preview = str(list(args.values())[0])[:80] if args else ""
                 result      = fn(args) if fn else f"Unknown tool: {fn_name}"
-            except Exception as e:
+            except (json.JSONDecodeError, TypeError, ValueError, OSError) as e:
                 arg_preview = ""
                 result      = f"Error: {e}"
 

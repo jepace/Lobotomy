@@ -58,7 +58,7 @@ def _verify(password: str, stored_hex: str) -> bool:
         salt, key = raw[:16], raw[16:]
         test = hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1, dklen=32)
         return hmac.compare_digest(key, test)
-    except Exception:
+    except (ValueError, OverflowError):
         return False
 
 # ---------------------------------------------------------------------------
