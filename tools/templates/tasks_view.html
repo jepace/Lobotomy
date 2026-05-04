@@ -341,6 +341,7 @@ function applyShowDone() {
 showDoneCb.addEventListener('change', () => {
   localStorage.setItem('tasks-show-done', showDoneCb.checked);
   applyShowDone();
+  recolorRows();
 });
 showDoneCb.checked = localStorage.getItem('tasks-show-done') === 'true';
 applyShowDone();
@@ -739,10 +740,16 @@ function sortTable() {
     });
   });
 
-  // Reapply alternating row colors (nth-child breaks after DOM reorder)
-  pairs.forEach(({row}, i) => {
-    row.classList.toggle('row-odd',  i % 2 === 0);
-    row.classList.toggle('row-even', i % 2 !== 0);
+  recolorRows();
+}
+
+function recolorRows() {
+  let visibleIdx = 0;
+  document.querySelectorAll('.task-row').forEach(row => {
+    const isHidden = row.classList.contains('completed') && !showDoneCb.checked;
+    row.classList.toggle('row-odd',  !isHidden && visibleIdx % 2 === 0);
+    row.classList.toggle('row-even', !isHidden && visibleIdx % 2 !== 0);
+    if (!isHidden) visibleIdx++;
   });
 }
 
