@@ -18,6 +18,8 @@ Usage:
 import datetime
 import functools
 import json
+import logging
+import logging.handlers
 import os
 import re
 import sys
@@ -46,6 +48,32 @@ if missing:
     sys.exit(1)
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+# ---------------------------------------------------------------------------
+# Logging — must be set up before importing agent/job_queue so their loggers
+# inherit this configuration.
+# ---------------------------------------------------------------------------
+
+def _setup_logging() -> None:
+    _log_file = Path(__file__).resolve().parent / "server.log"
+    fmt = logging.Formatter(
+        "%(asctime)s  %(name)-22s  %(levelname)-8s  %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    fh = logging.handlers.RotatingFileHandler(
+        _log_file, maxBytes=2_000_000, backupCount=3, encoding="utf-8"
+    )
+    fh.setFormatter(fmt)
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+    root = logging.getLogger("lobotomy")
+    root.setLevel(logging.DEBUG)
+    root.addHandler(fh)
+    root.addHandler(sh)
+
+_setup_logging()
+log = logging.getLogger("lobotomy.serve")
+
 from config import cfg_get, cfg_bool, cfg_int, validate_config
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
@@ -390,8 +418,8 @@ def load_history() -> list:
             messages = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
             messages = _sanitize_history(messages)
             return messages
-        except Exception:
-            pass
+        except Exception as e:
+            log.error("Failed to load/sanitize chat history: %s", e, exc_info=True)
     return []
 
 
@@ -864,6 +892,7 @@ def chat_send():
         ]
     history.append({"role": "user", "content": message})
 
+    log.info("Chat send: model=%s history_len=%d", model, len(history))
     job_id = job_queue.submit(client, model, history, sys_prompt,
                               on_done=save_history)
     return {"job_id": job_id}

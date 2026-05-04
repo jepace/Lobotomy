@@ -244,6 +244,7 @@ var sending = false;
 // ── Stream reader (shared by sendMessage and reconnectToJob) ─────────────
 async function readStream(streamResp, toolsEl, bubbleEl) {
   var fullText = '';
+  var hadTools = false;
   var tools    = [];
   var reader   = streamResp.body.getReader();
   var decoder  = new TextDecoder();
@@ -262,6 +263,7 @@ async function readStream(streamResp, toolsEl, bubbleEl) {
       try {
         var ev = JSON.parse(line);
         if (ev.type === 'tool') {
+          hadTools = true;
           tools.push(ev.name + '  ' + ev.arg);
           toolsEl.style.display = 'block';
           toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">⚙ ' + escHtml(t) + '</div>'; }).join('');
@@ -280,7 +282,7 @@ async function readStream(streamResp, toolsEl, bubbleEl) {
       } catch(e) {}
     }
   }
-  return fullText;
+  return {text: fullText, hadTools: hadTools};
 }
 
 // ── Check for active job on page load ───────────────────────────────────
@@ -319,9 +321,11 @@ async function reconnectToJob(jobId) {
   try {
     var resp = await fetch('/chat/stream/' + jobId);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    var fullText = await readStream(resp, toolsEl, bubbleEl);
-    if (!fullText && bubbleEl.querySelector('.typing')) {
-      bubbleEl.innerHTML = '<span style="color:var(--text2)">Job finished — reload to see full history.</span>';
+    var result = await readStream(resp, toolsEl, bubbleEl);
+    if (!result.text && bubbleEl.querySelector('.typing')) {
+      bubbleEl.innerHTML = result.hadTools
+        ? '<span style="color:var(--text2)">Done — see activity above.</span>'
+        : '<span style="color:var(--text2)">Job finished — reload to see full history.</span>';
     }
   } catch(e) {
     bubbleEl.innerHTML = '<span style="color:var(--text2)">Reconnect ended: ' + escHtml(e.message) + '</span>';
@@ -415,12 +419,19 @@ async function sendMessage() {
 
     var resp    = await fetch('/chat/stream/' + job.job_id);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    fullText = await readStream(resp, toolsEl, bubbleEl);
+    var result = await readStream(resp, toolsEl, bubbleEl);
+    fullText = result.text;
+    if (!fullText && bubbleEl.querySelector('.typing')) {
+      bubbleEl.innerHTML = result.hadTools
+        ? '<span style="color:var(--text2)">Done — see activity above.</span>'
+        : '<span style="color:var(--text2)">No response.</span>';
+    }
   } catch(e) {
     bubbleEl.innerHTML = '<span style="color:var(--danger)">Error: ' + escHtml(e.message) + '</span>';
+    bubbleEl.querySelector && bubbleEl.querySelector('.typing') && (bubbleEl.querySelector('.typing').remove());
   } finally {
     if (!fullText && bubbleEl.querySelector('.typing')) {
-      bubbleEl.innerHTML = '<span style="color:var(--text2)">No response.</span>';
+      bubbleEl.querySelector('.typing').remove();
     }
     sending = false;
     document.getElementById('send-btn').disabled = false;

@@ -3,6 +3,7 @@
 
 import collections
 import json
+import logging
 import sys
 import threading
 import time
@@ -10,6 +11,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Generator
+
+log = logging.getLogger("lobotomy.agent")
 
 sys.path.insert(0, str(Path(__file__).parent))
 from config import cfg_get, cfg_int
@@ -81,6 +84,8 @@ class _LLMError(Exception):
 
 def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
     """POST payload to an OpenAI-compatible chat/completions endpoint."""
+    log.debug("LLM POST %s model=%s messages=%d",
+              endpoint, payload.get("model", "?"), len(payload.get("messages", [])))
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req  = urllib.request.Request(
         endpoint,
@@ -94,7 +99,9 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
     )
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            result = json.loads(resp.read().decode("utf-8"))
+            log.debug("LLM response ok: choices=%d", len(result.get("choices", [])))
+            return result
     except urllib.error.HTTPError as e:
         body = {}
         raw_body = ""
@@ -114,6 +121,7 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
         except Exception:
             pass
         code = e.code
+        log.warning("LLM HTTP %d: %s", code, msg)
         if code == 401:
             raise _LLMError("Authentication failed — check llm.api_key in config.json.")
         if code == 403:
@@ -130,10 +138,13 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
             raise _LLMError(f"Server error {code}: {msg}", retryable=True)
         raise _LLMError(f"HTTP {code}: {msg}")
     except urllib.error.URLError as e:
+        log.warning("LLM connection error: %s", e.reason)
         raise _LLMError(f"Connection error: {e.reason}", retryable=True)
     except TimeoutError:
+        log.warning("LLM request timed out (120s)")
         raise _LLMError("Request timed out — provider too slow.", retryable=True)
     except OSError as e:
+        log.warning("LLM network error: %s", e)
         raise _LLMError(f"Network error: {e}", retryable=True)
 
 
@@ -564,11 +575,20 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
     """Run one user turn to completion (no streaming). Returns updated messages."""
     while True:
         resp = _create(client, messages, system)
-        msg  = resp["choices"][0]["message"]
+        try:
+            msg = resp["choices"][0]["message"]
+        except (KeyError, IndexError) as e:
+            log.error("Malformed LLM response: %s  raw=%s", e, str(resp)[:500])
+            raise _LLMError(f"Malformed response from LLM: {e}")
+
+        content    = msg.get("content") or ""
+        tool_calls = msg.get("tool_calls") or []
+
+        if not content and not tool_calls:
+            log.error("LLM returned empty response (no content, no tool_calls)")
+            raise _LLMError("LLM returned an empty response. Check model config or try again.")
 
         stored: dict = {"role": "assistant"}
-        content    = msg.get("content")
-        tool_calls = msg.get("tool_calls") or []
         if tool_calls:
             # Pass through raw tool_calls unchanged — Gemini thinking mode attaches
             # a thought_signature to each call that must be echoed back verbatim.
@@ -577,7 +597,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
             # putting the text turn before the function-call turn, which violates
             # Gemini's ordering rules and causes a 400 error on subsequent calls.
             stored["tool_calls"] = tool_calls
-        elif content:
+        else:
             stored["content"] = content
         messages.append(stored)
 
@@ -592,6 +612,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                 result = fn(args) if fn else f"Unknown tool: {fn_name}"
             except Exception as e:
                 result = f"Error: {e}"
+            log.debug("Tool call: %s", fn_name)
             # Tool content must be a string for maximum provider compatibility
             if not isinstance(result, str):
                 result = json.dumps(result)
@@ -616,8 +637,9 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
     Phase 2: poll every retry_poll_interval seconds indefinitely.
     Updates messages in-place so history can be saved after the generator finishes.
     """
-    provider_name = cfg_get("llm", "provider", "openai").lower()
+    provider_name  = cfg_get("llm", "provider", "openai").lower()
     resolved_model = model or PROVIDERS.get(provider_name, PROVIDERS["openai"])["default_model"]
+    log.info("stream_agent_turn: model=%s messages=%d", resolved_model, len(messages))
     payload_base = {
         "model":      resolved_model,
         "tools":      TOOL_DEFS,
@@ -641,12 +663,15 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                 break
             except Exception as e:
                 if not _is_retryable(e):
+                    log.error("LLM non-retryable error: %s", e)
                     yield json.dumps({"type": "error", "content": _error_message(e)}) + "\n"
                     yield json.dumps({"type": "done"}) + "\n"
                     return
                 if attempt == max_r:
                     break  # exhausted phase 1 — fall through to phase 2
                 delay = _retry_delay(attempt + 1, e)
+                log.warning("LLM retryable error (attempt %d/%d, delay %ds): %s",
+                            attempt + 1, max_r, delay, e)
                 yield json.dumps({"type": "retrying", "attempt": attempt + 1,
                                   "delay": int(delay), "max": max_r}) + "\n"
                 time.sleep(delay)
@@ -656,6 +681,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
             poll_attempt = 0
             while True:
                 poll_attempt += 1
+                log.warning("LLM unavailable — polling indefinitely (attempt %d)", poll_attempt)
                 yield json.dumps({
                     "type":    "retrying",
                     "attempt": poll_attempt,
@@ -671,13 +697,30 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                     break
                 except Exception as e:
                     if not _is_retryable(e):
+                        log.error("LLM non-retryable error during polling: %s", e)
                         yield json.dumps({"type": "error", "content": _error_message(e)}) + "\n"
                         yield json.dumps({"type": "done"}) + "\n"
                         return
 
-        msg        = resp["choices"][0]["message"]
-        content    = msg.get("content")
+        try:
+            msg = resp["choices"][0]["message"]
+        except (KeyError, IndexError) as e:
+            log.error("Malformed LLM response: %s  raw=%s", e, str(resp)[:500])
+            yield json.dumps({"type": "error",
+                              "content": f"Malformed response from LLM: {e}"}) + "\n"
+            yield json.dumps({"type": "done"}) + "\n"
+            return
+
+        content    = msg.get("content") or ""
         tool_calls = msg.get("tool_calls") or []
+
+        if not content and not tool_calls:
+            log.error("LLM returned empty response (no content, no tool_calls) — model=%s",
+                      resolved_model)
+            yield json.dumps({"type": "error",
+                              "content": "LLM returned an empty response. Check model config or try again."}) + "\n"
+            yield json.dumps({"type": "done"}) + "\n"
+            return
 
         stored: dict = {"role": "assistant"}
         if tool_calls:
@@ -687,7 +730,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
             # layer may split a message with both into two separate model turns,
             # violating ordering rules and causing 400 errors on subsequent calls.
             stored["tool_calls"] = tool_calls
-        elif content:
+        else:
             stored["content"] = content
         messages.append(stored)
 
@@ -708,6 +751,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                 arg_preview = ""
                 result      = f"Error: {e}"
 
+            log.debug("Tool call: %s  arg=%s", fn_name or "(unknown)", arg_preview[:60])
             yield json.dumps({"type": "tool", "name": fn_name or "(unknown)", "arg": arg_preview}) + "\n"
             if not isinstance(result, str):
                 result = json.dumps(result)

@@ -9,3 +9,5 @@ wiki/.jobs/
 wiki/.user.json
 wiki/.tokens.json
 wiki/.login_log.json
+tools/server.log
+tools/server.log.*

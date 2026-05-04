@@ -14,12 +14,15 @@ GET  /chat/status → {running: bool, job_id: str|null}
 """
 
 import json
+import logging
 import queue
 import secrets
 import sys
 import threading
 import time
 from pathlib import Path
+
+log = logging.getLogger("lobotomy.jobs")
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -102,6 +105,7 @@ class JobQueue:
                 idle += 1
                 # If no new data for 30 min and job is no longer current, give up
                 if idle > 36000:
+                    log.warning("Job %s: stream idle timeout after 30 min", job_id)
                     yield json.dumps({"type": "error", "content": "Stream idle timeout — partial response received"}) + "\n"
                     yield json.dumps({"type": "done"}) + "\n"
                     return
@@ -124,6 +128,7 @@ class JobQueue:
             try:
                 content = f.read_bytes()
                 if b'"done"' not in content:
+                    log.warning("Recovering interrupted job file: %s", f.name)
                     with open(f, "ab") as fp:
                         fp.write((json.dumps({
                             "type": "error",
@@ -150,12 +155,15 @@ class JobQueue:
             with self._lock:
                 self._current_job_id = job_id
             f = self._event_file(job_id)
+            log.info("Job %s started (model=%s, messages=%d)", job_id, model, len(messages))
             try:
                 with open(f, "a", encoding="utf-8") as fp:
                     for line in stream_agent_turn(client, model, messages, system):
                         fp.write(line)
                         fp.flush()
+                log.info("Job %s completed", job_id)
             except Exception as e:
+                log.error("Job %s crashed: %s", job_id, e, exc_info=True)
                 with open(f, "a", encoding="utf-8") as fp:
                     fp.write(json.dumps({"type": "error", "content": str(e)}) + "\n")
                     fp.write(json.dumps({"type": "done"}) + "\n")
@@ -166,7 +174,7 @@ class JobQueue:
                 if on_done:
                     try:
                         on_done(messages)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.error("Job %s: save_history failed: %s", job_id, e, exc_info=True)
                 self._cleanup()
             self._q.task_done()
