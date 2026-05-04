@@ -131,6 +131,39 @@
   .group-header-row.grp-today td {
     background: #ff950015 !important; color: #ff9500; border-top-color: #ff9500;
   }
+  .group-header-row.grp-week td {
+    background: #0a84ff18 !important; color: #0a84ff; border-top-color: #0a84ff;
+  }
+  .group-header-row.grp-month td {
+    background: #bf5af218 !important; color: #bf5af2; border-top-color: #bf5af2;
+  }
+  .group-header-row.grp-future td {
+    background: #32ade618 !important; color: #32ade6; border-top-color: #32ade6;
+  }
+  .group-header-row.grp-none td {
+    background: var(--bg3) !important; color: var(--text2); border-top-color: var(--border);
+  }
+  .group-header-row.grp-pri-top    td { background: #ff3b3015 !important; color: var(--danger); border-top-color: var(--danger); }
+  .group-header-row.grp-pri-high   td { background: #ff950015 !important; color: #ff9500; border-top-color: #ff9500; }
+  .group-header-row.grp-pri-medium td { background: #0a84ff15 !important; color: #0a84ff; border-top-color: #0a84ff; }
+  .group-header-row.grp-pri-low    td { background: var(--bg3) !important; color: var(--text2); border-top-color: var(--border); }
+  .group-header-row.grp-pri-none   td { background: var(--bg3) !important; color: var(--text2); border-top-color: var(--border); }
+  .group-header-row.grp-ctx        td { background: #32ade615 !important; color: #32ade6; border-top-color: #32ade6; }
+  .group-header-row.grp-ctx-none   td { background: var(--bg3) !important; color: var(--text2); border-top-color: var(--border); }
+
+  /* Checkbox in group header for select-all */
+  .grp-select-all { width: 13px; height: 13px; cursor: pointer; vertical-align: middle; margin-right: 6px; accent-color: currentColor; }
+
+  /* Done date badge */
+  .done-date { font-size: 10px; opacity: .6; margin-left: 6px; }
+
+  /* Bulk date picker overlay */
+  .bulk-date-overlay { position: absolute; right: 0; top: 100%; margin-top: 4px; z-index: 200;
+    background: var(--bg2); border: 1px solid var(--accent); border-radius: 8px;
+    padding: 10px 12px; box-shadow: 0 4px 16px rgba(0,0,0,.25); white-space: nowrap; }
+  .bulk-date-overlay label { font-size: 11px; color: var(--text2); display: block; margin-bottom: 6px; }
+  .bulk-date-overlay input { padding: 5px 8px; font-size: 13px; border: 1px solid var(--border);
+    border-radius: 5px; background: var(--bg); color: var(--text); }
 </style>
 {% endblock %}
 
@@ -228,12 +261,12 @@
   <tbody>
   {% for task in tasks %}
   <tr class="task-row pri-{{ task.priority or 'none' }}{% if task.complete %} completed{% endif %} {% if loop.index0 % 2 == 0 %}row-odd{% else %}row-even{% endif %}"
-      data-id="{{ task.line_num }}">
+      data-id="{{ task.line_num }}" data-done="{{ task.tags.get('#done', '') }}">
     <td><input type="checkbox" class="done-cb" data-id="{{ task.line_num }}"
         {% if task.complete %}checked{% endif %}></td>
     <td>
       <span class="ecell task-name-text{% if not task.description %} empty{% endif %}"
-            data-id="{{ task.line_num }}" data-field="description">{{ task.description or '—' }}</span>
+            data-id="{{ task.line_num }}" data-field="description">{{ task.description or '—' }}</span>{% if task.complete and task.tags.get('#done') %}<span class="done-date">✓ {{ task.tags.get('#done') }}</span>{% endif %}
     </td>
     <td>
       <span class="ecell{% if not task.context %} empty{% endif %}"
@@ -316,7 +349,7 @@ document.querySelectorAll('.done-cb').forEach(cb => {
       row.classList.add('completing');
       if (completionTimeouts[id]) clearTimeout(completionTimeouts[id]);
       completionTimeouts[id] = setTimeout(async () => {
-        await apiUpdate(id, 'complete', 'true');
+        const data = await apiUpdate(id, 'complete', 'true');
         row.classList.remove('completing');
         row.classList.add('completed');
         if (!showDoneCb.checked) {
@@ -325,6 +358,10 @@ document.querySelectorAll('.done-cb').forEach(cb => {
           if (nr) nr.style.display = 'none';
         }
         delete completionTimeouts[id];
+        // If a recurring next occurrence was created, reload to show it
+        if (data && data.next_task) {
+          setTimeout(() => location.reload(), 800);
+        }
       }, 2000);
     } else {
       if (completionTimeouts[id]) {
@@ -370,7 +407,7 @@ function makeEditable(span) {
     inp = document.createElement('input');
     inp.type = 'date';
     inp.className = 'edit-inline';
-    inp.value = curVal;
+    inp.value = curVal || today;
   } else {
     inp = document.createElement('input');
     inp.type = 'text';
@@ -381,7 +418,8 @@ function makeEditable(span) {
 
   td.replaceChild(inp, span);
   inp.focus();
-  if (inp.type === 'text') inp.select();
+  if (inp.type === 'text') { inp.select(); }
+  else if (inp.type === 'date') { try { inp.showPicker(); } catch(e) {} }
 
   const commit = () => {
     let val = (inp.tagName === 'SELECT' ? inp.value : inp.value.trim());
@@ -446,10 +484,11 @@ async function saveNote(id) {
 // ── Multiselect / Bulk ──────────────────────────────────────
 const bulkBtn  = document.getElementById('bulk-btn');
 const bulkDrop = document.getElementById('bulk-drop');
+function updateBulkBtn() {
+  bulkBtn.style.display = document.querySelectorAll('.sel-cb:checked').length ? 'block' : 'none';
+}
 document.querySelectorAll('.sel-cb').forEach(cb => {
-  cb.addEventListener('change', () => {
-    bulkBtn.style.display = document.querySelectorAll('.sel-cb:checked').length ? 'block' : 'none';
-  });
+  cb.addEventListener('change', updateBulkBtn);
 });
 bulkBtn.addEventListener('click', () => bulkDrop.classList.toggle('open'));
 document.addEventListener('click', e => { if (!e.target.closest('.bulk-wrap')) bulkDrop.classList.remove('open'); });
@@ -458,22 +497,52 @@ document.querySelectorAll('.bulk-item').forEach(item => {
     const action = item.dataset.action;
     const ids = [...document.querySelectorAll('.sel-cb:checked')].map(c => parseInt(c.dataset.id));
     bulkDrop.classList.remove('open');
+
     if (action === 'delete') {
       if (!confirm(`Delete ${ids.length} task(s)?`)) return;
-    } else {
-      const val = prompt(`Set ${action.replace('set-','')} for ${ids.length} task(s):`);
-      if (val === null) return;
-      await fetch('/tasks/bulk-update', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({action, task_ids:ids, value:val})
-      });
-    }
-    if (action === 'delete') {
       await fetch('/tasks/bulk-update', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({action:'delete', task_ids:ids, value:''})
       });
+      location.reload();
+      return;
     }
+
+    if (action === 'set-due') {
+      // Show inline date-picker overlay instead of prompt()
+      const wrap = document.querySelector('.bulk-wrap');
+      const existing = wrap.querySelector('.bulk-date-overlay');
+      if (existing) existing.remove();
+      const ov = document.createElement('div');
+      ov.className = 'bulk-date-overlay';
+      ov.innerHTML = `<label>Set due date for ${ids.length} task(s)</label><input type="date" value="${today}">`;
+      wrap.appendChild(ov);
+      const inp = ov.querySelector('input');
+      inp.focus();
+      try { inp.showPicker(); } catch(e) {}
+      const submit = async () => {
+        const val = inp.value;
+        ov.remove();
+        if (!val) return;
+        await fetch('/tasks/bulk-update', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({action:'set-due', task_ids:ids, value:val})
+        });
+        location.reload();
+      };
+      inp.addEventListener('change', submit);
+      inp.addEventListener('keydown', e => { if (e.key === 'Escape') ov.remove(); });
+      inp.addEventListener('blur', () => setTimeout(() => { if (wrap.contains(ov)) ov.remove(); }, 150));
+      return;
+    }
+
+    // Other actions: set-priority, set-context
+    const val = prompt(`Set ${action.replace('set-','')} for ${ids.length} task(s):`);
+    if (val === null) return;
+    await fetch('/tasks/bulk-update', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({action, task_ids:ids, value:val})
+    });
     location.reload();
   });
 });
@@ -565,32 +634,33 @@ function sortTable() {
 
   pairs.forEach(({row,note}) => { tbody.appendChild(row); if (note) tbody.appendChild(note); });
 
-  // Inject group headers (only for non-completed tasks to avoid empty overdue headers)
+  // Inject group headers with select-all checkbox
+  function makeGroupHeader(cls, label) {
+    const tr = document.createElement('tr');
+    tr.className = `group-header-row ${cls}`;
+    tr.innerHTML = `<td colspan="9"><label style="cursor:pointer;display:inline-flex;align-items:center;gap:0"><input type="checkbox" class="grp-select-all"> ${label}</label></td>`;
+    return tr;
+  }
+
   if (sortCol === 'due' && sortDir === 'asc') {
     let lastKey = null;
     for (const {row} of pairs) {
-      const isCompleted = row.classList.contains('completed');
-      if (isCompleted) continue;  // Skip completed tasks for grouping
+      if (row.classList.contains('completed')) continue;
       const due = row.querySelector('.ecell[data-field="due"]')?.textContent.trim() || '—';
       const grp = dateGroup(due);
       if (grp.label !== lastKey) {
-        const tr = document.createElement('tr');
-        tr.className = `group-header-row ${grp.cls}`;
-        tr.innerHTML = `<td colspan="9">${grp.label}</td>`;
-        tbody.insertBefore(tr, row);
+        tbody.insertBefore(makeGroupHeader(grp.cls, grp.label), row);
         lastKey = grp.label;
       }
     }
   } else if (sortCol === 'priority') {
+    const PRI_LABELS = {0:'⬆ Top', 1:'↑ High', 2:'· Medium', 3:'↓ Low', 4:'No Priority'};
+    const PRI_CLS    = {0:'grp-pri-top', 1:'grp-pri-high', 2:'grp-pri-medium', 3:'grp-pri-low', 4:'grp-pri-none'};
     let lastVal = null;
-    const PRIORITY_LABELS = {0:'Top', 1:'High', 2:'Medium', 3:'Low', 4:'No Priority'};
     for (const {row} of pairs) {
       const val = colVal(row, 'priority');
       if (val !== lastVal) {
-        const tr = document.createElement('tr');
-        tr.className = 'group-header-row';
-        tr.innerHTML = `<td colspan="9">${PRIORITY_LABELS[val] || 'No Priority'}</td>`;
-        tbody.insertBefore(tr, row);
+        tbody.insertBefore(makeGroupHeader(PRI_CLS[val] || 'grp-pri-none', PRI_LABELS[val] || 'No Priority'), row);
         lastVal = val;
       }
     }
@@ -599,15 +669,26 @@ function sortTable() {
     for (const {row} of pairs) {
       const val = colVal(row, 'context');
       if (val !== lastVal) {
-        const tr = document.createElement('tr');
-        tr.className = 'group-header-row';
-        const label = val === '￿' ? 'No Context' : val.toUpperCase();
-        tr.innerHTML = `<td colspan="9">${label}</td>`;
-        tbody.insertBefore(tr, row);
+        const label = val === '￿' ? 'No Context' : val.charAt(0).toUpperCase() + val.slice(1);
+        const cls   = val === '￿' ? 'grp-ctx-none' : 'grp-ctx';
+        tbody.insertBefore(makeGroupHeader(cls, label), row);
         lastVal = val;
       }
     }
   }
+
+  // Wire up select-all checkboxes (must be done after inserting headers)
+  document.querySelectorAll('.grp-select-all').forEach(cb => {
+    cb.addEventListener('change', () => {
+      let node = cb.closest('tr').nextElementSibling;
+      while (node && !node.classList.contains('group-header-row')) {
+        const sel = node.querySelector('.sel-cb');
+        if (sel) { sel.checked = cb.checked; }
+        node = node.nextElementSibling;
+      }
+      updateBulkBtn();
+    });
+  });
 
   // Reapply alternating row colors (nth-child breaks after DOM reorder)
   pairs.forEach(({row}, i) => {
@@ -668,10 +749,11 @@ async function deleteTask(id) {
 
 // ── API helper ───────────────────────────────────────────────
 async function apiUpdate(id, field, value) {
-  await fetch('/tasks/update', {
+  const r = await fetch('/tasks/update', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({task_id:id, field, value})
   });
+  return r.ok ? r.json() : {};
 }
 
 // ── Keyboard shortcuts ────────────────────────────────────────

@@ -99,6 +99,20 @@ def update_password(new_password: str) -> None:
         user["pw_hash"] = _hash(new_password)
         _write(_USER_FILE, user)
 
+
+def get_settings() -> dict:
+    user = get_user() or {}
+    return user.get("settings", {})
+
+
+def update_settings(patch: dict) -> None:
+    user = get_user()
+    if user:
+        settings = user.get("settings", {})
+        settings.update(patch)
+        user["settings"] = settings
+        _write(_USER_FILE, user)
+
 # ---------------------------------------------------------------------------
 # Login rate limiting  (5 failures → 15-minute lockout)
 # ---------------------------------------------------------------------------

@@ -58,26 +58,10 @@
       --ai-fg:     #f2f2f7;
       --tool-bg:   #1c1c1e;
     }
-    /* theme toggle — fixed in top-right corner */
-    .theme-btn {
-      position: fixed;
-      top: calc(var(--safe-top) + 8px);
-      right: 10px;
-      width: 28px; height: 28px;
-      border-radius: 50%;
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      color: var(--text2);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 14px;
-      line-height: 1;
-      -webkit-tap-highlight-color: transparent;
-      z-index: 210;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
-    }
+    /* Font size scaling */
+    :root[data-fontsize="small"]  { font-size: 13px; }
+    :root[data-fontsize="medium"] { font-size: 15px; }
+    :root[data-fontsize="large"]  { font-size: 18px; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
     body {
@@ -240,8 +224,6 @@
 <body>
   {% block body %}{% endblock %}
 
-  <button class="theme-btn" onclick="cycleTheme()" id="theme-btn" title="Toggle theme" aria-label="Toggle theme"></button>
-
   <nav class="nav">
     {% if current_user %}
     <form method="post" action="/auth/logout" style="display:none" id="logout-form"></form>
@@ -276,33 +258,35 @@
       </svg>
       Blog
     </a>
-    {% if current_user %}
-    <a href="#" onclick="document.getElementById('logout-form').submit();return false;">
+    <a href="/settings" {% if active == 'settings' %}class="active"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
       </svg>
-      Sign out
+      Settings
     </a>
-    {% endif %}
   </nav>
   <script>
   (function() {
-    var ICONS = { light: '☀️', dark: '🌙', system: '⚙️' };
-    var stored = localStorage.getItem('theme') || 'system';
-    function apply(t) {
+    // Theme
+    function applyTheme(t) {
       if (t === 'dark')       document.documentElement.setAttribute('data-theme', 'dark');
       else if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
       else                    document.documentElement.removeAttribute('data-theme');
-      var btn = document.getElementById('theme-btn');
-      if (btn) btn.textContent = ICONS[t];
     }
-    apply(stored);
-    window.cycleTheme = function() {
-      var order = ['system', 'light', 'dark'];
-      var cur   = localStorage.getItem('theme') || 'system';
-      var next  = order[(order.indexOf(cur) + 1) % order.length];
-      localStorage.setItem('theme', next);
-      apply(next);
+    applyTheme(localStorage.getItem('theme') || 'system');
+    window.setTheme = function(t) {
+      localStorage.setItem('theme', t);
+      applyTheme(t);
+    };
+
+    // Font size
+    function applyFontSize(s) {
+      document.documentElement.setAttribute('data-fontsize', s || 'medium');
+    }
+    applyFontSize(localStorage.getItem('fontSize') || 'medium');
+    window.setFontSize = function(s) {
+      localStorage.setItem('fontSize', s);
+      applyFontSize(s);
     };
   })();
   </script>

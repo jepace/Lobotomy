@@ -155,19 +155,10 @@
   </div>
   {% endif %}
 
-  <!-- Bookmarklet / Shortcut setup — collapsed -->
-  <details style="margin:12px 12px 0; background:var(--bg2); border-radius:12px; overflow:hidden;">
-    <summary style="padding:10px 14px; font-size:12px; font-weight:600; color:var(--text2); cursor:pointer; list-style:none; display:flex; align-items:center; gap:6px;">
-      <span>▶</span> Save from browser (bookmarklet &amp; iOS shortcut)
-    </summary>
-    <div style="padding:0 14px 14px; border-top:1px solid var(--border); margin-top:0;">
-      <div style="font-size:12px; color:var(--text2); margin:10px 0 6px;">Drag to bookmarks bar — tap on any page to save:</div>
-      <a id="bookmarklet-link" href="#" style="display:inline-block; padding:6px 12px; background:var(--accent); color:#fff; border-radius:8px; font-size:13px; font-weight:700; text-decoration:none; margin-bottom:8px;">📖 Lobotomize</a>
-      <div style="font-size:11px; color:var(--text2); margin-bottom:12px;">iOS: tap link → Add Bookmark → save to Favorites.</div>
-      <div style="font-size:11px; color:var(--text2); font-weight:600; margin-bottom:4px;">iOS Shortcut URL:</div>
-      <div style="font-size:11px; font-family:monospace; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:6px 8px; color:var(--text); white-space:pre-wrap; word-break:break-all;" id="shortcut-url"></div>
-    </div>
-  </details>
+  <!-- Bookmarklet — moved to Settings page -->
+  <div style="margin:12px 12px 0; padding:10px 14px; background:var(--bg2); border-radius:12px; font-size:12px; color:var(--text2);">
+    📖 Bookmarklet available in <a href="/settings" style="color:var(--accent);">Settings</a>
+  </div>
 
   <div style="height:20px;"></div>
 </div>
@@ -256,13 +247,6 @@ async function pollInbox() {
 
 setInterval(pollInbox, 3000);
 
-// Build bookmarklet and shortcut URL from current origin
-(function() {
-  const base = location.origin + '/inbox/clip';
-  const bm   = `javascript:(function(){var u=encodeURIComponent(location.href),t=encodeURIComponent(document.title);window.open('${base}?url='+u+'&title='+t,'lobotomy','width=380,height=300,popup=1');})();`;
-  document.getElementById('bookmarklet-link').href = bm;
-  document.getElementById('shortcut-url').textContent = base + '?url=[URL]&title=[Page Title]';
-})();
 
 function toggleSave() {
   const p = document.getElementById('save-panel');

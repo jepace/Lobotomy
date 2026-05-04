@@ -1,0 +1,295 @@
+{% extends "base.html" %}
+{% block title %}Settings — Lobotomy{% endblock %}
+
+{% block head %}
+<style>
+  .settings-page { max-width: 520px; margin: 0 auto; padding: 16px; }
+  .settings-page h1 { font-size: 22px; font-weight: 700; margin-bottom: 20px; }
+
+  .settings-section { margin-bottom: 24px; }
+  .settings-section h2 {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--text2);
+    margin-bottom: 8px; padding: 0 4px;
+  }
+  .settings-card {
+    background: var(--bg2); border-radius: 14px; overflow: hidden;
+  }
+  .settings-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 13px 16px; border-bottom: 1px solid var(--border);
+  }
+  .settings-row:last-child { border-bottom: none; }
+  .settings-row label { font-size: 15px; }
+  .settings-row .hint  { font-size: 12px; color: var(--text2); margin-top: 2px; }
+
+  /* Toggle group (theme / font-size) */
+  .toggle-group { display: flex; gap: 4px; }
+  .toggle-btn {
+    padding: 5px 11px; border-radius: 8px; font-size: 13px; font-weight: 600;
+    border: 1px solid var(--border); background: var(--bg3); color: var(--text);
+    cursor: pointer;
+  }
+  .toggle-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* Form rows */
+  .field-group { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .field-group:last-child { border-bottom: none; }
+  .field-group label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 6px; }
+  .field-group input[type=password],
+  .field-group input[type=email] {
+    padding: 9px 12px; font-size: 14px; border-radius: 9px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); width: 100%; margin-bottom: 0;
+  }
+  .field-group input:focus { border-color: var(--accent); outline: none; }
+
+  .save-btn {
+    margin: 12px 16px 4px; display: block; width: calc(100% - 32px);
+    padding: 10px; background: var(--accent); color: #fff; border: none;
+    border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  .save-btn:disabled { opacity: .5; cursor: default; }
+  .form-msg { font-size: 12px; text-align: center; padding: 4px 16px 12px; min-height: 20px; }
+  .form-msg.ok  { color: var(--success); }
+  .form-msg.err { color: var(--danger); }
+
+  /* Bookmarklet */
+  .bm-link {
+    display: inline-block; padding: 7px 14px; background: var(--accent); color: #fff;
+    border-radius: 10px; font-size: 13px; font-weight: 700; text-decoration: none;
+    margin: 4px 0 8px;
+  }
+  .bm-code {
+    font-size: 11px; font-family: monospace; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px; word-break: break-all; color: var(--text2);
+    margin-top: 6px; max-height: 80px; overflow-y: auto;
+  }
+
+  /* Sign out */
+  .signout-btn {
+    display: block; width: 100%; padding: 13px 16px;
+    background: none; border: none; color: var(--danger);
+    font-size: 15px; font-weight: 600; text-align: left; cursor: pointer;
+  }
+  .signout-btn:hover { background: var(--bg3); }
+
+  /* Toggle switch */
+  .toggle-switch { position: relative; width: 44px; height: 26px; flex-shrink: 0; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-track {
+    position: absolute; inset: 0; background: var(--bg3); border-radius: 13px;
+    cursor: pointer; transition: background .2s;
+  }
+  .toggle-track::after {
+    content: ''; position: absolute; left: 3px; top: 3px;
+    width: 20px; height: 20px; background: #fff; border-radius: 50%;
+    transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.3);
+  }
+  input:checked ~ .toggle-track { background: var(--success); }
+  input:checked ~ .toggle-track::after { transform: translateX(18px); }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="page">
+<div class="settings-page">
+  <h1>Settings</h1>
+
+  <!-- Appearance -->
+  <div class="settings-section">
+    <h2>Appearance</h2>
+    <div class="settings-card">
+      <div class="settings-row">
+        <div><label>Theme</label></div>
+        <div class="toggle-group" id="theme-group">
+          <button class="toggle-btn" data-theme="system" onclick="pickTheme('system')">Auto</button>
+          <button class="toggle-btn" data-theme="light"  onclick="pickTheme('light')">Light</button>
+          <button class="toggle-btn" data-theme="dark"   onclick="pickTheme('dark')">Dark</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div><label>Font size</label></div>
+        <div class="toggle-group" id="fontsize-group">
+          <button class="toggle-btn" data-size="small"  onclick="pickSize('small')">A<sup>-</sup></button>
+          <button class="toggle-btn" data-size="medium" onclick="pickSize('medium')">A</button>
+          <button class="toggle-btn" data-size="large"  onclick="pickSize('large')">A<sup>+</sup></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Account -->
+  <div class="settings-section">
+    <h2>Account</h2>
+    <div class="settings-card">
+      <div class="settings-row">
+        <div>
+          <label>Email</label>
+          <div class="hint">{{ user.get('email', '—') }}</div>
+        </div>
+      </div>
+      <div class="field-group">
+        <label>Current password</label>
+        <input type="password" id="pw-current" autocomplete="current-password">
+      </div>
+      <div class="field-group">
+        <label>New password</label>
+        <input type="password" id="pw-new" autocomplete="new-password">
+      </div>
+      <div class="field-group">
+        <label>Confirm new password</label>
+        <input type="password" id="pw-confirm" autocomplete="new-password">
+      </div>
+      <button class="save-btn" id="pw-btn" onclick="changePassword()">Change Password</button>
+      <div class="form-msg" id="pw-msg"></div>
+    </div>
+  </div>
+
+  <!-- Daily Tasks Email -->
+  <div class="settings-section">
+    <h2>Daily Tasks Email</h2>
+    <div class="settings-card">
+      <div class="settings-row">
+        <div>
+          <label>Send daily summary</label>
+          <div class="hint">Overdue + due today, sent each morning</div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="email-enabled"
+                 {% if settings.get('daily_email_enabled') %}checked{% endif %}
+                 onchange="saveEmailPrefs()">
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+      <div class="field-group">
+        <label>Send to</label>
+        <input type="email" id="email-address"
+               value="{{ settings.get('daily_email_address') or user.get('email', '') }}"
+               placeholder="{{ user.get('email', 'you@example.com') }}"
+               oninput="scheduleEmailSave()">
+      </div>
+      <div class="form-msg" id="email-msg"></div>
+    </div>
+  </div>
+
+  <!-- Bookmarklet -->
+  <div class="settings-section">
+    <h2>Browser Bookmarklet</h2>
+    <div class="settings-card">
+      {% if push_key %}
+      <div class="settings-row" style="flex-direction:column; align-items:flex-start; gap:8px;">
+        <div>
+          <label>Lobotomize</label>
+          <div class="hint">Drag to your bookmarks bar. Tap on any page to save it.</div>
+        </div>
+        <a id="bm-link" class="bm-link" href="#">📖 Lobotomize</a>
+        <div class="hint" style="margin-top:-4px;">Can't drag? Copy this:</div>
+        <div class="bm-code" id="bm-code"></div>
+      </div>
+      {% else %}
+      <div class="settings-row">
+        <div>
+          <label>Not configured</label>
+          <div class="hint">Add <code>api.push_key</code> to config.json to enable the bookmarklet.</div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Sign out -->
+  <div class="settings-section">
+    <div class="settings-card">
+      {% if current_user %}
+      <form method="post" action="/auth/logout" id="logout-form"></form>
+      {% endif %}
+      <button class="signout-btn" onclick="document.getElementById('logout-form').submit()">Sign out</button>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<script>
+// ── Theme & font size toggles ──────────────────────────────
+function pickTheme(t) {
+  setTheme(t);
+  document.querySelectorAll('#theme-group .toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === t));
+}
+function pickSize(s) {
+  setFontSize(s);
+  document.querySelectorAll('#fontsize-group .toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.size === s));
+}
+// Apply initial state
+(function() {
+  var t = localStorage.getItem('theme') || 'system';
+  var s = localStorage.getItem('fontSize') || 'medium';
+  document.querySelector(`#theme-group [data-theme="${t}"]`)?.classList.add('active');
+  document.querySelector(`#fontsize-group [data-size="${s}"]`)?.classList.add('active');
+})();
+
+// ── Change password ────────────────────────────────────────
+async function changePassword() {
+  const btn = document.getElementById('pw-btn');
+  const msg = document.getElementById('pw-msg');
+  const cur = document.getElementById('pw-current').value;
+  const nw  = document.getElementById('pw-new').value;
+  const cf  = document.getElementById('pw-confirm').value;
+  if (!cur || !nw || !cf) { showMsg(msg, 'Fill in all fields', 'err'); return; }
+  btn.disabled = true;
+  try {
+    const r = await fetch('/settings/password', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({current: cur, new: nw, confirm: cf})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      showMsg(msg, 'Password changed ✓', 'ok');
+      ['pw-current','pw-new','pw-confirm'].forEach(id => document.getElementById(id).value = '');
+    } else {
+      showMsg(msg, d.error || 'Error', 'err');
+    }
+  } catch(e) { showMsg(msg, 'Network error', 'err'); }
+  btn.disabled = false;
+}
+
+// ── Email preferences ──────────────────────────────────────
+let emailSaveTimer = null;
+function scheduleEmailSave() {
+  clearTimeout(emailSaveTimer);
+  emailSaveTimer = setTimeout(saveEmailPrefs, 800);
+}
+async function saveEmailPrefs() {
+  clearTimeout(emailSaveTimer);
+  const enabled = document.getElementById('email-enabled').checked;
+  const address = document.getElementById('email-address').value.trim();
+  const msg = document.getElementById('email-msg');
+  try {
+    const r = await fetch('/settings/preferences', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({daily_email_enabled: enabled, daily_email_address: address})
+    });
+    const d = await r.json();
+    if (d.ok) showMsg(msg, 'Saved ✓', 'ok');
+    else showMsg(msg, d.error || 'Error', 'err');
+  } catch(e) { showMsg(msg, 'Network error', 'err'); }
+}
+
+function showMsg(el, text, cls) {
+  el.textContent = text;
+  el.className = 'form-msg ' + cls;
+  setTimeout(() => { el.textContent = ''; el.className = 'form-msg'; }, 3000);
+}
+
+// ── Bookmarklet ────────────────────────────────────────────
+{% if push_key %}
+(function() {
+  const base = '{{ base_url }}';
+  const key  = '{{ push_key }}';
+  const js = `javascript:(function(){fetch('${base}/api/push',{method:'POST',headers:{'Authorization':'Bearer ${key}','Content-Type':'application/json'},body:JSON.stringify({url:location.href,title:document.title,source:'bookmarklet'})}).then(r=>r.json()).then(d=>{var el=document.createElement('div');el.style.cssText='position:fixed;top:16px;right:16px;background:#1c1c1e;color:#f2f2f7;border-radius:12px;padding:14px 18px;z-index:2147483647;font:600 14px -apple-system,sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.6)';el.textContent=d.duplicate?'Already saved ✓':'Saved: '+(d.title||'Article')+' ✓';document.body.appendChild(el);setTimeout(function(){el.style.opacity='0';el.style.transition='opacity .3s';setTimeout(function(){el.remove()},300)},2000)}).catch(function(e){alert('Lobotomy: '+e)})})();`;
+  document.getElementById('bm-link').href = js;
+  document.getElementById('bm-code').textContent = js;
+})();
+{% endif %}
+</script>
+{% endblock %}

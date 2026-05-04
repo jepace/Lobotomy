@@ -502,8 +502,8 @@ def _rpm_wait_streaming():
 
 def _retry_delay(attempt: int, exc) -> float:
     """Seconds to wait before retry (1-based attempt). Respects Retry-After header."""
-    base  = float(cfg_get("llm", "retry_base_delay", default=5))
-    delay = base * (2.0 ** (attempt - 1))  # 5, 10, 20, 40, 80, 160
+    ladder = [1, 2, 5, 10, 15, 30, 60]
+    delay = float(ladder[min(attempt - 1, len(ladder) - 1)])
     if isinstance(exc, _LLMError) and exc.retry_after:
         delay = max(delay, exc.retry_after)
     return delay

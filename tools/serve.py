@@ -57,7 +57,8 @@ from task_manager import read_tasks, write_tasks, get_all_contexts, get_all_proj
 from auth  import (user_exists, create_user, authenticate, get_user, update_password,
                    set_verified, create_token, consume_token, record_attempt,
                    is_locked_out, send_verification_email, send_reset_email,
-                   maybe_send_verification, _resend_ready)
+                   maybe_send_verification, _resend_ready,
+                   get_settings, update_settings)
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -157,6 +158,8 @@ def inject_globals():
         active = "inbox"
     elif path.startswith("/blog"):
         active = "blog"
+    elif path.startswith("/settings"):
+        active = "settings"
     else:
         active = "chat"
     user = get_user() if session.get("logged_in") else None
@@ -311,6 +314,56 @@ def auth_reset(token):
                                        message="Password updated. Please log in.")
             error = "This reset link is invalid or has expired."
     return render_template("reset_password.html", token=token, error=error)
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+@app.route("/settings")
+@require_login
+def settings_page():
+    user = get_user() or {}
+    settings = get_settings()
+    push_key = cfg_get("api", "push_key", "")
+    base_url = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
+    return render_template("settings.html",
+                           user=user,
+                           settings=settings,
+                           push_key=push_key,
+                           base_url=base_url)
+
+
+@app.route("/settings/password", methods=["POST"])
+@require_login
+def settings_password():
+    data = request.get_json(silent=True) or {}
+    current  = data.get("current", "")
+    new_pw   = data.get("new", "")
+    confirm  = data.get("confirm", "")
+    user = get_user()
+    if not user:
+        return {"error": "Not found"}, 404
+    from auth import _verify
+    if not _verify(current, user["pw_hash"]):
+        return {"error": "Current password is incorrect"}, 400
+    if len(new_pw) < 8:
+        return {"error": "Password must be at least 8 characters"}, 400
+    if new_pw != confirm:
+        return {"error": "Passwords do not match"}, 400
+    update_password(new_pw)
+    return {"ok": True}
+
+
+@app.route("/settings/preferences", methods=["POST"])
+@require_login
+def settings_preferences():
+    data = request.get_json(silent=True) or {}
+    allowed = {"daily_email_enabled", "daily_email_address"}
+    patch = {k: v for k, v in data.items() if k in allowed}
+    if patch:
+        update_settings(patch)
+    return {"ok": True}
+
 
 # ---------------------------------------------------------------------------
 # Chat history
@@ -745,8 +798,12 @@ def wiki_sections() -> list:
         if (WIKI_DIR / name).exists():
             pages.append({"path": name, "label": label})
     for d in ["sources", "entities", "concepts", "synthesis"]:
-        if (WIKI_DIR / d).is_dir():
-            pages.append({"path": d + "/", "label": d.title()})
+        dpath = WIKI_DIR / d
+        if dpath.is_dir():
+            # Only show tab if directory has content beyond the stub index.md
+            extra = [f for f in dpath.glob("*.md") if f.name != "index.md"]
+            if extra:
+                pages.append({"path": d + "/", "label": d.title()})
     return pages
 
 # ---------------------------------------------------------------------------
@@ -816,6 +873,44 @@ def chat_status():
 def chat_clear():
     clear_history()
     return {"ok": True}
+
+
+@app.route("/wiki/search")
+@require_login
+def wiki_search():
+    q = request.args.get("q", "").strip()
+    if not q or len(q) < 2:
+        return {"results": []}
+    words = [w.lower() for w in q.split() if w]
+    results = []
+    for md_file in sorted(WIKI_DIR.rglob("*.md")):
+        try:
+            text = md_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        text_lower = text.lower()
+        if not all(w in text_lower for w in words):
+            continue
+        # Extract title from frontmatter or filename
+        title = md_file.stem.replace("-", " ").title()
+        for line in text.splitlines():
+            m = re.match(r'^title:\s*["\']?(.+?)["\']?\s*$', line)
+            if m:
+                title = m.group(1)
+                break
+        # Find best matching excerpt
+        excerpt = ""
+        for line in text.splitlines():
+            if line.startswith("---") or re.match(r'^[a-z]+:', line):
+                continue
+            if any(w in line.lower() for w in words):
+                excerpt = line.strip()[:120]
+                break
+        rel = str(md_file.relative_to(WIKI_DIR))
+        results.append({"path": rel, "title": title, "excerpt": excerpt})
+        if len(results) >= 12:
+            break
+    return {"results": results}
 
 
 @app.route("/wiki/")
@@ -1005,7 +1100,16 @@ def tasks_update():
                 for note_line in next_notes.split('\n'):
                     f.write('\n' + note_line)
 
-    return {"ok": True}
+    result = {"ok": True}
+    if next_task:
+        result["next_task"] = {
+            "description": next_task.description,
+            "due": next_task.due,
+            "priority": next_task.priority,
+            "context": next_task.context,
+            "recurrence": next_task.recurrence,
+        }
+    return result
 
 
 @app.route("/tasks/bulk-update", methods=["POST"])
@@ -1607,6 +1711,89 @@ def blog_post(slug):
         abort(404)
     html = md_lib.markdown(body, extensions=_MD_EXTENSIONS)
     return render_template("blog_post.html", meta=meta, content=html, slug=slug)
+
+# ---------------------------------------------------------------------------
+# Daily tasks email
+# ---------------------------------------------------------------------------
+
+def _build_daily_email() -> str | None:
+    """Return HTML email body for overdue + today tasks, or None if nothing to send."""
+    today_str = datetime.date.today().isoformat()
+    tasks = read_tasks()
+    overdue = [t for t in tasks if not t.complete and t.due and t.due < today_str]
+    due_today = [t for t in tasks if not t.complete and t.due == today_str]
+    if not overdue and not due_today:
+        return None
+
+    def task_row(t):
+        pri = f"[{t.priority.upper()}] " if t.priority else ""
+        ctx = f" @{t.context}" if t.context else ""
+        return f"<li>{pri}{t.description}{ctx}</li>"
+
+    sections = []
+    if overdue:
+        items = "".join(task_row(t) for t in sorted(overdue, key=lambda t: t.due or ""))
+        sections.append(f"<h3 style='color:#ff3b30;margin:16px 0 6px'>Overdue ({len(overdue)})</h3><ul>{items}</ul>")
+    if due_today:
+        items = "".join(task_row(t) for t in due_today)
+        sections.append(f"<h3 style='color:#ff9500;margin:16px 0 6px'>Due today ({len(due_today)})</h3><ul>{items}</ul>")
+
+    body = "".join(sections)
+    base_url = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
+    return (
+        f"<div style='font-family:-apple-system,sans-serif;max-width:480px;margin:0 auto;padding:16px'>"
+        f"<h2 style='margin:0 0 4px'>Lobotomy — Daily Summary</h2>"
+        f"<p style='color:#8e8e93;font-size:13px;margin:0 0 16px'>{today_str}</p>"
+        f"{body}"
+        f"<p style='margin-top:20px;font-size:13px'><a href='{base_url}/tasks'>Open Tasks</a></p>"
+        f"</div>"
+    )
+
+
+def _send_daily_tasks_email() -> None:
+    """Send the daily tasks summary if enabled and configured."""
+    from auth import _resend_ready, _send_email, get_user, get_settings
+    if not _resend_ready():
+        return
+    settings = get_settings()
+    if not settings.get("daily_email_enabled"):
+        return
+    user = get_user() or {}
+    recipient = settings.get("daily_email_address") or user.get("email", "")
+    if not recipient:
+        return
+    html = _build_daily_email()
+    if not html:
+        return
+    today_str = datetime.date.today().isoformat()
+    try:
+        _send_email(recipient, f"Tasks for {today_str}", html)
+        print(f"[daily-email] Sent to {recipient}")
+    except Exception as e:
+        print(f"[daily-email] Failed: {e}")
+
+
+def _daily_email_loop() -> None:
+    import time as _time
+    last_sent = None
+    while True:
+        _time.sleep(60)
+        try:
+            send_hour = cfg_int("email", "daily_tasks_hour", default=-1)
+            if send_hour < 0:
+                continue  # not configured → disabled
+            now = datetime.datetime.now()
+            today_str = now.date().isoformat()
+            if now.hour == send_hour and last_sent != today_str:
+                _send_daily_tasks_email()
+                last_sent = today_str
+        except Exception as e:
+            print(f"[daily-email] Loop error: {e}")
+
+
+import threading as _threading
+_threading.Thread(target=_daily_email_loop, daemon=True, name="daily-email").start()
+
 
 # ---------------------------------------------------------------------------
 # Main

@@ -22,7 +22,8 @@
   },
   "email": {
     "resend_api_key": "",
-    "from_address": "wiki@yourdomain.com"
+    "from_address": "wiki@yourdomain.com",
+    "daily_tasks_hour": -1
   },
   "api": {
     "push_key": "generate with: python3 -c \"import secrets; print(secrets.token_hex(32))\""

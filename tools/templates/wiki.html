@@ -46,6 +46,32 @@
   }
   .wiki-pill.current { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+  /* wiki search */
+  .wiki-search-wrap { padding: 8px 16px; border-bottom: 1px solid var(--border); position: relative; }
+  .wiki-search-input {
+    width: 100%; padding: 7px 12px; font-size: 13px;
+    border: 1px solid var(--border); border-radius: 20px;
+    background: var(--bg2); color: var(--text); outline: none; box-sizing: border-box;
+  }
+  .wiki-search-input:focus { border-color: var(--accent); }
+  .wiki-search-results {
+    display: none; position: absolute; left: 16px; right: 16px; top: 100%;
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.2); z-index: 200; overflow: hidden;
+    max-height: 60vh; overflow-y: auto;
+  }
+  .wiki-search-results.open { display: block; }
+  .search-result {
+    display: block; padding: 9px 14px; text-decoration: none; color: var(--text);
+    border-bottom: 1px solid var(--border);
+  }
+  .search-result:last-child { border-bottom: none; }
+  .search-result:hover { background: var(--bg3); }
+  .search-result-title { font-size: 14px; font-weight: 600; }
+  .search-result-excerpt { font-size: 12px; color: var(--text2); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .search-no-results { padding: 12px 14px; font-size: 13px; color: var(--text2); }
+
   /* chat-about button */
   .chat-about {
     flex-shrink: 0;
@@ -78,6 +104,11 @@
     {% endfor %}
   </div>
 
+  <div class="wiki-search-wrap">
+    <input id="wiki-search" class="wiki-search-input" type="search" placeholder="Search wiki…" autocomplete="off" spellcheck="false">
+    <div id="wiki-search-results" class="wiki-search-results"></div>
+  </div>
+
   <div class="wiki-content">
     {{ content | safe }}
   </div>
@@ -87,12 +118,55 @@
 function setChatPrompt(text) {
   sessionStorage.setItem('chatPrompt', text);
 }
-window.addEventListener('load', function() {
-  var p = sessionStorage.getItem('chatPrompt');
-  if (p) {
-    sessionStorage.removeItem('chatPrompt');
-    // Pre-fill chat if we just navigated there
+
+// Wiki search
+(function() {
+  const inp = document.getElementById('wiki-search');
+  const box = document.getElementById('wiki-search-results');
+  let timer = null;
+
+  function highlight(text, q) {
+    if (!q) return text;
+    const words = q.trim().split(/\s+/).filter(Boolean);
+    let out = text;
+    words.forEach(w => {
+      out = out.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'gi'),
+        m => `<mark style="background:var(--accent);color:#fff;border-radius:2px;padding:0 1px">${m}</mark>`);
+    });
+    return out;
   }
-});
+
+  async function doSearch(q) {
+    if (q.length < 2) { box.classList.remove('open'); return; }
+    const r = await fetch('/wiki/search?q=' + encodeURIComponent(q));
+    const data = await r.json();
+    if (inp.value.trim() !== q) return; // stale
+    if (!data.results.length) {
+      box.innerHTML = `<div class="search-no-results">No results for "${q}"</div>`;
+    } else {
+      box.innerHTML = data.results.map(res => `
+        <a class="search-result" href="/wiki/${res.path}">
+          <div class="search-result-title">${highlight(res.title, q)}</div>
+          ${res.excerpt ? `<div class="search-result-excerpt">${highlight(res.excerpt, q)}</div>` : ''}
+        </a>`).join('');
+    }
+    box.classList.add('open');
+  }
+
+  inp.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = inp.value.trim();
+    if (!q) { box.classList.remove('open'); return; }
+    timer = setTimeout(() => doSearch(q), 200);
+  });
+
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { box.classList.remove('open'); inp.blur(); }
+  });
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.wiki-search-wrap')) box.classList.remove('open');
+  });
+})();
 </script>
 {% endblock %}
