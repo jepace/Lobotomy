@@ -40,6 +40,12 @@ def cfg_bool(section: str, key: str, default: bool = False) -> bool:
     return bool(v) if v is not None else default
 
 
+def cfg_api_key(provider: str) -> str:
+    """Return API key for provider. Checks llm.keys.{provider} first, then llm.api_key."""
+    v = _c.get("llm", {}).get("keys", {}).get(provider)
+    return str(v) if v else cfg_get("llm", "api_key")
+
+
 def validate_config() -> list:
     """Check config for common issues. Returns list of (level, message) tuples.
     level: 'error' (blocks startup), 'warning' (functionality degraded)
@@ -52,9 +58,9 @@ def validate_config() -> list:
     if provider not in valid_providers:
         issues.append(("error", f"llm.provider '{provider}' not recognized (valid: {', '.join(valid_providers)})"))
 
-    api_key = cfg_get("llm", "api_key", "").strip()
+    api_key = cfg_api_key(provider).strip()
     if not api_key and provider != "ollama":
-        issues.append(("error", f"llm.api_key not set for provider '{provider}'"))
+        issues.append(("error", f"No API key for provider '{provider}' — set llm.api_key or llm.keys.{provider}"))
 
     model = cfg_get("llm", "model", "").strip()
     if not model:
