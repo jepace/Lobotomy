@@ -490,11 +490,20 @@ def _sanitize_history(messages: list) -> list:
     return clean
 
 
+def _compress_history(messages: list) -> list:
+    """Strip tool-call rounds, keeping only user messages and assistant text replies.
+    This prevents context from ballooning across sequential jobs — each job may add
+    30+ tool-call messages that are useless as future context."""
+    return [
+        m for m in messages
+        if m.get("role") == "user"
+        or (m.get("role") == "assistant" and not m.get("tool_calls") and m.get("content"))
+    ]
+
+
 def save_history(messages: list) -> None:
-    truncated = messages[-MAX_HISTORY:]
-    # Don't start mid-sequence: skip leading tool messages (orphaned by truncation)
-    while truncated and truncated[0].get("role") == "tool":
-        truncated = truncated[1:]
+    compressed = _compress_history(messages)
+    truncated  = compressed[-MAX_HISTORY:]
     HISTORY_FILE.write_text(
         json.dumps(truncated, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -1236,7 +1245,7 @@ def api_status():
     }
 
 
-@app.route("/api/push", methods=["POST"])
+@app.route("/api/push", methods=["POST", "OPTIONS"])
 def api_push():
     """
     Push an article into the Lobotomy reading list inbox.
@@ -1255,6 +1264,14 @@ def api_push():
     At least one of url or content is required.
     If only content is given, title is also required.
     """
+    # CORS preflight — bookmarklet runs from foreign origins
+    if request.method == "OPTIONS":
+        resp = make_response("", 204)
+        resp.headers["Access-Control-Allow-Origin"]  = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+        return resp
+
     ok, err = _api_auth()
     if not ok:
         return err
@@ -1348,7 +1365,7 @@ def api_push():
         "title":     title,
         "url":       url or None,
         "saved":     today,
-    }, 201
+    }, 201, {"Access-Control-Allow-Origin": "*"}
 
 
 @app.route("/api/inbox")

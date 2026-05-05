@@ -352,10 +352,10 @@ you want to process but have not gotten to yet.
    - **If URL only**: Use `fetch_url` to retrieve the page content, then run the full Ingest
      Workflow on the fetched text. If fetch fails, note the URL and add to `wiki/reading-list.md`
      with status **Queued**.
-   - **If article text or notes**: Assign a slug, move the file from `raw/inbox/` to `raw/`
-     (rename: `raw/inbox/article.md` → `raw/article-slug.md`), then run the full Ingest Workflow
-     (Section 6). After ingesting, add or update the entry in `wiki/reading-list.md` with status
-     **Ingested**.
+   - **If article text or notes**: Assign a slug, run the full Ingest Workflow (Section 6) reading
+     the file from `raw/inbox/` in place. Only after all wiki pages are successfully written, move
+     the file (`raw/inbox/article.md` → `raw/article-slug.md`). Moving last ensures the article
+     stays visible in the inbox if the ingest fails partway through.
 4. **Update `wiki/reading-list.md`** after each item is processed.
 5. **Report** to user: items processed, items queued, any issues.
 

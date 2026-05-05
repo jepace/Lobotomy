@@ -263,8 +263,12 @@ async function saveToInbox() {
     body: JSON.stringify({content, filename}),
   });
   const data = await resp.json();
-  if (data.ok) location.reload();
-  else alert('Error: ' + (data.error || 'Unknown'));
+  if (data.ok) {
+    document.getElementById('content').value  = '';
+    document.getElementById('filename').value = '';
+    document.getElementById('save-panel').classList.remove('open');
+    pollInbox();
+  } else alert('Error: ' + (data.error || 'Unknown'));
 }
 
 const loaded = {};
