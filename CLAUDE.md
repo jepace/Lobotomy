@@ -486,10 +486,13 @@ the **top** (newest-first ordering).
 
 - **Operation**: ingest | query | lint | inbox | task | manual-edit
 - **Target**: {filename, question text, "raw/inbox/", or "wiki/tasks.md"}
-- **Pages created**: [Page Title](path.md), ...
-- **Pages updated**: [Page Title](path.md), ...
+- **Pages created**: [Page Title](sources/slug.md), [Entity Name](entities/slug.md), ...
+- **Pages updated**: [Page Title](sources/slug.md), [Overview](overview.md), ...
 - **Notes**: {brief description; any contradictions found; anything notable}
 ```
+
+All page references in **Pages created** and **Pages updated** must be markdown links using paths
+relative to `wiki/`. Plain text page names are not acceptable — every page must be a clickable link.
 
 ---
 
