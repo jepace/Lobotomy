@@ -802,12 +802,12 @@ def list_inbox() -> list:
 
         mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
         wikified = False
-        if f.suffix == ".md":
-            try:
-                fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
-                wikified = bool(fm.get("wikified"))
-            except Exception:
-                pass
+        try:
+            raw_text = f.read_text(encoding="utf-8", errors="replace")
+            fm, _ = _parse_frontmatter(raw_text)
+            wikified = bool(fm.get("wikified"))
+        except Exception:
+            pass
         items.append({
             "name":        f.name,
             "title":       title,
@@ -818,8 +818,6 @@ def list_inbox() -> list:
             "ext":         f.suffix,
             "wikified":    wikified,
         })
-    return items
-
     return items
 
 # ---------------------------------------------------------------------------

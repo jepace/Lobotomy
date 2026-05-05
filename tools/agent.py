@@ -763,8 +763,8 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
 
     _round = 0
     _continuations = 0
-    _MAX_CONTINUATIONS = 4
     _had_tool_calls = False
+    _tools_since_last_continuation = 0  # reset each continuation; 0 = no progress = give up
     while True:
         _round += 1
         payload = dict(payload_base)
@@ -836,10 +836,11 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
         tool_calls = msg.get("tool_calls") or []
 
         if not content and not tool_calls:
-            if _had_tool_calls and _continuations < _MAX_CONTINUATIONS:
+            if _had_tool_calls and _tools_since_last_continuation > 0:
                 _continuations += 1
-                log.warning("LLM empty response mid-task (round %d) — compressing history and continuing %d/%d",
-                            _round, _continuations, _MAX_CONTINUATIONS)
+                _tools_since_last_continuation = 0
+                log.warning("LLM empty response mid-task (round %d) — compressing history and continuing (continuation %d)",
+                            _round, _continuations)
                 yield json.dumps({"type": "tool", "name": "↻ continuing…", "arg": ""}) + "\n"
 
                 # Compress history: strip bulky tool responses and write arguments,
@@ -910,6 +911,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
             break
 
         _had_tool_calls = True
+        _tools_since_last_continuation += len(tool_calls)
         for tc in tool_calls:
             fn_name = (tc.get("function") or {}).get("name") or ""
             fn = TOOL_FNS.get(fn_name)
