@@ -439,7 +439,9 @@ def system_prompt() -> str:
         "Tools available: read_file, write_file, list_dir, move_file, fetch_url.\n"
         "raw/ is immutable — write_file refuses writes there.\n"
         "Follow the workflows in CLAUDE.md exactly.\n"
-        "After using tools, always write a text response summarising what you did or found."
+        "Complete ALL your tool calls before writing any text. "
+        "Keep calling tools until the entire task is finished. "
+        "Only once you have nothing more to look up or write, provide a brief text summary of what you accomplished."
     )
 
 
@@ -576,7 +578,10 @@ def _create(client: dict, messages: list, system: str) -> dict:
 
 def run_agent_turn(client: dict, model: str, messages: list, system: str) -> list:
     """Run one user turn to completion (no streaming). Returns updated messages."""
+    _round = 0
     while True:
+        _round += 1
+        log.debug("run_agent_turn round %d: %d messages", _round, len(messages) + 1)
         resp = _create(client, messages, system)
         try:
             msg = resp["choices"][0]["message"]
@@ -615,7 +620,8 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                 result = fn(args) if fn else f"Unknown tool: {fn_name}"
             except (json.JSONDecodeError, TypeError, ValueError, OSError) as e:
                 result = f"Error: {e}"
-            log.debug("Tool call: %s", fn_name)
+            result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
+            log.debug("Tool call: %s  arg=%s  result=%s", fn_name or "(unknown)", str(list(args.values())[:1])[:60], result_preview)
             # Tool content must be a string for maximum provider compatibility
             if not isinstance(result, str):
                 result = json.dumps(result)
@@ -649,9 +655,12 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
         "max_tokens": 4096,
     }
 
+    _round = 0
     while True:
+        _round += 1
         payload = dict(payload_base)
         payload["messages"] = [{"role": "system", "content": system}] + messages
+        log.debug("Agent round %d: sending %d messages to LLM", _round, len(payload["messages"]))
 
         max_r = _max_retries()
         poll  = _retry_poll_interval()
@@ -762,6 +771,8 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                 result      = f"Error: {e}"
 
             log.debug("Tool call: %s  arg=%s", fn_name or "(unknown)", arg_preview[:60])
+            result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
+            log.debug("Tool result [%s]: %s", fn_name or "(unknown)", result_preview)
             yield json.dumps({"type": "tool", "name": fn_name or "(unknown)", "arg": arg_preview}) + "\n"
             if not isinstance(result, str):
                 result = json.dumps(result)
