@@ -762,6 +762,9 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
     }
 
     _round = 0
+    _continuations = 0
+    _MAX_CONTINUATIONS = 4
+    _had_tool_calls = False
     while True:
         _round += 1
         payload = dict(payload_base)
@@ -833,9 +836,19 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
         tool_calls = msg.get("tool_calls") or []
 
         if not content and not tool_calls:
-            # Model returned nothing — this is always an error. The protocol requires
-            # the model to call done() to signal completion, not go silent.
-            log.error("LLM returned empty response (round %d, model=%s)", _round, resolved_model)
+            if _had_tool_calls and _continuations < _MAX_CONTINUATIONS:
+                # Model hit a context/capacity limit mid-task. Auto-continue the same
+                # way a human would type "continue" in chat — full history is intact.
+                _continuations += 1
+                log.warning("LLM empty response mid-task (round %d) — auto-continuing %d/%d",
+                            _round, _continuations, _MAX_CONTINUATIONS)
+                yield json.dumps({"type": "tool", "name": "↻ continuing…", "arg": ""}) + "\n"
+                messages.append({"role": "user",
+                                 "content": "Continue from where you left off. "
+                                            "Complete any remaining steps and call done() when finished."})
+                continue
+            log.error("LLM returned empty response (round %d, model=%s) — gave up after %d continuations",
+                      _round, resolved_model, _continuations)
             yield json.dumps({"type": "error",
                               "content": "The model returned an empty response without calling done(). "
                                          "Try again or switch to a more capable model."}) + "\n"
@@ -861,6 +874,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
         if not tool_calls:
             break
 
+        _had_tool_calls = True
         for tc in tool_calls:
             fn_name = (tc.get("function") or {}).get("name") or ""
             fn = TOOL_FNS.get(fn_name)
