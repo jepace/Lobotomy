@@ -164,7 +164,7 @@
 </div>
 
 <script>
-// Auto-refresh inbox list every 3 seconds
+// Auto-refresh inbox list every 30s, only while tab is visible
 const seenItems = new Set();
 (function initItems() {
   document.querySelectorAll('.reading-item').forEach(el => {
@@ -245,7 +245,7 @@ async function pollInbox() {
   }
 }
 
-setInterval(pollInbox, 3000);
+setInterval(() => { if (!document.hidden) pollInbox(); }, 30000);
 
 
 function toggleSave() {
