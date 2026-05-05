@@ -439,6 +439,11 @@ def system_prompt() -> str:
         "Tools available: read_file, write_file, list_dir, move_file, fetch_url.\n"
         "raw/ is immutable — write_file refuses writes there.\n"
         "Follow the workflows in CLAUDE.md exactly.\n"
+        "IMPORTANT: CLAUDE.md is already loaded above in this system context — "
+        "do NOT call read_file('CLAUDE.md') for orientation, that is redundant and wastes context. "
+        "Only read CLAUDE.md if the user's task is specifically to view or edit it. "
+        "The wiki orientation (index.md, log.md, overview.md) is already in your "
+        "conversation context — proceed directly to the user's task.\n"
         "Complete ALL your tool calls before writing any text. "
         "Keep calling tools until the entire task is finished. "
         "Only once you have nothing more to look up or write, provide a brief text summary of what you accomplished."
@@ -648,7 +653,13 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
     """
     provider_name  = cfg_get("llm", "provider", "openai").lower()
     resolved_model = model or PROVIDERS.get(provider_name, PROVIDERS["openai"])["default_model"]
-    log.info("stream_agent_turn: model=%s messages=%d", resolved_model, len(messages))
+    last_user = next(
+        (m["content"] for m in reversed(messages)
+         if m.get("role") == "user" and isinstance(m.get("content"), str)),
+        "",
+    )
+    log.info("stream_agent_turn: model=%s messages=%d request=%s",
+             resolved_model, len(messages), last_user[:120].replace("\n", " "))
     payload_base = {
         "model":      resolved_model,
         "tools":      TOOL_DEFS,
@@ -656,11 +667,12 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
     }
 
     _round = 0
+    _had_writes = False  # True once write_file or move_file succeeds
     while True:
         _round += 1
         payload = dict(payload_base)
         payload["messages"] = [{"role": "system", "content": system}] + messages
-        log.debug("Agent round %d: sending %d messages to LLM", _round, len(payload["messages"]))
+        log.debug("Agent round %d: sending %d messages to LLM (writes=%s)", _round, len(payload["messages"]), _had_writes)
 
         max_r = _max_retries()
         poll  = _retry_poll_interval()
@@ -728,11 +740,17 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
 
         if not content and not tool_calls:
             if messages and messages[-1].get("role") == "tool":
-                # Model completed tool work but produced no text — valid silent completion.
-                # System prompt instructs the model to always respond; if it doesn't,
-                # the frontend shows "Done — see activity above."
-                log.debug("LLM silent after tool use — accepting silent completion")
-                break
+                if _had_writes or _round >= 4:
+                    # Model finished tool work (writes done, or many rounds) without a summary.
+                    log.debug("LLM silent after tool use — accepting silent completion (writes=%s, round=%d)", _had_writes, _round)
+                    break
+                # Model went silent without doing any meaningful work — likely gave up early.
+                log.warning("LLM silent after tool use with no writes (round %d) — model may have given up", _round)
+                yield json.dumps({"type": "error",
+                                  "content": "The model stopped without completing any work. "
+                                             "Try rephrasing your request or use a more capable model."}) + "\n"
+                yield json.dumps({"type": "done"}) + "\n"
+                return
             log.error("LLM returned empty response (no content, no tool_calls) — model=%s",
                       resolved_model)
             yield json.dumps({"type": "error",
@@ -770,6 +788,8 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                 arg_preview = ""
                 result      = f"Error: {e}"
 
+            if fn_name in ("write_file", "move_file") and not str(result).startswith("Error:"):
+                _had_writes = True
             log.debug("Tool call: %s  arg=%s", fn_name or "(unknown)", arg_preview[:60])
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
             log.debug("Tool result [%s]: %s", fn_name or "(unknown)", result_preview)
