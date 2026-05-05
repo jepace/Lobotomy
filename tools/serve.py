@@ -1663,7 +1663,9 @@ def inbox_mark_wikified():
             elif isinstance(v, bool):
                 fm_lines.append(f"{k}: {'true' if v else 'false'}")
             else:
-                fm_lines.append(f"{k}: {json.dumps(str(v)) if '"' in str(v) or ':' in str(v) else str(v)}")
+                sv = str(v)
+                needs_quotes = '"' in sv or "'" in sv or ":" in sv
+                fm_lines.append(f"{k}: {json.dumps(sv) if needs_quotes else sv}")
         fm_lines.append("---")
         new_text = "\n".join(fm_lines) + "\n" + body
         p.write_text(new_text, encoding="utf-8")
