@@ -729,7 +729,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                                  "content": "(Please provide your response based on the above.)"})
                 _nudged = True
                 continue
-            if after_tools:
+            if _nudged:
                 # Already nudged once, model still silent — accept as done.
                 log.debug("LLM silent after nudge — accepting silent completion")
                 break
