@@ -883,8 +883,16 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                 log.info("Compressed to %d messages for continuation", len(messages))
                 continue
 
-            log.error("LLM returned empty response (round %d, model=%s) — gave up after %d continuations",
-                      _round, resolved_model, _continuations)
+            if _continuations > 0:
+                # A continuation round produced nothing — model has no more work to do
+                # but failed to call done(). The actual wiki content is already on disk.
+                # Auto-complete rather than surfacing a confusing error.
+                log.warning("LLM returned empty in continuation round %d — auto-completing "
+                            "(%d continuations, work on disk)", _round, _continuations)
+                yield json.dumps({"type": "done"}) + "\n"
+                return
+            log.error("LLM returned empty response (round %d, model=%s) — no tool calls made",
+                      _round, resolved_model)
             yield json.dumps({"type": "error",
                               "content": "The model returned an empty response without calling done(). "
                                          "Try again or switch to a more capable model."}) + "\n"
