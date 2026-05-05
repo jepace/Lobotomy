@@ -54,6 +54,7 @@ RSYNC_ARGS="$RSYNC_ARGS --exclude=__pycache__"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=.pytest_cache"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=.env"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=deploy.sh"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=tools/server.log"
 
 # Exclude data dirs if not full deploy
 if [ "$FULL_DEPLOY" != "1" ]; then
