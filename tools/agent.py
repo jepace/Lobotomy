@@ -475,14 +475,16 @@ TOOL_DEFS = [
             "name":        "prepend_log",
             "description": (
                 "Add a new entry to wiki/log.md. Always use this instead of write_file for log updates — "
-                "it preserves all existing entries. Use this for Step 10 of the ingest workflow."
+                "it preserves all existing entries. Use this for Step 10 of the ingest workflow. "
+                "Pages created/updated must be markdown links: [Title](sources/slug.md) — "
+                "never plain text or paths starting with wiki/."
             ),
             "parameters":  {
                 "type": "object",
                 "properties": {
                     "entry": {
                         "type":        "string",
-                        "description": "The complete log entry text in the format specified by CLAUDE.md Section 12.",
+                        "description": "Complete log entry. Page refs must be markdown links with paths relative to wiki/, e.g. [Title](sources/slug.md).",
                     },
                 },
                 "required": ["entry"],

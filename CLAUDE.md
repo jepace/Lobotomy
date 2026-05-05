@@ -482,17 +482,19 @@ the **top** (newest-first ordering).
 
 **Entry format**:
 ```markdown
-## [YYYY-MM-DD] {operation} | {title}
+## [2026-05-01] ingest | Some Article Title
 
-- **Operation**: ingest | query | lint | inbox | task | manual-edit
-- **Target**: {filename, question text, "raw/inbox/", or "wiki/tasks.md"}
-- **Pages created**: [Page Title](sources/slug.md), [Entity Name](entities/slug.md), ...
-- **Pages updated**: [Page Title](sources/slug.md), [Overview](overview.md), ...
-- **Notes**: {brief description; any contradictions found; anything notable}
+- **Operation**: ingest
+- **Target**: raw/some-article-slug.md
+- **Pages created**: [Some Article Title](sources/some-article-slug.md), [Jane Smith](entities/jane-smith.md)
+- **Pages updated**: [Index](index.md), [Overview](overview.md)
+- **Notes**: Brief description of what was ingested and anything notable.
 ```
 
-All page references in **Pages created** and **Pages updated** must be markdown links using paths
-relative to `wiki/`. Plain text page names are not acceptable — every page must be a clickable link.
+Rules:
+- Every entry in **Pages created** and **Pages updated** must be a markdown link — `[Title](relative/path.md)` — never plain text or a bare path.
+- Paths are relative to `wiki/` — write `sources/slug.md`, not `wiki/sources/slug.md`.
+- Use the actual page title as the link text, not the filename.
 
 ---
 
