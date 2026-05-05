@@ -471,7 +471,10 @@ def system_prompt() -> str:
         "When you have finished ALL your work for this task, you MUST call the done tool "
         "with a summary of what you accomplished. Do not stop without calling done — "
         "returning an empty response is an error. Keep calling tools until the task is complete, "
-        "then call done."
+        "then call done.\n"
+        "Exception: if the user's message is conversational and requires no tool use "
+        "(e.g. a question you can answer from context, or a brief reply), respond with "
+        "plain text directly — you do not need to call done for a purely conversational response."
     )
 
 
