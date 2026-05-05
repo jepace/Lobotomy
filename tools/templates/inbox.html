@@ -40,6 +40,12 @@
     margin-bottom: 3px;
   }
   .item-meta { font-size: 12px; color: var(--text2); margin-bottom: 4px; }
+  .wikified-badge {
+    display: inline-block; font-size: 10px; font-weight: 700;
+    background: var(--success); color: #fff;
+    padding: 1px 6px; border-radius: 10px; margin-left: 6px;
+    vertical-align: middle; letter-spacing: .03em;
+  }
   .item-excerpt {
     font-size: 13px; color: var(--text2);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -122,7 +128,7 @@
       <div class="item-header" onclick="toggleItem({{ loop.index }}, '{{ item.name | e }}')">
         <div class="item-body">
           <div class="item-title">{{ item.title }}</div>
-          <div class="item-meta">{{ item.date }} &middot; {{ item.name }}</div>
+          <div class="item-meta">{{ item.date }} &middot; {{ item.name }}{% if item.wikified %}<span class="wikified-badge">Wikified ✓</span>{% endif %}</div>
           {% if item.excerpt %}<div class="item-excerpt">{{ item.excerpt }}</div>{% endif %}
         </div>
         <span class="item-chevron">▶</span>
@@ -155,9 +161,21 @@
   </div>
   {% endif %}
 
-  <!-- Bookmarklet — moved to Settings page -->
-  <div style="margin:12px 12px 0; padding:10px 14px; background:var(--bg2); border-radius:12px; font-size:12px; color:var(--text2);">
-    📖 Bookmarklet available in <a href="/settings" style="color:var(--accent);">Settings</a>
+  <!-- Bookmarklet / Shortcut setup -->
+  <div style="margin:16px 12px 0; padding:14px; background:var(--bg2); border-radius:12px;">
+    <div style="font-size:13px; font-weight:700; margin-bottom:10px;">Save from your browser</div>
+
+    <div style="font-size:12px; color:var(--text2); margin-bottom:6px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;">Bookmarklet — Firefox &amp; Safari</div>
+    <div style="font-size:12px; color:var(--text2); margin-bottom:8px;">Drag this link to your bookmarks bar. Tap it on any page to save to your reading list.</div>
+    <a id="bookmarklet-link" href="#" style="display:inline-block; padding:7px 14px; background:var(--accent); color:#fff; border-radius:8px; font-size:13px; font-weight:700; text-decoration:none; margin-bottom:14px;">📖 Lobotomize</a>
+    <div style="font-size:11px; color:var(--text2);">On iOS: tap the link, choose <em>Add Bookmark</em>, save it to Favorites. Then tap it from any article.</div>
+
+    <div style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
+      <div style="font-size:12px; color:var(--text2); margin-bottom:6px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;">iOS Shortcut (share sheet)</div>
+      <div style="font-size:12px; color:var(--text2); margin-bottom:6px;">Create a Shortcut that sends the current URL to Lobotomy — then it appears in your iOS share sheet.</div>
+      <div style="font-size:11px; font-family:monospace; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px; color:var(--text); white-space:pre-wrap; word-break:break-all;" id="shortcut-url"></div>
+      <div style="font-size:11px; color:var(--text2); margin-top:6px;">In Shortcuts app: New → <em>Get Contents of URL</em> → paste the URL above with <code>?url=[Shortcut Input]&amp;title=[Name]</code> → set method GET → add <em>Show Result</em>. Enable in share sheet under Shortcut settings.</div>
+    </div>
   </div>
 
   <div style="height:20px;"></div>
@@ -209,7 +227,7 @@ async function pollInbox() {
       <div class="item-header" onclick="toggleItem(${idx}, '${item.name.replace(/'/g, "\\'")}')">
         <div class="item-body">
           <div class="item-title">${item.title.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
-          <div class="item-meta">${item.date} &middot; ${item.name.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+          <div class="item-meta">${item.date} &middot; ${item.name.replace(/</g,'&lt;').replace(/>/g,'&gt;')}${item.wikified ? '<span class="wikified-badge">Wikified ✓</span>' : ''}</div>
           ${item.excerpt ? `<div class="item-excerpt">${item.excerpt.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>` : ''}
         </div>
         <span class="item-chevron">▶</span>
@@ -378,6 +396,18 @@ async function wikifyItem(name, idx) {
     }
     progress.innerHTML += '<div class="prog-done">Done — <a href="/chat" style="color:inherit">view in chat</a></div>';
     btn.textContent = 'Wikified ✓';
+    // Mark wikified in file frontmatter and show badge
+    fetch('/inbox/mark-wikified', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename: name}),
+    }).catch(() => {});
+    const metaEl = document.querySelector(`#item-${idx} .item-meta`);
+    if (metaEl && !metaEl.querySelector('.wikified-badge')) {
+      const badge = document.createElement('span');
+      badge.className = 'wikified-badge';
+      badge.textContent = 'Wikified ✓';
+      metaEl.appendChild(badge);
+    }
   } catch(e) {
     progress.innerHTML += `<div class="prog-error">Failed: ${e.message}</div>`;
     btn.disabled = false;

@@ -490,24 +490,9 @@ def _sanitize_history(messages: list) -> list:
     return clean
 
 
-def _compress_history(messages: list) -> list:
-    """Strip tool-call rounds, keeping only user messages and assistant text replies.
-    This prevents context from ballooning across sequential jobs — each job may add
-    30+ tool-call messages that are useless as future context."""
-    return [
-        m for m in messages
-        if m.get("role") == "user"
-        or (m.get("role") == "assistant" and not m.get("tool_calls") and m.get("content"))
-    ]
-
-
 def save_history(messages: list) -> None:
-    compressed = _compress_history(messages)
-    truncated  = compressed[-MAX_HISTORY:]
-    HISTORY_FILE.write_text(
-        json.dumps(truncated, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    """Clear history after every job so each new task starts with a clean context."""
+    clear_history()
 
 
 def clear_history() -> None:
@@ -722,7 +707,7 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
                                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept":                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language":         "en-US,en;q=0.9",
-        "Accept-Encoding":         "gzip, deflate",
+        "Accept-Encoding":         "gzip, deflate, br",
         "Sec-Fetch-Dest":          "document",
         "Sec-Fetch-Mode":          "navigate",
         "Sec-Fetch-Site":          "none",
@@ -816,6 +801,13 @@ def list_inbox() -> list:
             excerpt = " ".join(lines[1:4])[:200] if len(lines) > 1 else ""
 
         mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
+        wikified = False
+        if f.suffix == ".md":
+            try:
+                fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
+                wikified = bool(fm.get("wikified"))
+            except Exception:
+                pass
         items.append({
             "name":        f.name,
             "title":       title,
@@ -824,6 +816,7 @@ def list_inbox() -> list:
             "has_content": has_content,
             "source_url":  source_url,
             "ext":         f.suffix,
+            "wikified":    wikified,
         })
     return items
 
@@ -1641,6 +1634,42 @@ def inbox_archive():
             dst = RAW_DIR / f"{stem}-{i}{suffix}"
             i += 1
     src.rename(dst)
+    return {"ok": True}
+
+
+@app.route("/inbox/mark-wikified", methods=["POST"])
+@require_login
+def inbox_mark_wikified():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("filename") or "").strip()
+    if not name:
+        return {"error": "No filename"}, 400
+    p = RAW_DIR / "inbox" / name
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        return {"error": "Invalid path"}, 400
+    if not p.exists():
+        return {"error": "File not found"}, 404
+    try:
+        text = p.read_text(encoding="utf-8")
+        fm, body = _parse_frontmatter(text)
+        fm["wikified"] = True
+        # Rebuild file with updated frontmatter
+        fm_lines = ["---"]
+        for k, v in fm.items():
+            if isinstance(v, list):
+                fm_lines.append(f"{k}: {json.dumps(v)}")
+            elif isinstance(v, bool):
+                fm_lines.append(f"{k}: {'true' if v else 'false'}")
+            else:
+                fm_lines.append(f"{k}: {json.dumps(str(v)) if '"' in str(v) or ':' in str(v) else str(v)}")
+        fm_lines.append("---")
+        new_text = "\n".join(fm_lines) + "\n" + body
+        p.write_text(new_text, encoding="utf-8")
+    except Exception as e:
+        log.error("mark-wikified failed for %s: %s", name, e)
+        return {"error": str(e)}, 500
     return {"ok": True}
 
 # ---------------------------------------------------------------------------
