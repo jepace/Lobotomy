@@ -271,7 +271,8 @@ async function readStream(streamResp, toolsEl, bubbleEl) {
           fullText += ev.content;
           bubbleEl.innerHTML = md(fullText);
         } else if (ev.type === 'retrying') {
-          var retryMsg = ev.msg || ('AI busy — retrying in ' + ev.delay + 's (attempt ' + ev.attempt + '/' + ev.max + ')');
+          var retryMsg = ev.msg || ('AI busy — retrying in ' + ev.delay + 's'
+            + (ev.max != null ? ' (attempt ' + ev.attempt + '/' + ev.max + ')' : ''));
           tools.push('⏳ ' + retryMsg);
           toolsEl.style.display = 'block';
           toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">' + escHtml(t) + '</div>'; }).join('');

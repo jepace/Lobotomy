@@ -438,7 +438,8 @@ def system_prompt() -> str:
         + "\n\n---\n\n"
         "Tools available: read_file, write_file, list_dir, move_file, fetch_url.\n"
         "raw/ is immutable — write_file refuses writes there.\n"
-        "Follow the workflows in CLAUDE.md exactly."
+        "Follow the workflows in CLAUDE.md exactly.\n"
+        "After using tools, always write a text response summarising what you did or found."
     )
 
 
@@ -648,8 +649,6 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
         "max_tokens": 4096,
     }
 
-    _nudged = False  # whether we already sent a follow-up prompt after silent response
-
     while True:
         payload = dict(payload_base)
         payload["messages"] = [{"role": "system", "content": system}] + messages
@@ -690,7 +689,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                     "type":    "retrying",
                     "attempt": poll_attempt,
                     "delay":   poll,
-                    "max":     -1,
+                    "max":     None,
                     "msg":     f"Provider unavailable — retrying in {poll}s (attempt {poll_attempt})",
                 }) + "\n"
                 time.sleep(poll)
@@ -719,19 +718,11 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
         tool_calls = msg.get("tool_calls") or []
 
         if not content and not tool_calls:
-            after_tools = messages and messages[-1].get("role") == "tool"
-            if after_tools and not _nudged:
-                # Model went silent after tool execution. Inject a brief nudge and
-                # retry once — some models (e.g. Gemini flash-lite) stop generating
-                # after tool use and need an explicit prompt to continue.
-                log.debug("LLM silent after tool use — sending follow-up prompt")
-                messages.append({"role": "user",
-                                 "content": "(Please provide your response based on the above.)"})
-                _nudged = True
-                continue
-            if _nudged:
-                # Already nudged once, model still silent — accept as done.
-                log.debug("LLM silent after nudge — accepting silent completion")
+            if messages and messages[-1].get("role") == "tool":
+                # Model completed tool work but produced no text — valid silent completion.
+                # System prompt instructs the model to always respond; if it doesn't,
+                # the frontend shows "Done — see activity above."
+                log.debug("LLM silent after tool use — accepting silent completion")
                 break
             log.error("LLM returned empty response (no content, no tool_calls) — model=%s",
                       resolved_model)
