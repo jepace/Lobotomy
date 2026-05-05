@@ -837,16 +837,51 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
 
         if not content and not tool_calls:
             if _had_tool_calls and _continuations < _MAX_CONTINUATIONS:
-                # Model hit a context/capacity limit mid-task. Auto-continue the same
-                # way a human would type "continue" in chat — full history is intact.
                 _continuations += 1
-                log.warning("LLM empty response mid-task (round %d) — auto-continuing %d/%d",
+                log.warning("LLM empty response mid-task (round %d) — compressing history and continuing %d/%d",
                             _round, _continuations, _MAX_CONTINUATIONS)
                 yield json.dumps({"type": "tool", "name": "↻ continuing…", "arg": ""}) + "\n"
-                messages.append({"role": "user",
-                                 "content": "Continue from where you left off. "
-                                            "Complete any remaining steps and call done() when finished."})
+
+                # Compress history: strip bulky tool responses and write arguments,
+                # replacing them with a compact done-so-far summary. This prevents
+                # the context window from filling with echoed file contents.
+                written, read_files, called = [], [], []
+                for m in messages:
+                    if m.get("role") == "assistant" and m.get("tool_calls"):
+                        for tc in m["tool_calls"]:
+                            fn  = (tc.get("function") or {}).get("name", "")
+                            try:
+                                args = json.loads((tc.get("function") or {}).get("arguments") or "{}")
+                            except Exception:
+                                args = {}
+                            path = args.get("path", "")
+                            if fn == "write_file" and path:
+                                written.append(path)
+                            elif fn == "read_file" and path:
+                                read_files.append(path)
+                            elif fn and fn not in ("done",):
+                                called.append(fn + (f"({path})" if path else ""))
+
+                # Rebuild messages: keep only non-tool-call turns + original user message
+                messages[:] = [m for m in messages
+                               if m.get("role") == "user"
+                               or (m.get("role") == "assistant"
+                                   and not m.get("tool_calls")
+                                   and m.get("content"))]
+
+                parts = ["You were mid-task and hit a context limit. Here is what you have already done:"]
+                if written:
+                    parts.append("Files written: " + ", ".join(written))
+                if read_files:
+                    parts.append("Files read: " + ", ".join(read_files))
+                if called:
+                    parts.append("Other tools called: " + ", ".join(called))
+                parts.append("\nContinue from the next incomplete step. Do NOT re-read or re-write files "
+                             "already listed above. Call done() when all steps are finished.")
+                messages.append({"role": "user", "content": "\n".join(parts)})
+                log.info("Compressed to %d messages for continuation", len(messages))
                 continue
+
             log.error("LLM returned empty response (round %d, model=%s) — gave up after %d continuations",
                       _round, resolved_model, _continuations)
             yield json.dumps({"type": "error",
