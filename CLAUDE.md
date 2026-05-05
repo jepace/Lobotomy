@@ -177,8 +177,8 @@ Create `wiki/sources/{source-slug}.md` using the standard page format with `type
 Required sections:
 - **Summary**: 3–5 paragraphs synthesizing the source's main content and contribution
 - **Key Claims**: bulleted list of the most important factual or analytical claims
-- **Key Entities**: bulleted list of significant people, orgs, products, projects (each linked)
-- **Key Concepts**: bulleted list of important concepts and terms (each linked)
+- **Key Entities**: bulleted list of significant people, orgs, products, projects (each linked to its wiki page). Plain links only — no annotations like "(new)" or "(update)". Whether a page is new or existing is a workflow detail, not page content.
+- **Key Concepts**: bulleted list of important concepts and terms (each linked to its wiki page). Plain links only — no annotations like "(new)" or "(update)".
 - **Notable Quotes**: 3–5 direct quotes with section references if available
 - **Limitations & Caveats**: what this source does not cover; uncertainties it acknowledges
 - **Relation to Existing Wiki**: how it relates to, extends, supports, or contradicts existing pages
@@ -193,13 +193,15 @@ List these explicitly before modifying any of them.
 
 ### Step 5 — Update or create entity pages
 For each significant entity (person, organization, product, project) in the source:
-- If a page exists in `wiki/entities/`, add new information and update claims.
+- Check `wiki/index.md` to see if a page already exists. If it does, read that page to confirm it is actually about the correct entity (not a different entity with a similar name) before linking to it.
+- If a page exists and is correct, add new information and update claims.
 - If the entity is new and significant, create `wiki/entities/{slug}.md`.
 - Note any contradictions with existing claims in a `## Contradictions` section.
 
 ### Step 6 — Update or create concept pages
 For each significant concept, technique, framework, or term:
-- If a page exists in `wiki/concepts/`, add new information and cross-link the new source.
+- Check `wiki/index.md` to see if a page already exists. If it does, read it to confirm the page is about the correct concept before linking.
+- If a page exists and is correct, add new information and cross-link the new source.
 - If no page exists and the concept warrants one, create `wiki/concepts/{slug}.md`.
 
 ### Step 7 — Update synthesis pages
@@ -224,7 +226,8 @@ Verify each item before reporting done:
 - [ ] The source page links to all entity and concept pages it spawned
 - [ ] `wiki/index.md` has entries for every new page
 - [ ] `wiki/log.md` has been updated
-- [ ] No internal link points to a non-existent file
+- [ ] No internal link points to a non-existent file — read_file each linked path to confirm it exists
+- [ ] Every entity and concept link points to a page actually about that entity/concept (not a similarly-named but different subject)
 - [ ] `wiki/overview.md` reflects the new state
 
 Report self-check results to the user. Note anything that could not be completed and why.
@@ -543,6 +546,8 @@ Do not modify any file until the user gives an explicit instruction.
 - Do not ingest sources from outside `raw/`
 - Do not invent sources — only cite documents actually present in `raw/`
 - Do not use `[[wikilink]]` syntax — use standard relative markdown links
+- Do not write workflow annotations like "(new)" or "(update)" in page content — these are planning notes only
+- Do not link to a page without first confirming the linked file exists and is about the correct subject
 - Do not skip the self-check step (Step 11) after every ingest
 - Do not break alphabetical ordering in `wiki/index.md`
 - Do not modify existing `wiki/log.md` entries — only prepend new ones at the top
