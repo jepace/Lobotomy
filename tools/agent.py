@@ -350,12 +350,20 @@ def _move_file(src: str, dst: str) -> str:
     return f"Moved {src} -> {dst}"
 
 
+_DONE_SENTINEL = "__AGENT_DONE__:"
+
+
+def _done(args: dict) -> str:
+    return _DONE_SENTINEL + args.get("summary", "")
+
+
 TOOL_FNS = {
     "read_file":  lambda a: _read_file(a["path"]),
     "write_file": lambda a: _write_file(a["path"], a["content"]),
     "list_dir":   lambda a: _list_dir(a["directory"]),
     "move_file":  lambda a: _move_file(a["src"], a["dst"]),
     "fetch_url":  lambda a: _fetch_url(a["url"]),
+    "done":       _done,
 }
 
 TOOL_DEFS = [
@@ -425,6 +433,27 @@ TOOL_DEFS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name":        "done",
+            "description": (
+                "Signal that you have finished ALL your work for this task. "
+                "You MUST call this tool when your task is complete — do not simply stop responding. "
+                "Provide a concise summary of what you accomplished."
+            ),
+            "parameters":  {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type":        "string",
+                        "description": "What you accomplished — files created/updated, actions taken.",
+                    },
+                },
+                "required": ["summary"],
+            },
+        },
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -436,17 +465,13 @@ def system_prompt() -> str:
     return (
         base
         + "\n\n---\n\n"
-        "Tools available: read_file, write_file, list_dir, move_file, fetch_url.\n"
+        "Tools available: read_file, write_file, list_dir, move_file, fetch_url, done.\n"
         "raw/ is immutable — write_file refuses writes there.\n"
         "Follow the workflows in CLAUDE.md exactly.\n"
-        "IMPORTANT: CLAUDE.md is already loaded above in this system context — "
-        "do NOT call read_file('CLAUDE.md') for orientation, that is redundant and wastes context. "
-        "Only read CLAUDE.md if the user's task is specifically to view or edit it. "
-        "The wiki orientation (index.md, log.md, overview.md) is already in your "
-        "conversation context — proceed directly to the user's task.\n"
-        "Complete ALL your tool calls before writing any text. "
-        "Keep calling tools until the entire task is finished. "
-        "Only once you have nothing more to look up or write, provide a brief text summary of what you accomplished."
+        "When you have finished ALL your work for this task, you MUST call the done tool "
+        "with a summary of what you accomplished. Do not stop without calling done — "
+        "returning an empty response is an error. Keep calling tools until the task is complete, "
+        "then call done."
     )
 
 
@@ -598,8 +623,8 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
         tool_calls = msg.get("tool_calls") or []
 
         if not content and not tool_calls:
-            log.error("LLM returned empty response (no content, no tool_calls)")
-            raise _LLMError("LLM returned an empty response. Check model config or try again.")
+            log.error("LLM returned empty response (round %d) — did not call done()", _round)
+            raise _LLMError("LLM returned an empty response without calling done(). Check model config or try again.")
 
         stored: dict = {"role": "assistant"}
         if tool_calls:
@@ -627,7 +652,15 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                 result = f"Error: {e}"
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
             log.debug("Tool call: %s  arg=%s  result=%s", fn_name or "(unknown)", str(list(args.values())[:1])[:60], result_preview)
-            # Tool content must be a string for maximum provider compatibility
+
+            # done() ends the loop — return immediately without sending it back to the LLM.
+            if isinstance(result, str) and result.startswith(_DONE_SENTINEL):
+                summary = result[len(_DONE_SENTINEL):]
+                log.info("Agent called done() in round %d: %s", _round, summary[:120])
+                if summary:
+                    messages.append({"role": "assistant", "content": summary})
+                return messages
+
             if not isinstance(result, str):
                 result = json.dumps(result)
             # Gemini requires a non-empty name on every tool response
@@ -667,12 +700,11 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
     }
 
     _round = 0
-    _had_writes = False  # True once write_file or move_file succeeds
     while True:
         _round += 1
         payload = dict(payload_base)
         payload["messages"] = [{"role": "system", "content": system}] + messages
-        log.debug("Agent round %d: sending %d messages to LLM (writes=%s)", _round, len(payload["messages"]), _had_writes)
+        log.debug("Agent round %d: sending %d messages to LLM", _round, len(payload["messages"]))
 
         max_r = _max_retries()
         poll  = _retry_poll_interval()
@@ -739,22 +771,12 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
         tool_calls = msg.get("tool_calls") or []
 
         if not content and not tool_calls:
-            if messages and messages[-1].get("role") == "tool":
-                if _had_writes or _round >= 4:
-                    # Model finished tool work (writes done, or many rounds) without a summary.
-                    log.debug("LLM silent after tool use — accepting silent completion (writes=%s, round=%d)", _had_writes, _round)
-                    break
-                # Model went silent without doing any meaningful work — likely gave up early.
-                log.warning("LLM silent after tool use with no writes (round %d) — model may have given up", _round)
-                yield json.dumps({"type": "error",
-                                  "content": "The model stopped without completing any work. "
-                                             "Try rephrasing your request or use a more capable model."}) + "\n"
-                yield json.dumps({"type": "done"}) + "\n"
-                return
-            log.error("LLM returned empty response (no content, no tool_calls) — model=%s",
-                      resolved_model)
+            # Model returned nothing — this is always an error. The protocol requires
+            # the model to call done() to signal completion, not go silent.
+            log.error("LLM returned empty response (round %d, model=%s)", _round, resolved_model)
             yield json.dumps({"type": "error",
-                              "content": "LLM returned an empty response. Check model config or try again."}) + "\n"
+                              "content": "The model returned an empty response without calling done(). "
+                                         "Try again or switch to a more capable model."}) + "\n"
             yield json.dumps({"type": "done"}) + "\n"
             return
 
@@ -788,11 +810,19 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                 arg_preview = ""
                 result      = f"Error: {e}"
 
-            if fn_name in ("write_file", "move_file") and not str(result).startswith("Error:"):
-                _had_writes = True
             log.debug("Tool call: %s  arg=%s", fn_name or "(unknown)", arg_preview[:60])
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
             log.debug("Tool result [%s]: %s", fn_name or "(unknown)", result_preview)
+
+            # done() is a control signal — it ends the loop, not a message for the LLM.
+            if isinstance(result, str) and result.startswith(_DONE_SENTINEL):
+                summary = result[len(_DONE_SENTINEL):]
+                log.info("Agent called done() in round %d: %s", _round, summary[:120])
+                if summary:
+                    yield json.dumps({"type": "text", "content": summary}) + "\n"
+                yield json.dumps({"type": "done"}) + "\n"
+                return
+
             yield json.dumps({"type": "tool", "name": fn_name or "(unknown)", "arg": arg_preview}) + "\n"
             if not isinstance(result, str):
                 result = json.dumps(result)
