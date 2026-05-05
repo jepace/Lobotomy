@@ -648,6 +648,8 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
         "max_tokens": 4096,
     }
 
+    had_tool_calls = False  # tracks whether any tool calls occurred in this turn
+
     while True:
         payload = dict(payload_base)
         payload["messages"] = [{"role": "system", "content": system}] + messages
@@ -717,6 +719,10 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
         tool_calls = msg.get("tool_calls") or []
 
         if not content and not tool_calls:
+            if had_tool_calls:
+                # Model went silent after completing tool work — treat as done.
+                log.debug("LLM returned empty response after tool use — treating as silent completion")
+                break
             log.error("LLM returned empty response (no content, no tool_calls) — model=%s",
                       resolved_model)
             yield json.dumps({"type": "error",
@@ -732,6 +738,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
             # layer may split a message with both into two separate model turns,
             # violating ordering rules and causing 400 errors on subsequent calls.
             stored["tool_calls"] = tool_calls
+            had_tool_calls = True
         else:
             stored["content"] = content
         messages.append(stored)
