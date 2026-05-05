@@ -48,7 +48,7 @@ def validate_config() -> list:
 
     # LLM provider
     provider = cfg_get("llm", "provider", "openai").lower()
-    valid_providers = {"gemini", "openai", "ollama", "openrouter"}
+    valid_providers = {"gemini", "openai", "groq", "ollama", "openrouter"}
     if provider not in valid_providers:
         issues.append(("error", f"llm.provider '{provider}' not recognized (valid: {', '.join(valid_providers)})"))
 

@@ -38,6 +38,10 @@ PROVIDERS = {
         "base_url":      "https://api.openai.com/v1",
         "default_model": "gpt-4o-mini",
     },
+    "groq": {
+        "base_url":      "https://api.groq.com/openai/v1",
+        "default_model": "llama-3.3-70b-versatile",
+    },
     "ollama": {
         "base_url":      "http://localhost:11434/v1",
         "default_model": "llama3.2",
