@@ -217,7 +217,9 @@ accurately. At minimum update: Current State, Domains Covered, Major Entities, M
 Add entries for all new pages. Update the `_Last updated:` line. Follow Section 11 protocol.
 
 ### Step 10 — Append to `wiki/log.md`
-Prepend a new entry at the top. Follow Section 12 protocol.
+Call `prepend_log` with the new entry text. Do NOT use `write_file` for the log — it would
+overwrite and destroy existing entries. `prepend_log` inserts the entry at the top automatically.
+Follow Section 12 for the entry format.
 
 ### Step 11 — Self-check
 Verify each item before reporting done:

@@ -355,6 +355,36 @@ def _move_file(src: str, dst: str) -> str:
     return f"Moved {src} -> {dst}"
 
 
+def _prepend_log(entry: str) -> str:
+    """Prepend a log entry to wiki/log.md, preserving all existing entries."""
+    log_path = WIKI_DIR / "log.md"
+    if not log_path.exists():
+        return "Error: wiki/log.md does not exist"
+    existing = log_path.read_text(encoding="utf-8")
+    # Insert after the frontmatter block and the intro paragraph
+    # Find the first '---' separator line after the frontmatter header
+    lines = existing.split("\n")
+    insert_at = None
+    past_frontmatter = False
+    for idx, line in enumerate(lines):
+        if not past_frontmatter:
+            if line.strip() == "---" and idx > 0:
+                past_frontmatter = True
+            continue
+        # After frontmatter: find the divider line before the first entry
+        if line.strip() == "---":
+            insert_at = idx + 1
+            break
+    if insert_at is None:
+        # Fallback: just append at the end
+        log_path.write_text(existing.rstrip() + "\n\n" + entry.strip() + "\n",
+                            encoding="utf-8")
+    else:
+        lines.insert(insert_at, "\n" + entry.strip() + "\n")
+        log_path.write_text("\n".join(lines), encoding="utf-8")
+    return "Log entry prepended to wiki/log.md"
+
+
 _DONE_SENTINEL = "__AGENT_DONE__:"
 
 
@@ -363,12 +393,13 @@ def _done(args: dict) -> str:
 
 
 TOOL_FNS = {
-    "read_file":  lambda a: _read_file(a["path"]),
-    "write_file": lambda a: _write_file(a["path"], a["content"]),
-    "list_dir":   lambda a: _list_dir(a["directory"]),
-    "move_file":  lambda a: _move_file(a["src"], a["dst"]),
-    "fetch_url":  lambda a: _fetch_url(a["url"]),
-    "done":       _done,
+    "read_file":   lambda a: _read_file(a["path"]),
+    "write_file":  lambda a: _write_file(a["path"], a["content"]),
+    "list_dir":    lambda a: _list_dir(a["directory"]),
+    "move_file":   lambda a: _move_file(a["src"], a["dst"]),
+    "fetch_url":   lambda a: _fetch_url(a["url"]),
+    "prepend_log": lambda a: _prepend_log(a["entry"]),
+    "done":        _done,
 }
 
 TOOL_DEFS = [
@@ -441,6 +472,26 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
+            "name":        "prepend_log",
+            "description": (
+                "Add a new entry to wiki/log.md. Always use this instead of write_file for log updates — "
+                "it preserves all existing entries. Use this for Step 10 of the ingest workflow."
+            ),
+            "parameters":  {
+                "type": "object",
+                "properties": {
+                    "entry": {
+                        "type":        "string",
+                        "description": "The complete log entry text in the format specified by CLAUDE.md Section 12.",
+                    },
+                },
+                "required": ["entry"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name":        "done",
             "description": (
                 "Signal that you have finished ALL your work for this task. "
@@ -470,8 +521,9 @@ def system_prompt() -> str:
     return (
         base
         + "\n\n---\n\n"
-        "Tools available: read_file, write_file, list_dir, move_file, fetch_url, done.\n"
+        "Tools available: read_file, write_file, list_dir, move_file, fetch_url, prepend_log, done.\n"
         "raw/ is immutable — write_file refuses writes there.\n"
+        "Use prepend_log (not write_file) to add entries to wiki/log.md — write_file would destroy existing entries.\n"
         "Follow the workflows in CLAUDE.md exactly.\n"
         "When you have finished ALL your work for this task, you MUST call the done tool "
         "with a summary of what you accomplished. Do not stop without calling done — "
