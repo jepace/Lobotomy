@@ -744,6 +744,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
         messages.append(stored)
 
         if content:
+            log.debug("LLM text: %s", content[:120].replace("\n", " "))
             yield json.dumps({"type": "text", "content": content}) + "\n"
 
         if not tool_calls:
