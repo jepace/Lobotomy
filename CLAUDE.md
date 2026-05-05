@@ -158,14 +158,14 @@ For external URLs use standard markdown: `[Title](https://example.com)`.
 
 **Trigger**: User says "ingest", "add this source", or points at a file in `raw/`.
 
-Files in `raw/inbox/` must first be moved to `raw/` via the Inbox Workflow (Section 9).
-Do not ingest directly from `raw/inbox/`.
+Files in `raw/inbox/` can be ingested in place — do **not** move them. The inbox is
+permanent; the user archives articles manually via the UI.
 
 Execute all steps in order. Do not skip any step.
 
 ### Step 1 — Verify source location
-The file must be in `raw/` (not `raw/inbox/`). If the user gives pasted text, ask them to save it
-to `raw/` first as a `.txt` or `.md` file.
+The file must be in `raw/` or `raw/inbox/`. If the user gives pasted text, ask them to save it
+to `raw/` first as a `.txt` or `.md` file. Never move or delete anything in `raw/inbox/`.
 
 ### Step 2 — Read the source completely
 Read the entire file before writing anything. If it is very long (>20,000 words), read it in
@@ -347,10 +347,10 @@ you want to process but have not gotten to yet.
    - **If URL only**: Use `fetch_url` to retrieve the page content, then run the full Ingest
      Workflow on the fetched text. If fetch fails, note the URL and add to `wiki/reading-list.md`
      with status **Queued**.
-   - **If article text or notes**: Assign a slug, move the file from `raw/inbox/` to `raw/`
-     (rename: `raw/inbox/article.md` → `raw/article-slug.md`), then run the full Ingest Workflow
-     (Section 6). After ingesting, add or update the entry in `wiki/reading-list.md` with status
-     **Ingested**.
+   - **If article text or notes**: Assign a slug, run the full Ingest Workflow (Section 6)
+     reading the file from `raw/inbox/` in place. **Do NOT move or delete the inbox file.**
+     The article stays in `raw/inbox/` permanently. The user archives it manually via the UI
+     when ready. The UI will show a "Wikified ✓" badge automatically once ingestion completes.
 4. **Update `wiki/reading-list.md`** after each item is processed.
 5. **Report** to user: items processed, items queued, any issues.
 
@@ -537,6 +537,7 @@ Do not modify any file until the user gives an explicit instruction.
 ## 16. Do Not Do These Things
 
 - Do not modify, move, or delete anything in `raw/` — it is immutable
+- Do not move or delete files from `raw/inbox/` — articles stay there permanently; the user archives manually
 - Do not modify `CLAUDE.md` unless the user explicitly asks you to update the schema
 - Do not resolve contradictions without user instruction
 - Do not delete wiki pages — set `deprecated: true` in frontmatter instead, then note it in the log

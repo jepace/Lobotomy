@@ -307,11 +307,76 @@ def load_history() -> list:
     return []
 
 
+def _sanitize_history(messages: list) -> list:
+    """
+    Fix history for Gemini compatibility:
+    0. Strip content from assistant messages that also have tool_calls — storing
+       both causes Gemini's layer to split them into two model turns, placing a
+       function-call turn after a text turn which violates ordering rules.
+    1. Backfill 'name' in tool messages from preceding assistant tool_calls.
+    2. Remove incomplete tool-call sequences (assistant with tool_calls but
+       no following tool responses) — these are left by interrupted ingests
+       and cause "function call turn must come after user/function response" errors.
+    3. Drop any complete tool-call sequence where responses have unfixable empty names.
+    """
+    # Pass 0: strip content from tool-call messages to prevent Gemini ordering errors
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("tool_calls") and "content" in msg:
+            del msg["content"]
+
+    # Pass 1: backfill tool response names
+    id_to_name = {}
+    for msg in messages:
+        if msg.get("role") == "assistant":
+            for tc in (msg.get("tool_calls") or []):
+                tc_id = tc.get("id") or ""
+                tc_name = (tc.get("function") or {}).get("name") or ""
+                if tc_id and tc_name:
+                    id_to_name[tc_id] = tc_name
+        elif msg.get("role") == "tool" and not msg.get("name"):
+            tc_id = msg.get("tool_call_id") or ""
+            if tc_id in id_to_name:
+                msg["name"] = id_to_name[tc_id]
+
+    # Pass 2: drop incomplete or broken tool-call blocks
+    # An assistant message with tool_calls must be immediately followed by
+    # tool response(s) that all have non-empty names.  If the block is absent
+    # or any tool response still has an empty name after Pass 1, drop it.
+    # Any tool message outside a valid block is orphaned and also dropped.
+    clean = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            # Collect the span of tool responses that follow
+            j = i + 1
+            while j < len(messages) and messages[j].get("role") == "tool":
+                j += 1
+            if j == i + 1:
+                # No tool responses follow — incomplete block, drop it and stop
+                break
+            # Drop the block if any tool response still has an empty name
+            if any(not m.get("name") for m in messages[i + 1 : j]):
+                i = j  # skip to after the broken sequence; keep scanning
+                continue
+            # Valid block — include it
+            clean.extend(messages[i:j])
+            i = j
+        else:
+            # Any tool message here is orphaned (not part of a valid assistant
+            # tool_call block) — drop it unconditionally to prevent Gemini 400s.
+            if msg.get("role") == "tool":
+                i += 1
+                continue
+            clean.append(msg)
+            i += 1
+
+    return clean
+
+
 def save_history(messages: list) -> None:
-    HISTORY_FILE.write_text(
-        json.dumps(messages[-MAX_HISTORY:], ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    """Clear history after every job so each new task starts with a clean context."""
+    clear_history()
 
 
 def clear_history() -> None:
@@ -581,6 +646,13 @@ def list_inbox() -> list:
             excerpt = " ".join(lines[1:4])[:200] if len(lines) > 1 else ""
 
         mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
+        wikified = False
+        if f.suffix == ".md":
+            try:
+                fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
+                wikified = bool(fm.get("wikified"))
+            except Exception:
+                pass
         items.append({
             "name":        f.name,
             "title":       title,
@@ -589,6 +661,7 @@ def list_inbox() -> list:
             "has_content": has_content,
             "source_url":  source_url,
             "ext":         f.suffix,
+            "wikified":    wikified,
         })
     return items
 
@@ -1001,6 +1074,42 @@ def inbox_archive():
             dst = RAW_DIR / f"{stem}-{i}{suffix}"
             i += 1
     src.rename(dst)
+    return {"ok": True}
+
+
+@app.route("/inbox/mark-wikified", methods=["POST"])
+@require_login
+def inbox_mark_wikified():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("filename") or "").strip()
+    if not name:
+        return {"error": "No filename"}, 400
+    p = RAW_DIR / "inbox" / name
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        return {"error": "Invalid path"}, 400
+    if not p.exists():
+        return {"error": "File not found"}, 404
+    try:
+        text = p.read_text(encoding="utf-8")
+        fm, body = _parse_frontmatter(text)
+        fm["wikified"] = True
+        # Rebuild file with updated frontmatter
+        fm_lines = ["---"]
+        for k, v in fm.items():
+            if isinstance(v, list):
+                fm_lines.append(f"{k}: {json.dumps(v)}")
+            elif isinstance(v, bool):
+                fm_lines.append(f"{k}: {'true' if v else 'false'}")
+            else:
+                fm_lines.append(f"{k}: {json.dumps(str(v)) if '"' in str(v) or ':' in str(v) else str(v)}")
+        fm_lines.append("---")
+        new_text = "\n".join(fm_lines) + "\n" + body
+        p.write_text(new_text, encoding="utf-8")
+    except Exception as e:
+        log.error("mark-wikified failed for %s: %s", name, e)
+        return {"error": str(e)}, 500
     return {"ok": True}
 
 # ---------------------------------------------------------------------------
