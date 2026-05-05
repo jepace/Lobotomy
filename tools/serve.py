@@ -458,6 +458,7 @@ def _sanitize_history(messages: list) -> list:
     # An assistant message with tool_calls must be immediately followed by
     # tool response(s) that all have non-empty names.  If the block is absent
     # or any tool response still has an empty name after Pass 1, drop it.
+    # Any tool message outside a valid block is orphaned and also dropped.
     clean = []
     i = 0
     while i < len(messages):
@@ -478,8 +479,9 @@ def _sanitize_history(messages: list) -> list:
             clean.extend(messages[i:j])
             i = j
         else:
-            # Drop orphaned tool messages with empty names — they'd cause a 400
-            if msg.get("role") == "tool" and not msg.get("name"):
+            # Any tool message here is orphaned (not part of a valid assistant
+            # tool_call block) — drop it unconditionally to prevent Gemini 400s.
+            if msg.get("role") == "tool":
                 i += 1
                 continue
             clean.append(msg)
@@ -489,8 +491,12 @@ def _sanitize_history(messages: list) -> list:
 
 
 def save_history(messages: list) -> None:
+    truncated = messages[-MAX_HISTORY:]
+    # Don't start mid-sequence: skip leading tool messages (orphaned by truncation)
+    while truncated and truncated[0].get("role") == "tool":
+        truncated = truncated[1:]
     HISTORY_FILE.write_text(
-        json.dumps(messages[-MAX_HISTORY:], ensure_ascii=False, indent=2),
+        json.dumps(truncated, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
