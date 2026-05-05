@@ -40,8 +40,17 @@ def cfg_bool(section: str, key: str, default: bool = False) -> bool:
     return bool(v) if v is not None else default
 
 
+def cfg_provider(provider: str) -> dict:
+    """Return per-provider config block from llm.providers.{provider}, or {}."""
+    return _c.get("llm", {}).get("providers", {}).get(provider, {})
+
+
 def cfg_api_key(provider: str) -> str:
-    """Return API key for provider. Checks llm.keys.{provider} first, then llm.api_key."""
+    """Return API key for provider. Checks llm.providers.{provider}.api_key,
+    then llm.keys.{provider} (legacy), then llm.api_key."""
+    p = cfg_provider(provider)
+    if p.get("api_key"):
+        return str(p["api_key"])
     v = _c.get("llm", {}).get("keys", {}).get(provider)
     return str(v) if v else cfg_get("llm", "api_key")
 
@@ -62,7 +71,7 @@ def validate_config() -> list:
     if not api_key and provider != "ollama":
         issues.append(("error", f"No API key for provider '{provider}' — set llm.api_key or llm.keys.{provider}"))
 
-    model = cfg_get("llm", "model", "").strip()
+    model = cfg_provider(provider).get("model") or cfg_get("llm", "model", "").strip()
     if not model:
         issues.append(("warning", "llm.model not set — will use provider default"))
 

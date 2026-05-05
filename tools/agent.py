@@ -15,7 +15,7 @@ from typing import Generator
 log = logging.getLogger("lobotomy.agent")
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import cfg_get, cfg_int, cfg_api_key
+from config import cfg_get, cfg_int, cfg_api_key, cfg_provider
 
 # RPM rate-limit tracking (shared across threads)
 _request_times: collections.deque = collections.deque()
@@ -61,9 +61,10 @@ def get_client_and_model():
     provider_name = cfg_get("llm", "provider", "openai").lower()
     preset        = PROVIDERS.get(provider_name, PROVIDERS["openai"])
 
+    p        = cfg_provider(provider_name)
     api_key  = cfg_api_key(provider_name) or preset.get("api_key", "")
-    base_url = (cfg_get("llm", "api_base") or preset.get("base_url", "https://api.openai.com/v1")).rstrip("/")
-    model    = cfg_get("llm", "model")    or preset["default_model"]
+    base_url = (p.get("api_base") or cfg_get("llm", "api_base") or preset.get("base_url", "https://api.openai.com/v1")).rstrip("/")
+    model    = p.get("model") or cfg_get("llm", "model") or preset["default_model"]
 
     if not api_key:
         return None, None, (
