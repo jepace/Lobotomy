@@ -534,7 +534,7 @@ def _autolink(args: dict) -> str:
                     if title:
                         rel = f.relative_to(WIKI_DIR)
                         up_parts = target_p.parent.relative_to(WIKI_DIR).parts
-                        up = "/".join(["..."] * len(up_parts))
+                        up = "/".join([".."] * len(up_parts))
                         link_path = f"{up}/{rel}" if up else str(rel)
                         title_map.append((title, link_path))
                     break
@@ -558,6 +558,49 @@ def _autolink(args: dict) -> str:
 
     target_p.write_text(frontmatter + body, encoding="utf-8")
     return f"Autolinked {linked} title(s) in {target_str}."
+
+
+def _fix_wiki_links(_args: dict) -> str:
+    """Scan all wiki pages and fix relative links missing a ../ prefix."""
+    import re
+
+    SUBDIRS = ("sources", "entities", "concepts", "synthesis")
+
+    # Pattern: a link href that starts with one of the subdir names (with optional leading .../)
+    bad_link_re = re.compile(
+        r'\((\.\.\./)*((?:' + '|'.join(SUBDIRS) + r')/[^)#\s]+\.md)\)'
+    )
+
+    total_fixed = 0
+    pages_fixed = 0
+
+    for sd in SUBDIRS:
+        d = WIKI_DIR / sd
+        if not d.is_dir():
+            continue
+        for page in d.glob("*.md"):
+            if page.name == "index.md":
+                continue
+            text = page.read_text(encoding="utf-8", errors="replace")
+            original = text
+
+            def _fix(m):
+                dots_prefix = m.group(1) or ""
+                inner = m.group(2)
+                # Already correct (e.g. ../entities/foo.md from inside sources/)
+                # We always want exactly one ../
+                return f"(../{inner})"
+
+            text, n = bad_link_re.subn(_fix, text)
+
+            if n and text != original:
+                page.write_text(text, encoding="utf-8")
+                total_fixed += n
+                pages_fixed += 1
+
+    if total_fixed == 0:
+        return "No bad wiki links found — nothing to fix."
+    return f"Fixed {total_fixed} bad link(s) across {pages_fixed} page(s)."
 
 
 def _search_wiki(args: dict) -> str:
@@ -736,6 +779,7 @@ TOOL_FNS = {
     "prepend_log":      lambda a: _prepend_log(a["entry"]),
     "rebuild_index":    _rebuild_index,
     "autolink":         _autolink,
+    "fix_wiki_links":   _fix_wiki_links,
     "search_wiki":      _search_wiki,
     "create_page":      _create_page,
     "validate_ingest":  _validate_ingest,
@@ -889,6 +933,19 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
+            "name":        "fix_wiki_links",
+            "description": (
+                "Scan all wiki pages and repair bad relative links. Fixes: "
+                "(1) links missing ../ prefix, e.g. (entities/foo.md) inside a subdir page; "
+                "(2) legacy three-dot links (.../entities/foo.md). "
+                "Run as part of Step 11 after every ingest."
+            ),
+            "parameters":  {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name":        "search_wiki",
             "description": (
                 "Keyword search across all wiki pages. Returns matching page titles, paths, and "
@@ -975,6 +1032,7 @@ def system_prompt() -> str:
         "| create_page | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
         "| autolink | Call once per page after writing — adds cross-links automatically. |\n"
+        "| fix_wiki_links | Run in Step 11 — repairs missing ../ prefixes in cross-links. |\n"
         "| rebuild_index | Call once at end of ingest — rebuilds wiki/index.md from frontmatter. |\n"
         "| prepend_log | Add entry to wiki/log.md. Never use write_file for the log. |\n"
         "| validate_ingest | Call at end of ingest — checks links, frontmatter, index coverage. |\n"

@@ -20,7 +20,7 @@ cross-references are maintained, and contradictions are flagged as they appear.
 Three layers:
 
 | Layer | Location | Who writes it |
-|-------|----------|---------------|
+|-------|----------|--------------|
 | Raw sources | `raw/` | You (the human) — immutable |
 | Wiki pages | `wiki/` | The LLM |
 | This schema | `AGENT.md` | Defined once, evolved carefully |
@@ -229,7 +229,8 @@ overwrite and destroy existing entries. `prepend_log` inserts the entry at the t
 Follow Section 12 for the entry format.
 
 ### Step 11 — Self-check
-Call `validate_ingest(source_slug)`. It checks:
+1. Call `fix_wiki_links()` — repairs any relative link paths missing a `../` prefix.
+2. Call `validate_ingest(source_slug)`. It checks:
 - All frontmatter fields present on every page
 - No broken internal links
 - All new pages appearing in the index
@@ -555,6 +556,8 @@ Do not modify any file until the user gives an explicit instruction.
 - Do not edit `wiki/index.md` manually — always use `rebuild_index`
 - Do not write wiki page frontmatter manually — always use `create_page` for new pages
 - Do not skip calling `autolink` after writing each page
+- Do not write wiki cross-links manually — always use `autolink`; manual links get the relative path wrong
+- Never write a link as `(entities/foo.md)` from inside a subdir page — it needs `../` prefix; `autolink` handles this correctly
 - Do not skip calling `validate_ingest` at the end of every ingest
 - Do not resolve contradictions without user instruction
 - Do not delete wiki pages — set `deprecated: true` in frontmatter instead, then note it in the log
