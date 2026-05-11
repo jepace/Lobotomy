@@ -534,7 +534,7 @@ def _autolink(args: dict) -> str:
                     if title:
                         rel = f.relative_to(WIKI_DIR)
                         up_parts = target_p.parent.relative_to(WIKI_DIR).parts
-                        up = "/".join([".." ] * len(up_parts))
+                        up = "/".join([".."] * len(up_parts))
                         link_path = f"{up}/{rel}" if up else str(rel)
                         title_map.append((title, link_path))
                     break
@@ -550,9 +550,26 @@ def _autolink(args: dict) -> str:
 
     linked = 0
     for title, link_path in title_map:
-        pat = re.compile(r"(?<!\[)(?<!\w)" + re.escape(title) + r"(?!\w)(?!\])", re.IGNORECASE)
-        new_body, n = pat.subn(lambda m, t=title, p=link_path: f"[{m.group()}]({p})", body, count=1)
-        if n:
+        # Match existing [text](url) links (to skip them) OR bare title occurrences.
+        # Group 1 = existing link (preserve as-is); group 2 = bare title (replace once).
+        combined = re.compile(
+            r'(\[[^\]]*\]\([^)]*\))'
+            r'|(?<!\w)(' + re.escape(title) + r')(?!\w)',
+            re.IGNORECASE,
+        )
+        replaced = False
+
+        def _replacer(m, p=link_path):
+            nonlocal replaced
+            if m.group(1):          # existing link — leave it alone
+                return m.group(1)
+            if replaced:            # already inserted one link for this title
+                return m.group(2)
+            replaced = True
+            return f"[{m.group(2)}]({p})"
+
+        new_body = combined.sub(_replacer, body)
+        if replaced:
             body = new_body
             linked += 1
 
