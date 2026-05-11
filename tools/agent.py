@@ -387,10 +387,16 @@ def _prepend_log(entry: str) -> str:
         return "Log entry prepended to wiki/log.md (no frontmatter close found)"
 
     # Find the --- divider that separates the prose intro from the entries.
+    # fm_close points at the \n before the closing ---, so fm_close+4 skips past it.
     divider = text.find("\n---\n", fm_close + 4)
     if divider == -1:
-        log_path.write_text(text.rstrip() + "\n\n" + entry.strip() + "\n", encoding="utf-8")
-        return "Log entry prepended to wiki/log.md (no prose divider found)"
+        # No prose divider — insert right after the frontmatter close.
+        insert_at = fm_close + 4  # character after the closing ---\n
+        before = text[:insert_at]
+        after  = text[insert_at:]
+        log_path.write_text(before + "\n" + entry.strip() + "\n\n" + after.lstrip("\n"),
+                            encoding="utf-8")
+        return "Log entry prepended to wiki/log.md (inserted after frontmatter)"
 
     # Insert new entry immediately after the divider.
     before = text[:divider + 5]   # up to and including \n---\n
