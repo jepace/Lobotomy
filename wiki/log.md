@@ -10,7 +10,7 @@ sources: []
 # Operation Log
 
 Append-only record of all wiki operations. Newest entries appear first.
-See `CLAUDE.md` Section 12 for the protocol for maintaining this file.
+See `AGENT.md` Section 12 for the protocol for maintaining this file.
 **Never delete or modify existing entries.**
 
 ---
@@ -22,4 +22,4 @@ See `CLAUDE.md` Section 12 for the protocol for maintaining this file.
 - **Pages created**: wiki/index.md, wiki/log.md, wiki/overview.md, wiki/reading-list.md, wiki/tasks.md
 - **Pages updated**: none
 - **Notes**: Initial scaffold created. Wiki is empty. No sources have been ingested yet.
-  Schema defined in CLAUDE.md. Tooling available at tools/search.py and tools/tasks.py.
+  Schema defined in AGENT.md. Tooling available at tools/search.py and tools/tasks.py.

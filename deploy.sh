@@ -50,10 +50,13 @@ RSYNC_ARGS="-av --delete --compress"
 
 # Always exclude these
 RSYNC_ARGS="$RSYNC_ARGS --exclude=.git"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=.gitignore"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=__pycache__"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=.pytest_cache"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=.env"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=deploy.sh"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=README.md"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=CLAUDE.md"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=tools/server.log"
 
 # Exclude data dirs if not full deploy
