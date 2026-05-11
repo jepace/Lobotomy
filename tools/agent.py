@@ -565,8 +565,6 @@ def _fix_wiki_links(_args: dict) -> str:
     import re
 
     SUBDIRS = ("sources", "entities", "concepts", "synthesis")
-
-    # Pattern: a link href that starts with one of the subdir names (with optional leading .../)
     bad_link_re = re.compile(
         r'\((\.\.\./)*((?:' + '|'.join(SUBDIRS) + r')/[^)#\s]+\.md)\)'
     )
@@ -584,11 +582,8 @@ def _fix_wiki_links(_args: dict) -> str:
             text = page.read_text(encoding="utf-8", errors="replace")
             original = text
 
-            def _fix(m):
-                dots_prefix = m.group(1) or ""
+            def _fix(m, _text=None):
                 inner = m.group(2)
-                # Already correct (e.g. ../entities/foo.md from inside sources/)
-                # We always want exactly one ../
                 return f"(../{inner})"
 
             text, n = bad_link_re.subn(_fix, text)
@@ -678,7 +673,7 @@ def _create_page(args: dict) -> str:
     else:
         created = today
 
-    tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]))
+    tag_str = ", ".join(f'"{ t}"' for t in (tags if isinstance(tags, list) else [tags]))
     src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]))
     frontmatter = (
         f'---\ntitle: "{title}"\ntype: {pg_type}\ntags: [{tag_str}]\n'

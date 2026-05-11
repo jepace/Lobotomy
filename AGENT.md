@@ -20,7 +20,7 @@ cross-references are maintained, and contradictions are flagged as they appear.
 Three layers:
 
 | Layer | Location | Who writes it |
-|-------|----------|--------------|
+|-------|----------|---------------|
 | Raw sources | `raw/` | You (the human) — immutable |
 | Wiki pages | `wiki/` | The LLM |
 | This schema | `AGENT.md` | Defined once, evolved carefully |
