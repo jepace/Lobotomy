@@ -158,6 +158,7 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+_RAW_READ_LIMIT = 60_000  # chars — large enough for any article, small enough to save context
 
 
 def _read_file(path: str) -> "str | list":
@@ -171,7 +172,15 @@ def _read_file(path: str) -> "str | list":
         return _read_pdf(p)
     if p.suffix.lower() in _IMAGE_EXTS:
         return _read_image(p)
-    return p.read_text(encoding="utf-8", errors="replace")
+    text = p.read_text(encoding="utf-8", errors="replace")
+    try:
+        p.resolve().relative_to(RAW_DIR.resolve())
+        is_raw = True
+    except ValueError:
+        is_raw = False
+    if is_raw and len(text) > _RAW_READ_LIMIT:
+        text = text[:_RAW_READ_LIMIT] + f"\n\n[TRUNCATED — {len(text)} total chars, showing first {_RAW_READ_LIMIT}]"
+    return text
 
 
 def _read_image(p) -> list:
@@ -392,14 +401,146 @@ def _done(args: dict) -> str:
     return _DONE_SENTINEL + args.get("summary", "")
 
 
+def _rebuild_index(args: dict) -> str:
+    """Rebuild wiki/index.md from frontmatter of all pages in sources/, entities/, concepts/, synthesis/."""
+    import re
+
+    def parse_title_updated(text: str) -> tuple[str, str]:
+        m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+        title = updated = ""
+        if m:
+            for line in m.group(1).splitlines():
+                if line.startswith("title:") and not title:
+                    title = line.split(":", 1)[1].strip().strip('"')
+                elif line.startswith("updated:") and not updated:
+                    updated = line.split(":", 1)[1].strip().strip('"')
+        return title, updated
+
+    def first_desc_line(text: str) -> str:
+        in_fm, fm_done = False, False
+        for line in text.splitlines():
+            if line.strip() == "---":
+                if not in_fm:
+                    in_fm = True
+                elif not fm_done:
+                    fm_done = True
+                continue
+            if not fm_done:
+                continue
+            s = line.strip()
+            if s and not s.startswith("#"):
+                return s[:120]
+        return ""
+
+    sections = [("Sources", "sources"), ("Entities", "entities"),
+                ("Concepts", "concepts"), ("Synthesis", "synthesis")]
+    today = __import__("datetime").date.today().isoformat()
+    blocks = []
+
+    for heading, subdir in sections:
+        d = WIKI_DIR / subdir
+        entries = []
+        if d.is_dir():
+            for f in sorted(d.glob("*.md")):
+                if f.name == "index.md":
+                    continue
+                text = f.read_text(encoding="utf-8", errors="replace")
+                title, updated = parse_title_updated(text)
+                title   = title or f.stem
+                updated = updated or today
+                desc    = first_desc_line(text)
+                line    = f"- [{title}]({subdir}/{f.name})"
+                if desc:
+                    line += f" — {desc}"
+                line += f" *(updated: {updated})*"
+                entries.append((title.lower(), line))
+        entries.sort(key=lambda x: x[0])
+        block = f"## {heading}\n\n"
+        block += ("\n".join(e for _, e in entries) if entries
+                  else f"_No {subdir} pages yet._")
+        blocks.append(block)
+
+    index_path = WIKI_DIR / "index.md"
+    existing   = index_path.read_text(encoding="utf-8") if index_path.exists() else ""
+    cut = existing.find("\n## ")
+    prose = (existing[:cut].rstrip() if cut != -1 else existing.rstrip())
+    prose = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose)
+    index_path.write_text(prose + "\n\n---\n\n" + "\n\n---\n\n".join(blocks) + "\n", encoding="utf-8")
+    total = sum(
+        sum(1 for f in (WIKI_DIR / s).glob("*.md") if f.name != "index.md")
+        for _, s in sections if (WIKI_DIR / s).is_dir()
+    )
+    return f"Rebuilt wiki/index.md — {total} pages across {len(sections)} sections."
+
+
+def _autolink(args: dict) -> str:
+    """Replace first bare occurrence of each other wiki page title with a markdown link."""
+    import re
+
+    target_str = args.get("path", "")
+    target_p   = REPO_ROOT / target_str
+    if not target_p.exists():
+        return f"Error: not found: {target_str}"
+    try:
+        target_p.resolve().relative_to(WIKI_DIR.resolve())
+    except ValueError:
+        return "Error: autolink only works on wiki/ pages."
+
+    # Build title -> link-path map (relative from target's directory)
+    title_map: list[tuple[str, str]] = []
+    for subdir in ("sources", "entities", "concepts", "synthesis"):
+        d = WIKI_DIR / subdir
+        if not d.is_dir():
+            continue
+        for f in d.glob("*.md"):
+            if f.name == "index.md" or f.resolve() == target_p.resolve():
+                continue
+            text = f.read_text(encoding="utf-8", errors="replace")
+            m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+            if not m:
+                continue
+            for line in m.group(1).splitlines():
+                if line.startswith("title:"):
+                    title = line.split(":", 1)[1].strip().strip('"')
+                    if title:
+                        rel = f.relative_to(WIKI_DIR)
+                        up_parts = target_p.parent.relative_to(WIKI_DIR).parts
+                        up = "/".join(["..."] * len(up_parts))
+                        link_path = f"{up}/{rel}" if up else str(rel)
+                        title_map.append((title, link_path))
+                    break
+
+    if not title_map:
+        return "No other wiki pages found to link."
+
+    title_map.sort(key=lambda x: -len(x[0]))  # longest first to avoid partial matches
+
+    content  = target_p.read_text(encoding="utf-8", errors="replace")
+    fm_match = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
+    frontmatter, body = (fm_match.group(1), content[len(fm_match.group(1)):]) if fm_match else ("", content)
+
+    linked = 0
+    for title, link_path in title_map:
+        pat = re.compile(r"(?<!\[)(?<!\w)" + re.escape(title) + r"(?!\w)(?!\])", re.IGNORECASE)
+        new_body, n = pat.subn(lambda m, t=title, p=link_path: f"[{m.group()}]({p})", body, count=1)
+        if n:
+            body = new_body
+            linked += 1
+
+    target_p.write_text(frontmatter + body, encoding="utf-8")
+    return f"Autolinked {linked} title(s) in {target_str}."
+
+
 TOOL_FNS = {
-    "read_file":   lambda a: _read_file(a["path"]),
-    "write_file":  lambda a: _write_file(a["path"], a["content"]),
-    "list_dir":    lambda a: _list_dir(a["directory"]),
-    "move_file":   lambda a: _move_file(a["src"], a["dst"]),
-    "fetch_url":   lambda a: _fetch_url(a["url"]),
-    "prepend_log": lambda a: _prepend_log(a["entry"]),
-    "done":        _done,
+    "read_file":     lambda a: _read_file(a["path"]),
+    "write_file":    lambda a: _write_file(a["path"], a["content"]),
+    "list_dir":      lambda a: _list_dir(a["directory"]),
+    "move_file":     lambda a: _move_file(a["src"], a["dst"]),
+    "fetch_url":     lambda a: _fetch_url(a["url"]),
+    "prepend_log":   lambda a: _prepend_log(a["entry"]),
+    "rebuild_index": _rebuild_index,
+    "autolink":      _autolink,
+    "done":          _done,
 }
 
 TOOL_DEFS = [
@@ -512,6 +653,40 @@ TOOL_DEFS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name":        "rebuild_index",
+            "description": (
+                "Rebuild wiki/index.md automatically from the frontmatter of every page in "
+                "sources/, entities/, concepts/, synthesis/. Entries are sorted alphabetically "
+                "within each section. Call this once at the end of ingest instead of manually "
+                "editing wiki/index.md — it is faster and never makes ordering mistakes."
+            ),
+            "parameters":  {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name":        "autolink",
+            "description": (
+                "In the given wiki page, find the first bare occurrence of every other wiki "
+                "page title and replace it with a markdown link. Call after writing each new "
+                "page — handles cross-linking automatically so you don't have to hunt for mentions."
+            ),
+            "parameters":  {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type":        "string",
+                        "description": "Repo-relative path to the wiki page to process, e.g. wiki/sources/my-article.md",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -533,7 +708,12 @@ def system_prompt() -> str:
         "then call done.\n"
         "Exception: if the user's message is conversational and requires no tool use "
         "(e.g. a question you can answer from context, or a brief reply), respond with "
-        "plain text directly — you do not need to call done for a purely conversational response."
+        "plain text directly — you do not need to call done for a purely conversational response.\n"
+        "Use rebuild_index instead of manually editing wiki/index.md — it reads all frontmatter "
+        "and rebuilds the file correctly, sorted alphabetically, in one call.\n"
+        "Use autolink on each page after writing it — call autolink(path) once per page and it "
+        "will insert cross-links to other wiki pages automatically.\n"
+        "Large raw/ files are truncated to 60,000 chars on read — this is fine for synthesis."
     )
 
 
@@ -637,7 +817,7 @@ def _create(client: dict, messages: list, system: str) -> dict:
         "model":      model,
         "messages":   [{"role": "system", "content": system}] + messages,
         "tools":      TOOL_DEFS,
-        "max_tokens": 4096,
+        "max_tokens": cfg_int("llm", "max_tokens", default=16384),
     }
     max_r = _max_retries()
     poll  = _retry_poll_interval()
@@ -758,7 +938,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
     payload_base = {
         "model":      resolved_model,
         "tools":      TOOL_DEFS,
-        "max_tokens": 4096,
+        "max_tokens": cfg_int("llm", "max_tokens", default=16384),
     }
 
     _round = 0
