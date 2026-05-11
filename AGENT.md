@@ -548,7 +548,7 @@ Do not modify any file until the user gives an explicit instruction.
 
 ## 16. Do Not Do These Things
 
-- Do not call `list_dir` on `raw/inbox/` to verify a file exists before reading it — call `read_file` directly with the confirmed path
+- Do not call `list_dir` to verify a file exists before reading it — call `read_file` directly
 - Do not modify, move, or delete anything in `raw/` — it is immutable
 - Do not move or delete files from `raw/inbox/` — articles stay there permanently; the user archives manually
 - Do not modify `AGENT.md` unless the user explicitly asks you to update the schema
