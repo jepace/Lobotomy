@@ -44,7 +44,7 @@ def build_title_index() -> list[tuple[str, Path]]:
 
 def autolink_page(target_p: Path, title_index: list[tuple[str, Path]]) -> int:
     up_parts = target_p.parent.relative_to(WIKI_DIR).parts
-    up = "/".join(["..."] * len(up_parts))
+    up = "/".join([".."] * len(up_parts))
 
     title_map = []
     for title, src_p in title_index:
