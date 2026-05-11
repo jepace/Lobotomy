@@ -509,7 +509,7 @@ def _autolink(args: dict) -> str:
                     if title:
                         rel = f.relative_to(WIKI_DIR)
                         up_parts = target_p.parent.relative_to(WIKI_DIR).parts
-                        up = "/".join(["..."] * len(up_parts))
+                        up = "/".join([".."] * len(up_parts))
                         link_path = f"{up}/{rel}" if up else str(rel)
                         title_map.append((title, link_path))
                     break
@@ -962,7 +962,9 @@ def system_prompt() -> str:
 
 
 def orientation_message() -> str:
-    snippets = []
+    import datetime
+    today = datetime.date.today().isoformat()
+    snippets = [f"Today's date: {today}"]
     for rel, max_lines in [
         ("wiki/index.md",    None),
         ("wiki/log.md",      60),
