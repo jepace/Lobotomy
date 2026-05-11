@@ -535,7 +535,7 @@ def render_md(path: Path) -> str:
     text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
     html = md_lib.markdown(text, extensions=_MD_EXTENSIONS)
     html = re.sub(
-        r'href="([^"]*\.md[^"]*)"',
+        r'href="([^"]*.md[^"]*)"',
         lambda m: f'href="{_rewrite_md_link(m.group(1), path)}"',
         html,
     )
@@ -978,6 +978,46 @@ def wiki_page(page_path):
         sections=wiki_sections(),
         current_path=str(p.relative_to(WIKI_DIR)),
     )
+
+
+@app.route("/wiki/<path:page_path>/edit")
+@require_login
+def wiki_edit(page_path):
+    p = WIKI_DIR / page_path
+    if p.is_dir():
+        p = p / "index.md"
+    if not p.suffix:
+        p = p.with_suffix(".md")
+    try:
+        p.resolve().relative_to(WIKI_DIR.resolve())
+    except ValueError:
+        abort(404)
+    if not p.exists():
+        abort(404)
+    return render_template(
+        "wiki-edit.html",
+        raw=p.read_text(encoding="utf-8"),
+        title=p.stem.replace("-", " ").title(),
+        page_path=str(p.relative_to(WIKI_DIR)),
+    )
+
+
+@app.route("/api/wiki/<path:page_path>/save", methods=["POST"])
+@require_login
+def wiki_save(page_path):
+    p = WIKI_DIR / page_path
+    try:
+        p.resolve().relative_to(WIKI_DIR.resolve())
+    except ValueError:
+        return {"error": "Invalid path"}, 400
+    if not p.exists():
+        return {"error": "Page not found"}, 404
+    data = request.get_json(silent=True) or {}
+    content = data.get("content")
+    if content is None:
+        return {"error": "No content"}, 400
+    p.write_text(content, encoding="utf-8")
+    return {"ok": True}
 
 
 @app.route("/wiki/lint")

@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Edit: {{ title }}{% endblock %}
+
+{% block head %}
+<style>
+  .edit-topbar {
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 100;
+  }
+  .edit-topbar h1 {
+    font-size: 17px;
+    font-weight: 600;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .edit-btn {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    border-radius: 16px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .edit-btn-save   { background: var(--accent); color: #fff; }
+  .edit-btn-save:disabled { opacity: .5; cursor: default; }
+  .edit-btn-cancel { background: var(--bg2); color: var(--text); border: 1px solid var(--border); }
+  .edit-status {
+    font-size: 12px;
+    color: var(--text2);
+    padding: 0 16px 6px;
+    min-height: 20px;
+  }
+  .edit-status.saved  { color: var(--success); }
+  .edit-status.error  { color: var(--danger); }
+  #editor {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 14px 16px;
+    font-family: "SF Mono", ui-monospace, "Cascadia Code", Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    border: none;
+    outline: none;
+    resize: none;
+    background: var(--bg);
+    color: var(--text);
+    min-height: calc(100vh - 100px);
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="page">
+  <div class="edit-topbar">
+    <a class="edit-btn edit-btn-cancel" href="/wiki/{{ page_path }}">Cancel</a>
+    <h1>{{ title }}</h1>
+    <button class="edit-btn edit-btn-save" id="save-btn" onclick="savePage()">Save</button>
+  </div>
+  <div class="edit-status" id="status"></div>
+  <textarea id="editor" spellcheck="false" autocorrect="off" autocapitalize="off">{{ raw | e }}</textarea>
+</div>
+
+<script>
+const PAGE_PATH = {{ page_path | tojson }};
+let saving = false;
+
+async function savePage() {
+  if (saving) return;
+  saving = true;
+  const btn    = document.getElementById('save-btn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  status.className = 'edit-status';
+  status.textContent = 'Saving…';
+
+  try {
+    const resp = await fetch('/api/wiki/' + PAGE_PATH + '/save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({content: document.getElementById('editor').value}),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      status.className = 'edit-status saved';
+      status.textContent = 'Saved.';
+      setTimeout(() => { window.location.href = '/wiki/' + PAGE_PATH; }, 600);
+    } else {
+      throw new Error(data.error || 'Save failed');
+    }
+  } catch (e) {
+    status.className = 'edit-status error';
+    status.textContent = 'Error: ' + e.message;
+    btn.disabled = false;
+  } finally {
+    saving = false;
+  }
+}
+
+// Ctrl+S / Cmd+S to save
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault();
+    savePage();
+  }
+});
+
+// Tab inserts spaces instead of leaving the field
+document.getElementById('editor').addEventListener('keydown', e => {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const ta  = e.target;
+    const s   = ta.selectionStart;
+    const end = ta.selectionEnd;
+    ta.value = ta.value.substring(0, s) + '  ' + ta.value.substring(end);
+    ta.selectionStart = ta.selectionEnd = s + 2;
+  }
+});
+</script>
+{% endblock %}
