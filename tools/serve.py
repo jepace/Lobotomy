@@ -535,7 +535,7 @@ def render_md(path: Path) -> str:
     text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
     html = md_lib.markdown(text, extensions=_MD_EXTENSIONS)
     html = re.sub(
-        r'href="([^"]*\.md[^"]*)"',
+        r'href="([^"]*.md[^"]*)"',
         lambda m: f'href="{_rewrite_md_link(m.group(1), path)}"',
         html,
     )
@@ -1033,13 +1033,18 @@ def wiki_lint():
     for match in re.finditer(r'\]\(([\w/.-]+\.md)\)', index_text):
         indexed_paths.add(match.group(1))
 
+    _LINT_SKIP = {
+        'index.md', 'log.md', 'overview.md', 'reading-list.md', 'tasks.md',
+        'sources/index.md', 'entities/index.md', 'concepts/index.md', 'synthesis/index.md',
+    }
+
     # Find all .md files
     all_files = set()
     for root, dirs, files in os.walk(WIKI_DIR):
         for f in files:
             if f.endswith('.md'):
                 rel_path = str(Path(root) / f).replace(str(WIKI_DIR), '').lstrip('/')
-                if rel_path not in ('index.md', 'log.md', 'overview.md', 'reading-list.md', 'tasks.md'):
+                if rel_path not in _LINT_SKIP:
                     all_files.add(rel_path)
 
     orphans = sorted(all_files - indexed_paths)
