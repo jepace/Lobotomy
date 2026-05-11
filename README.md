@@ -19,7 +19,7 @@ accurate, because the cross-references, comparisons, and contradiction flags are
 |-------|----------|---------------|
 | Raw sources | `raw/` | You (human) — immutable |
 | Wiki pages | `wiki/` | The LLM |
-| Operating schema | `CLAUDE.md` | Defined once, evolved carefully |
+| Operating schema | `AGENT.md` | Defined once, evolved carefully |
 
 ## Setup
 
@@ -212,7 +212,7 @@ tools/
   search.py             Keyword search CLI (no LLM needed)
   tasks.py              Task filter CLI (no LLM needed)
   templates/            HTML templates for the web server
-CLAUDE.md               LLM operating instructions (the schema)
+AGENT.md               LLM operating instructions (the schema)
 ```
 
 ## On FreeBSD
@@ -235,6 +235,6 @@ For reading the wiki in a terminal without the web front end:
 - **Contradictions are surfaced, not resolved** — the LLM flags disagreements; humans decide
 - **Every claim has provenance** — pages cite which source supports each claim
 - **The log is append-only** — complete audit trail of all LLM operations
-- **Cold-start friendly** — a fresh LLM session can fully orient from `CLAUDE.md` alone
+- **Cold-start friendly** — a fresh LLM session can fully orient from `AGENT.md` alone
 - **No special tooling required** — all wiki content is standard markdown, readable everywhere
 - **Viewer-agnostic** — works with any markdown renderer, no Obsidian required

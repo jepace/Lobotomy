@@ -148,7 +148,8 @@ Use **standard relative markdown links** for all internal links. Do not use `[[w
 - From `wiki/index.md` or `wiki/overview.md`: `[Attention Mechanism](concepts/attention-mechanism.md)`
 
 When you mention an entity or concept that has (or should have) its own page, always link it.
-After creating or updating a page, call `autolink(path)` to add cross-links automatically.
+After creating or updating a page, ask: "What other pages should link to this one?" and add
+inbound links from those pages too (bidirectional linking strengthens the graph).
 
 For external URLs use standard markdown: `[Title](https://example.com)`.
 
@@ -178,13 +179,11 @@ Call `create_page` with `path=wiki/sources/{source-slug}.md`, `type=source`, and
 Required sections:
 - **Summary**: 3–5 paragraphs synthesizing the source's main content and contribution
 - **Key Claims**: bulleted list of the most important factual or analytical claims
-- **Key Entities**: bulleted list of significant people, orgs, products, projects (each linked to its wiki page). Plain links only — no annotations like "(new)" or "(update)".
-- **Key Concepts**: bulleted list of important concepts and terms (each linked to its wiki page). Plain links only.
+- **Key Entities**: bulleted list of significant people, orgs, products, projects (each linked to its wiki page). Plain links only — no annotations like "(new)" or "(update)". Whether a page is new or existing is a workflow detail, not page content.
+- **Key Concepts**: bulleted list of important concepts and terms (each linked to its wiki page). Plain links only — no annotations like "(new)" or "(update)".
 - **Notable Quotes**: 3–5 direct quotes with section references if available
 - **Limitations & Caveats**: what this source does not cover; uncertainties it acknowledges
 - **Relation to Existing Wiki**: how it relates to, extends, supports, or contradicts existing pages
-
-After writing, call `autolink(wiki/sources/{source-slug}.md)`.
 
 ### Step 4 — Identify affected existing pages
 Call `search_wiki` for each significant entity and concept found in the source. This is faster
@@ -246,9 +245,8 @@ Fix any issues it reports, then call `done()`.
 ### Step 1 — Read `wiki/overview.md`
 Get a high-level orientation. Note what domains and entities the wiki covers.
 
-### Step 2 — Search or read `wiki/index.md`
-Use `search_wiki` for targeted lookups, or read `wiki/index.md` for a full scan.
-Identify every page relevant to the question.
+### Step 2 — Read `wiki/index.md`
+Scan all sections. Identify every page relevant to the question. List them explicitly.
 
 ### Step 3 — Read relevant pages
 Read every page identified. Follow links one level deep if relevant cross-references are found.
@@ -272,20 +270,63 @@ in `wiki/synthesis/`. If the user agrees, run Ingest Workflow Steps 8–10 to up
 
 **Trigger**: User says "lint the wiki", "health check", or "find problems".
 
-Call `validate_ingest("")` for an automated check of links, frontmatter, and index coverage.
-Then run these additional checks manually:
+Run all checks and produce a structured report.
 
-**Check 1 — Stale pages**: Flag pages whose `updated` date is more than 90 days older than the
+**Check 1 — Broken links**: Scan all `wiki/**/*.md` files for markdown links `[text](path)`.
+Verify each relative path exists on disk. List every broken link with the file it appears in.
+
+**Check 2 — Orphan pages**: List every file in `wiki/sources/`, `wiki/entities/`,
+`wiki/concepts/`, `wiki/synthesis/` that does not appear in `wiki/index.md`.
+
+**Check 3 — Missing frontmatter**: Check every wiki page for required fields (title, type, tags,
+created, updated, sources). List any page missing any field.
+
+**Check 4 — Stale pages**: Flag pages whose `updated` date is more than 90 days older than the
 most recently ingested source (check `wiki/log.md` for the latest ingest date).
 
-**Check 2 — Contradiction audit**: Scan all pages for `## Contradictions` sections. Summarize
+**Check 5 — Contradiction audit**: Scan all pages for `## Contradictions` sections. Summarize
 every flagged contradiction and whether it remains unresolved.
 
-**Check 3 — Underlinked pages**: Find pages with fewer than 2 incoming links from other wiki
+**Check 6 — Underlinked pages**: Find pages with fewer than 2 incoming links from other wiki
 pages. These may be disconnected from the main knowledge graph.
 
-**Check 4 — Coverage gaps**: Review `wiki/overview.md` and synthesis pages. Identify topic areas
+**Check 7 — Coverage gaps**: Review `wiki/overview.md` and synthesis pages. Identify topic areas
 mentioned but lacking source documents. Suggest sources to look for.
+
+**Lint report format**:
+```markdown
+# Wiki Lint Report — YYYY-MM-DD
+
+## Summary
+- Total pages: N
+- Broken links: N
+- Orphan pages: N
+- Missing frontmatter: N
+- Stale pages (>90 days): N
+- Active contradictions: N
+- Underlinked pages: N
+
+## Broken Links
+[list of broken links with file locations]
+
+## Orphan Pages
+[list]
+
+## Missing Frontmatter
+[list]
+
+## Stale Pages
+[list]
+
+## Active Contradictions
+[list]
+
+## Underlinked Pages
+[list]
+
+## Coverage Gaps & Suggested Sources
+[list of suggested topics and sources to find]
+```
 
 After the report, ask the user if they want to fix any identified issues.
 
@@ -296,6 +337,14 @@ After the report, ask the user if they want to fix any identified issues.
 **Trigger**: User drops a file into `raw/inbox/` and says "process inbox", or points at a
 specific inbox file.
 
+This is the Pocket-replacement workflow. The inbox is a holding area for articles, URLs, and notes
+you want to process but have not gotten to yet.
+
+### Supported inbox file formats
+- `.md` or `.txt` file containing article text (saved from a browser or clipper tool)
+- `.txt` or `.url` file containing a single URL (one URL per line)
+- Any text file with pasted notes or excerpts
+
 ### Process inbox — step by step
 
 1. **List inbox contents**: Read all files in `raw/inbox/`. Present the list to the user.
@@ -303,9 +352,12 @@ specific inbox file.
 3. **For each item to process**:
    - Read the file. Determine if it is a URL, article text, or notes.
    - **If URL only**: Use `fetch_url` to retrieve the page content, then run the full Ingest
-     Workflow on the fetched text. If fetch fails, add to `wiki/reading-list.md` as **Queued**.
+     Workflow on the fetched text. If fetch fails, note the URL and add to `wiki/reading-list.md`
+     with status **Queued**.
    - **If article text or notes**: Assign a slug, run the full Ingest Workflow (Section 6)
      reading the file from `raw/inbox/` in place. **Do NOT move or delete the inbox file.**
+     The article stays in `raw/inbox/` permanently. The user archives it manually via the UI
+     when ready. The UI will show a "Wikified ✓" badge automatically once ingestion completes.
 4. **Update `wiki/reading-list.md`** after each item is processed.
 5. **Report** to user: items processed, items queued, any issues.
 
@@ -319,6 +371,8 @@ specific inbox file.
 ```
 
 Status progression: **Queued** → **Reading** → **Read** → **Ingested**
+
+To update an item's status, edit the Status cell in the table.
 
 ---
 
@@ -337,10 +391,12 @@ Tasks live in `wiki/tasks.md`. All task management is done by editing that file.
     - [ ] Another subtask
 ```
 
+All tags are optional. Only include what is relevant.
+
 ### Tag reference
 
 | Tag | Example values | Meaning |
-|-----|----------------|---------|
+|-----|----------------|--------|
 | `#p:` | `top`, `high`, `medium`, `low` | Priority (omit for none) |
 | `#due:` | `2026-05-01` | Due date in YYYY-MM-DD format |
 | `#start:` | `2026-04-25` | Hide task until this date |
@@ -353,14 +409,36 @@ Tasks live in `wiki/tasks.md`. All task management is done by editing that file.
 | `#star` | (no value) | Starred / flagged |
 | `#done:` | `2026-04-27` | Added automatically when marking complete |
 
+### Recurrence behaviour
+
+When a recurring task (`#rep:`) is marked complete:
+- A new instance is automatically created immediately below it with the next due date.
+- **Fixed** (`#rep:1w`): next due = current due date + period. Use for bills, meetings, scheduled events.
+- **Relative** (`#rep:7d+`): next due = completion date + period. Use for habits, maintenance tasks.
+
+### Task sections in `wiki/tasks.md`
+
+```markdown
+## Inbox
+(uncategorized quick-capture tasks go here)
+
+## [Project Name]
+(add new sections as projects are created)
+```
+
 ### Task operations
 
-**Add a task**: Append to the appropriate project section. Quick-capture goes to Inbox.
+**Add a task**: Append to the appropriate project section. Quick-capture goes to Inbox. If no
+matching section exists, create it.
 
 **Complete a task**: Change `- [ ]` to `- [x]` and append `#done:YYYY-MM-DD`.
 
-**Archive completed tasks**: Move all `- [x]` lines from `wiki/tasks.md` to `wiki/tasks-archive.md`,
-grouped by completion month. Update `wiki/log.md`.
+**Archive completed tasks**: Move all `- [x]` lines (and their indented subtasks/notes) from
+`wiki/tasks.md` to `wiki/tasks-archive.md`, grouped by completion month. Create the archive file
+if it does not exist. Update `wiki/log.md`.
+
+**Prioritize**: Ask the LLM to review all open tasks and suggest an ordering by due date and
+priority. The LLM presents the ordered list but does not modify the file unless asked.
 
 **CLI filter** (no LLM needed):
 ```sh
@@ -375,7 +453,12 @@ python tools/tasks.py --overdue          # past due date
 
 ## 11. `wiki/index.md` Protocol
 
-The master catalog. Maintained automatically by `rebuild_index` — do not edit manually.
+The master catalog. Every wiki page appears here exactly once, under the correct section.
+
+**Entry format**:
+```markdown
+- [Page Title](relative/path/to/page.md) — One-sentence description. *(updated: YYYY-MM-DD)*
+```
 
 **Section headers** (in this order):
 ```markdown
@@ -386,7 +469,9 @@ The master catalog. Maintained automatically by `rebuild_index` — do not edit 
 ```
 
 **Rules**:
-- Entries are sorted **alphabetically by display title** within each section.
+- Entries within each section are sorted **alphabetically by display title**.
+- Insert new entries in alphabetical order — do not append to the end.
+- Update the `_Last updated: YYYY-MM-DD_` line at the top on every modification.
 - The files `wiki/overview.md`, `wiki/log.md`, `wiki/index.md`, `wiki/reading-list.md`, and
   `wiki/tasks.md` are **not** listed in the index (they are operational files, not knowledge pages).
 
@@ -395,7 +480,7 @@ The master catalog. Maintained automatically by `rebuild_index` — do not edit 
 ## 12. `wiki/log.md` Protocol
 
 Append-only operation log. Never delete or modify existing entries. Always prepend new entries at
-the **top** (newest-first ordering) using `prepend_log`.
+the **top** (newest-first ordering).
 
 **Entry format**:
 ```markdown
@@ -404,13 +489,14 @@ the **top** (newest-first ordering) using `prepend_log`.
 - **Operation**: ingest
 - **Target**: raw/some-article-slug.md
 - **Pages created**: [Some Article Title](sources/some-article-slug.md), [Jane Smith](entities/jane-smith.md)
-- **Pages updated**: [Overview](overview.md)
+- **Pages updated**: [Index](index.md), [Overview](overview.md)
 - **Notes**: Brief description of what was ingested and anything notable.
 ```
 
 Rules:
-- Every entry in **Pages created** and **Pages updated** must be a markdown link.
+- Every entry in **Pages created** and **Pages updated** must be a markdown link — `[Title](relative/path.md)` — never plain text or a bare path.
 - Paths are relative to `wiki/` — write `sources/slug.md`, not `wiki/sources/slug.md`.
+- Use the actual page title as the link text, not the filename.
 
 ---
 
@@ -419,7 +505,7 @@ Rules:
 When a new source contradicts an existing wiki page:
 
 1. **Do not silently overwrite** the existing claim. Preserve both.
-2. Add or update a `## Contradictions` section in the relevant page:
+2. In the relevant entity or concept page, add or update a `## Contradictions` section:
    ```markdown
    ## Contradictions
    - **Claim**: [Source A](../sources/source-a.md) states X.
@@ -428,8 +514,10 @@ When a new source contradicts an existing wiki page:
    ```
 3. Note the contradiction in the new source page under "Relation to Existing Wiki".
 4. Note it in `wiki/log.md` under Notes for the ingest entry.
-5. **Do not resolve contradictions yourself** unless the user explicitly asks.
-6. If a later ingest resolves a contradiction: `*Status: resolved YYYY-MM-DD — [reason]*`
+5. **Do not resolve contradictions yourself** unless the user explicitly asks. Surface; do not
+   adjudicate.
+6. If a later ingest resolves a contradiction, update the entry:
+   `*Status: resolved YYYY-MM-DD — [reason]*`
 
 ---
 
@@ -437,8 +525,10 @@ When a new source contradicts an existing wiki page:
 
 - Reflect hedged claims with appropriate language: "according to [Source](path)",
   "as of YYYY-MM-DD", "the author suggests but does not confirm"
+- Do not present hedged claims as settled fact
 - Mark uncertain passages: `<!-- TODO: verify this claim -->`
 - Use tag `needs-verification` in frontmatter for pages with unverified claims
+- The wiki reflects what sources say. It is not a ground-truth oracle. Answers should reflect this.
 
 ---
 
@@ -459,17 +549,19 @@ Do not modify any file until the user gives an explicit instruction.
 ## 16. Do Not Do These Things
 
 - Do not modify, move, or delete anything in `raw/` — it is immutable
-- Do not move or delete files from `raw/inbox/` — articles stay there permanently
+- Do not move or delete files from `raw/inbox/` — articles stay there permanently; the user archives manually
 - Do not modify `AGENT.md` unless the user explicitly asks you to update the schema
 - Do not edit `wiki/index.md` manually — always use `rebuild_index`
 - Do not write wiki page frontmatter manually — always use `create_page` for new pages
 - Do not skip calling `autolink` after writing each page
 - Do not skip calling `validate_ingest` at the end of every ingest
 - Do not resolve contradictions without user instruction
-- Do not delete wiki pages — set `deprecated: true` in frontmatter instead
+- Do not delete wiki pages — set `deprecated: true` in frontmatter instead, then note it in the log
 - Do not ingest sources from outside `raw/`
 - Do not invent sources — only cite documents actually present in `raw/`
 - Do not use `[[wikilink]]` syntax — use standard relative markdown links
-- Do not write workflow annotations like "(new)" or "(update)" in page content
+- Do not write workflow annotations like "(new)" or "(update)" in page content — these are planning notes only
+- Do not link to a page without first confirming the linked file exists and is about the correct subject
+- Do not break alphabetical ordering in `wiki/index.md` — use rebuild_index instead of editing manually
 - Do not modify existing `wiki/log.md` entries — only prepend new ones at the top
 - Do not save important information only in chat — write it to a wiki page so it persists

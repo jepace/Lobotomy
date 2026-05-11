@@ -134,6 +134,7 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
         if code == 404:
             raise _LLMError("Model not found — check llm.model in config.json.")
         if code == 400:
+            # Include raw response for debugging 400 errors
             detail = f"{msg}\n{raw_body}" if raw_body and raw_body != msg else msg
             raise _LLMError(f"Bad request: {detail}")
         if code == 429:
@@ -377,7 +378,7 @@ def _prepend_log(entry: str) -> str:
 
     # Structure: frontmatter (---...---), prose paragraph, --- divider, then entries.
     # Find the end of the frontmatter block (the closing ---).
-    fm_open  = text.find("---")
+    fm_open = text.find("---")
     fm_close = text.find("\n---", fm_open + 3)
     if fm_close == -1:
         log_path.write_text(text.rstrip() + "\n\n" + entry.strip() + "\n", encoding="utf-8")
@@ -489,6 +490,7 @@ def _autolink(args: dict) -> str:
     except ValueError:
         return "Error: autolink only works on wiki/ pages."
 
+    # Build title -> link-path map (relative from target's directory)
     title_map: list[tuple[str, str]] = []
     for subdir in ("sources", "entities", "concepts", "synthesis"):
         d = WIKI_DIR / subdir
@@ -515,7 +517,7 @@ def _autolink(args: dict) -> str:
     if not title_map:
         return "No other wiki pages found to link."
 
-    title_map.sort(key=lambda x: -len(x[0]))
+    title_map.sort(key=lambda x: -len(x[0]))  # longest first to avoid partial matches
 
     content  = target_p.read_text(encoding="utf-8", errors="replace")
     fm_match = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
@@ -551,6 +553,7 @@ def _search_wiki(args: dict) -> str:
         score = sum(len(p.findall(text)) for p in patterns)
         if not score:
             continue
+        # Extract title from frontmatter
         fm = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
         title = f.stem
         if fm:
@@ -558,6 +561,7 @@ def _search_wiki(args: dict) -> str:
                 if line.startswith("title:"):
                     title = line.split(":", 1)[1].strip().strip('"')
                     break
+        # Find first matching line for snippet
         snippet = ""
         for line in text.splitlines():
             if any(p.search(line) for p in patterns):
@@ -599,6 +603,7 @@ def _create_page(args: dict) -> str:
     today = datetime.date.today().isoformat()
     existed = p.exists()
     if existed:
+        # Preserve original created date
         old = p.read_text(encoding="utf-8", errors="replace")
         m = re.search(r"created:\s*(\d{4}-\d{2}-\d{2})", old)
         created = m.group(1) if m else today
@@ -619,9 +624,17 @@ def _create_page(args: dict) -> str:
 
 
 def _validate_ingest(args: dict) -> str:
-    """Run all Step 11 self-checks: broken links, missing frontmatter, pages not in index."""
+    """
+    Run all self-check steps for a completed ingest:
+    - Frontmatter completeness on all new/touched pages
+    - Broken internal links
+    - Pages missing from index
+    Returns a structured pass/fail report.
+    """
     import re
 
+    source_slug = args.get("source_slug", "")
+    # Collect all wiki pages to check (full wiki scan is safe — files are small)
     all_pages = list(WIKI_DIR.rglob("*.md"))
     index_text = (WIKI_DIR / "index.md").read_text(encoding="utf-8") if (WIKI_DIR / "index.md").exists() else ""
 
@@ -636,6 +649,7 @@ def _validate_ingest(args: dict) -> str:
         except OSError:
             continue
 
+        # Check frontmatter
         fm_match = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
         if fm_match:
             fm_keys = {line.split(":", 1)[0].strip() for line in fm_match.group(1).splitlines() if ":" in line}
@@ -645,6 +659,7 @@ def _validate_ingest(args: dict) -> str:
         else:
             missing_fm.append(f"{f.relative_to(WIKI_DIR)}: no frontmatter")
 
+        # Check internal links
         for link_text, link_path in re.findall(r'\[([^\]]+)\]\(([^)]+)\)', text):
             if link_path.startswith("http") or link_path.startswith("#"):
                 continue
@@ -652,6 +667,7 @@ def _validate_ingest(args: dict) -> str:
             if not target.exists():
                 broken_links.append(f"{f.relative_to(WIKI_DIR)}: [{link_text}]({link_path})")
 
+        # Check index coverage (skip operational files at wiki root)
         if f.parent != WIKI_DIR:
             rel = str(f.relative_to(WIKI_DIR))
             if rel not in index_text:
@@ -688,17 +704,17 @@ def _validate_ingest(args: dict) -> str:
 
 TOOL_FNS = {
     "read_file":       lambda a: _read_file(a["path"]),
-    "write_file":      lambda a: _write_file(a["path"], a["content"]),
-    "list_dir":        lambda a: _list_dir(a["directory"]),
-    "move_file":       lambda a: _move_file(a["src"], a["dst"]),
-    "fetch_url":       lambda a: _fetch_url(a["url"]),
-    "prepend_log":     lambda a: _prepend_log(a["entry"]),
-    "rebuild_index":   _rebuild_index,
-    "autolink":        _autolink,
-    "search_wiki":     _search_wiki,
-    "create_page":     _create_page,
-    "validate_ingest": _validate_ingest,
-    "done":            _done,
+    "write_file":       lambda a: _write_file(a["path"], a["content"]),
+    "list_dir":         lambda a: _list_dir(a["directory"]),
+    "move_file":        lambda a: _move_file(a["src"], a["dst"]),
+    "fetch_url":        lambda a: _fetch_url(a["url"]),
+    "prepend_log":      lambda a: _prepend_log(a["entry"]),
+    "rebuild_index":    _rebuild_index,
+    "autolink":         _autolink,
+    "search_wiki":      _search_wiki,
+    "create_page":      _create_page,
+    "validate_ingest":  _validate_ingest,
+    "done":             _done,
 }
 
 TOOL_DEFS = [
@@ -706,7 +722,7 @@ TOOL_DEFS = [
         "type": "function",
         "function": {
             "name":        "read_file",
-            "description": "Read any file in the repository (wiki pages, raw sources, AGENT.md, etc.).",
+            "description": "Read any file in the repository (wiki pages, raw sources, CLAUDE.md, etc.).",
             "parameters":  {
                 "type": "object",
                 "properties": {"path": {"type": "string", "description": "Path relative to repo root"}},
@@ -718,7 +734,7 @@ TOOL_DEFS = [
         "type": "function",
         "function": {
             "name":        "write_file",
-            "description": "Write or overwrite a file. Only wiki/ is writable; raw/ is immutable. Prefer create_page for new wiki pages.",
+            "description": "Write or overwrite a file. Only wiki/ is writable; raw/ is immutable.",
             "parameters":  {
                 "type": "object",
                 "properties": {
@@ -775,14 +791,15 @@ TOOL_DEFS = [
             "description": (
                 "Add a new entry to wiki/log.md. Always use this instead of write_file for log updates — "
                 "it preserves all existing entries. Use this for Step 10 of the ingest workflow. "
-                "Pages created/updated must be markdown links: [Title](sources/slug.md)."
+                "Pages created/updated must be markdown links: [Title](sources/slug.md) — "
+                "never plain text or paths starting with wiki/."
             ),
             "parameters":  {
                 "type": "object",
                 "properties": {
                     "entry": {
                         "type":        "string",
-                        "description": "Complete log entry. Page refs must be markdown links with paths relative to wiki/.",
+                        "description": "Complete log entry. Page refs must be markdown links with paths relative to wiki/, e.g. [Title](sources/slug.md).",
                     },
                 },
                 "required": ["entry"],
@@ -795,12 +812,16 @@ TOOL_DEFS = [
             "name":        "done",
             "description": (
                 "Signal that you have finished ALL your work for this task. "
-                "You MUST call this tool when your task is complete — do not simply stop responding."
+                "You MUST call this tool when your task is complete — do not simply stop responding. "
+                "Provide a concise summary of what you accomplished."
             ),
             "parameters":  {
                 "type": "object",
                 "properties": {
-                    "summary": {"type": "string", "description": "What you accomplished."},
+                    "summary": {
+                        "type":        "string",
+                        "description": "What you accomplished — files created/updated, actions taken.",
+                    },
                 },
                 "required": ["summary"],
             },
@@ -812,8 +833,9 @@ TOOL_DEFS = [
             "name":        "rebuild_index",
             "description": (
                 "Rebuild wiki/index.md automatically from the frontmatter of every page in "
-                "sources/, entities/, concepts/, synthesis/. Sorted alphabetically. "
-                "Call once at end of ingest instead of manually editing wiki/index.md."
+                "sources/, entities/, concepts/, synthesis/. Entries are sorted alphabetically "
+                "within each section. Call this once at the end of ingest instead of manually "
+                "editing wiki/index.md — it is faster and never makes ordering mistakes."
             ),
             "parameters":  {"type": "object", "properties": {}, "required": []},
         },
@@ -824,12 +846,16 @@ TOOL_DEFS = [
             "name":        "autolink",
             "description": (
                 "In the given wiki page, find the first bare occurrence of every other wiki "
-                "page title and replace it with a markdown link. Call after writing each page."
+                "page title and replace it with a markdown link. Call after writing each new "
+                "page — handles cross-linking automatically so you don't have to hunt for mentions."
             ),
             "parameters":  {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Repo-relative path, e.g. wiki/sources/my-article.md"},
+                    "path": {
+                        "type":        "string",
+                        "description": "Repo-relative path to the wiki page to process, e.g. wiki/sources/my-article.md",
+                    },
                 },
                 "required": ["path"],
             },
@@ -841,13 +867,17 @@ TOOL_DEFS = [
             "name":        "search_wiki",
             "description": (
                 "Keyword search across all wiki pages. Returns matching page titles, paths, and "
-                "a snippet. Use this to check whether an entity or concept already has a page "
-                "before creating one — much faster than reading index.md then individual pages."
+                "a snippet of the matching line. Use this to check whether an entity or concept "
+                "already has a page before creating one — much faster than reading index.md "
+                "and then reading individual pages to verify."
             ),
             "parameters":  {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Keywords to search (space-separated)"},
+                    "query": {
+                        "type":        "string",
+                        "description": "One or more keywords to search for (space-separated, OR logic)",
+                    },
                 },
                 "required": ["query"],
             },
@@ -858,9 +888,9 @@ TOOL_DEFS = [
         "function": {
             "name":        "create_page",
             "description": (
-                "Write a new wiki page with auto-populated frontmatter (dates filled automatically). "
-                "Preferred over write_file for new pages — eliminates frontmatter errors. "
-                "Pass body content only, without frontmatter."
+                "Write a new wiki page with auto-populated frontmatter (created/updated dates "
+                "filled automatically). Preferred over write_file for new wiki pages — "
+                "eliminates frontmatter errors. Pass the page body without frontmatter."
             ),
             "parameters":  {
                 "type": "object",
@@ -868,9 +898,9 @@ TOOL_DEFS = [
                     "path":    {"type": "string", "description": "Repo-relative path, e.g. wiki/entities/jane-smith.md"},
                     "title":   {"type": "string", "description": "Human-readable title (Title Case)"},
                     "type":    {"type": "string", "description": "Page type: source | entity | concept | synthesis"},
-                    "tags":    {"type": "array", "items": {"type": "string"}, "description": "Lowercase hyphenated tags"},
-                    "body":    {"type": "string", "description": "Full page body (no frontmatter)"},
-                    "sources": {"type": "array", "items": {"type": "string"}, "description": "Source page paths relative to wiki/"},
+                    "tags":    {"type": "array",  "items": {"type": "string"}, "description": "List of lowercase hyphenated tags"},
+                    "body":    {"type": "string", "description": "Full page body content (no frontmatter — that is added automatically)"},
+                    "sources": {"type": "array",  "items": {"type": "string"}, "description": "List of source page paths relative to wiki/, e.g. [\"sources/my-article.md\"]"},
                 },
                 "required": ["path", "title", "type", "body"],
             },
@@ -881,13 +911,18 @@ TOOL_DEFS = [
         "function": {
             "name":        "validate_ingest",
             "description": (
-                "Run all Step 11 self-checks: broken internal links, missing frontmatter fields, "
-                "pages not in the index. Call at end of every ingest. Fix reported issues, then done()."
+                "Run all Step 11 self-checks automatically: broken internal links, missing "
+                "frontmatter fields, pages not yet in the index. Call this at the end of "
+                "every ingest instead of manually re-reading pages. Fix any reported issues, "
+                "then call done()."
             ),
             "parameters":  {
                 "type": "object",
                 "properties": {
-                    "source_slug": {"type": "string", "description": "Slug of the ingested source for context."},
+                    "source_slug": {
+                        "type":        "string",
+                        "description": "Slug of the ingested source, e.g. 'smith-2024-attention'. Used for context in the report.",
+                    },
                 },
                 "required": ["source_slug"],
             },
@@ -1031,6 +1066,7 @@ def _create(client: dict, messages: list, system: str) -> dict:
     max_r = _max_retries()
     poll  = _retry_poll_interval()
 
+    # Phase 1: exponential backoff
     for attempt in range(max_r + 1):
         _rpm_wait_sync()
         try:
@@ -1043,6 +1079,7 @@ def _create(client: dict, messages: list, system: str) -> dict:
             if attempt < max_r:
                 time.sleep(_retry_delay(attempt + 1, e))
 
+    # Phase 2: poll every retry_poll_interval until provider recovers
     while True:
         time.sleep(poll)
         _rpm_wait_sync()
@@ -1077,6 +1114,12 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
 
         stored: dict = {"role": "assistant"}
         if tool_calls:
+            # Pass through raw tool_calls unchanged — Gemini thinking mode attaches
+            # a thought_signature to each call that must be echoed back verbatim.
+            # Do NOT store content alongside tool_calls: Gemini's OpenAI-compatible
+            # layer may split a message with both into two separate model turns,
+            # putting the text turn before the function-call turn, which violates
+            # Gemini's ordering rules and causes a 400 error on subsequent calls.
             stored["tool_calls"] = tool_calls
         else:
             stored["content"] = content
@@ -1096,6 +1139,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
             log.debug("Tool call: %s  arg=%s  result=%s", fn_name or "(unknown)", str(list(args.values())[:1])[:60], result_preview)
 
+            # done() ends the loop — return immediately without sending it back to the LLM.
             if isinstance(result, str) and result.startswith(_DONE_SENTINEL):
                 summary = result[len(_DONE_SENTINEL):]
                 log.info("Agent called done() in round %d: %s", _round, summary[:120])
@@ -1105,6 +1149,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
 
             if not isinstance(result, str):
                 result = json.dumps(result)
+            # Gemini requires a non-empty name on every tool response
             if not fn_name:
                 fn_name = "unknown_tool"
             messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
@@ -1121,6 +1166,9 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
       {"type": "retrying",  "attempt": N, "delay": S, "max": M, ["msg": "..."]}
       {"type": "error",     "content": "..."}
       {"type": "done"}
+    Phase 1: exponential backoff (max_retries attempts).
+    Phase 2: poll every retry_poll_interval seconds indefinitely.
+    Updates messages in-place so history can be saved after the generator finishes.
     """
     provider_name  = cfg_get("llm", "provider", "openai").lower()
     resolved_model = model or PROVIDERS.get(provider_name, PROVIDERS["openai"])["default_model"]
@@ -1140,7 +1188,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
     _round = 0
     _continuations = 0
     _had_tool_calls = False
-    _tools_since_last_continuation = 0
+    _tools_since_last_continuation = 0  # reset each continuation; 0 = no progress = give up
     while True:
         _round += 1
         payload = dict(payload_base)
@@ -1151,6 +1199,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
         poll  = _retry_poll_interval()
         resp  = None
 
+        # Phase 1: exponential backoff
         for attempt in range(max_r + 1):
             yield from _rpm_wait_streaming()
             try:
@@ -1164,7 +1213,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                     yield json.dumps({"type": "done"}) + "\n"
                     return
                 if attempt == max_r:
-                    break
+                    break  # exhausted phase 1 — fall through to phase 2
                 delay = _retry_delay(attempt + 1, e)
                 log.warning("LLM retryable error (attempt %d/%d, delay %ds): %s",
                             attempt + 1, max_r, delay, e)
@@ -1172,6 +1221,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                                   "delay": int(delay), "max": max_r}) + "\n"
                 time.sleep(delay)
 
+        # Phase 2: poll indefinitely until provider recovers
         if resp is None:
             poll_attempt = 0
             while True:
@@ -1213,10 +1263,13 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
             if _had_tool_calls and _tools_since_last_continuation > 0:
                 _continuations += 1
                 _tools_since_last_continuation = 0
-                log.warning("LLM empty response mid-task (round %d) — compressing history (continuation %d)",
+                log.warning("LLM empty response mid-task (round %d) — compressing history and continuing (continuation %d)",
                             _round, _continuations)
                 yield json.dumps({"type": "tool", "name": "↻ continuing…", "arg": ""}) + "\n"
 
+                # Compress history: strip bulky tool responses and write arguments,
+                # replacing them with a compact done-so-far summary. This prevents
+                # the context window from filling with echoed file contents.
                 written, read_files, called = [], [], []
                 for m in messages:
                     if m.get("role") == "assistant" and m.get("tool_calls"):
@@ -1234,6 +1287,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                             elif fn and fn not in ("done",):
                                 called.append(fn + (f"({path})" if path else ""))
 
+                # Rebuild messages: keep only non-tool-call turns + original user message
                 messages[:] = [m for m in messages
                                if m.get("role") == "user"
                                or (m.get("role") == "assistant"
@@ -1254,10 +1308,15 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                 continue
 
             if _continuations > 0:
-                log.warning("LLM returned empty in continuation round %d — auto-completing", _round)
+                # A continuation round produced nothing — model has no more work to do
+                # but failed to call done(). The actual wiki content is already on disk.
+                # Auto-complete rather than surfacing a confusing error.
+                log.warning("LLM returned empty in continuation round %d — auto-completing "
+                            "(%d continuations, work on disk)", _round, _continuations)
                 yield json.dumps({"type": "done"}) + "\n"
                 return
-            log.error("LLM returned empty response (round %d, model=%s)", _round, resolved_model)
+            log.error("LLM returned empty response (round %d, model=%s) — no tool calls made",
+                      _round, resolved_model)
             yield json.dumps({"type": "error",
                               "content": "The model returned an empty response without calling done(). "
                                          "Try again or switch to a more capable model."}) + "\n"
@@ -1266,6 +1325,11 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
 
         stored: dict = {"role": "assistant"}
         if tool_calls:
+            # Pass through raw tool_calls unchanged — Gemini thinking mode attaches
+            # a thought_signature to each call that must be echoed back verbatim.
+            # Do NOT store content alongside tool_calls: Gemini's OpenAI-compatible
+            # layer may split a message with both into two separate model turns,
+            # violating ordering rules and causing 400 errors on subsequent calls.
             stored["tool_calls"] = tool_calls
         else:
             stored["content"] = content
@@ -1295,6 +1359,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
             log.debug("Tool result [%s]: %s", fn_name or "(unknown)", result_preview)
 
+            # done() is a control signal — it ends the loop, not a message for the LLM.
             if isinstance(result, str) and result.startswith(_DONE_SENTINEL):
                 summary = result[len(_DONE_SENTINEL):]
                 log.info("Agent called done() in round %d: %s", _round, summary[:120])
@@ -1306,6 +1371,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
             yield json.dumps({"type": "tool", "name": fn_name or "(unknown)", "arg": arg_preview}) + "\n"
             if not isinstance(result, str):
                 result = json.dumps(result)
+            # Gemini requires a non-empty name on every tool response
             if not fn_name:
                 fn_name = "unknown_tool"
             messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
