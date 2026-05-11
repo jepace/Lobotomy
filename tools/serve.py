@@ -535,7 +535,7 @@ def render_md(path: Path) -> str:
     text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
     html = md_lib.markdown(text, extensions=_MD_EXTENSIONS)
     html = re.sub(
-        r'href="([^"]*.md[^"]*)"',
+        r'href="([^"]*\.md[^"]*)"',
         lambda m: f'href="{_rewrite_md_link(m.group(1), path)}"',
         html,
     )
@@ -1397,6 +1397,131 @@ def api_push():
         "url":       url or None,
         "saved":     today,
     }, 201, {"Access-Control-Allow-Origin": "*"}
+
+
+@app.route("/api/inbound-email", methods=["POST"])
+def api_inbound_email():
+    """
+    Resend inbound email webhook — saves the email as an inbox item.
+
+    Configure in Resend dashboard:
+      Webhook URL: https://your-domain/api/inbound-email
+      Signing secret: set as api.resend_webhook_secret in config.json
+
+    The email subject becomes the article title.
+    If the plain-text body contains a URL on its own line, that URL is stored
+    and the page is fetched automatically (same as the browser extension).
+    Otherwise the email body is stored as article content directly.
+
+    To send an article: email your inbound address with the URL in the body,
+    or forward an email with a readable body.
+    """
+    webhook_secret = cfg_get("api", "resend_webhook_secret", "").strip()
+
+    # Verify Resend/Svix webhook signature if secret is configured
+    if webhook_secret:
+        try:
+            import hashlib, hmac, base64, time as _time
+            msg_id        = request.headers.get("svix-id", "")
+            msg_timestamp = request.headers.get("svix-timestamp", "")
+            msg_signature = request.headers.get("svix-signature", "")
+            if not (msg_id and msg_timestamp and msg_signature):
+                return {"error": "Missing webhook signature headers"}, 401
+            # Reject timestamps older than 5 minutes
+            try:
+                ts = int(msg_timestamp)
+                if abs(_time.time() - ts) > 300:
+                    return {"error": "Webhook timestamp too old"}, 401
+            except ValueError:
+                return {"error": "Invalid timestamp"}, 401
+            signed_content = f"{msg_id}.{msg_timestamp}.{request.get_data(as_text=True)}"
+            secret_bytes   = base64.b64decode(webhook_secret.removeprefix("whsec_"))
+            expected       = base64.b64encode(
+                hmac.new(secret_bytes, signed_content.encode(), hashlib.sha256).digest()
+            ).decode()
+            # svix-signature may contain multiple comma-separated "v1,<sig>" entries
+            sigs = [s.split(",", 1)[1] for s in msg_signature.split(" ") if "," in s]
+            if not any(hmac.compare_digest(expected, s) for s in sigs):
+                return {"error": "Invalid signature"}, 401
+        except Exception as e:
+            log.warning("Inbound email signature check failed: %s", e)
+            return {"error": "Signature verification error"}, 401
+
+    data = request.get_json(silent=True) or {}
+
+    # Resend inbound email payload fields
+    subject  = (data.get("subject") or data.get("Subject") or "").strip()
+    from_addr = (data.get("from")    or data.get("From")    or "").strip()
+    text_body = (data.get("text")    or data.get("plain")   or "").strip()
+
+    if not subject and not text_body:
+        return {"error": "Empty email"}, 400
+
+    title = subject or "Email article"
+
+    # Look for a bare URL in the first few lines of the body
+    url = ""
+    body_content = text_body
+    if text_body:
+        for line in text_body.splitlines()[:10]:
+            line = line.strip()
+            if re.match(r"https?://\S+$", line):
+                url = line
+                break
+
+    # Fetch the URL if found, otherwise use the text body as content
+    content = ""
+    if url:
+        fetched, _ = _clip_fetch(url)
+        if fetched:
+            content = fetched
+            if not subject:
+                for line in content.splitlines():
+                    line = line.strip().lstrip("#").strip()
+                    if line and not line.startswith("<"):
+                        title = line[:120]
+                        break
+        else:
+            content = text_body
+    else:
+        content = text_body
+
+    # Deduplication on URL
+    inbox_dir = RAW_DIR / "inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    if url:
+        for existing in inbox_dir.glob("*.md"):
+            try:
+                meta, _ = _parse_frontmatter(
+                    existing.read_text(encoding="utf-8", errors="replace"))
+                if meta.get("url", "").strip() == url:
+                    log.info("Inbound email duplicate: %s", url)
+                    return {"ok": True, "duplicate": True, "filename": existing.name}, 200
+            except (OSError, ValueError, KeyError):
+                pass
+
+    # Build filename
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "email"
+    base_name = f"{slug}.md"
+    dest = inbox_dir / base_name
+    if dest.exists():
+        import time as _t
+        base_name = f"{slug}-{int(_t.time())}.md"
+        dest = inbox_dir / base_name
+
+    today = datetime.date.today().isoformat()
+    fm = ["---", f'title: "{title}"']
+    if url:
+        fm.append(f"url: {url}")
+    fm.append(f"saved: {today}")
+    fm.append(f"source: email")
+    if from_addr:
+        fm.append(f"author: {from_addr}")
+    fm += ["---", ""]
+
+    dest.write_text("\n".join(fm) + content, encoding="utf-8")
+    log.info("Inbound email saved: %s from %s", base_name, from_addr)
+    return {"ok": True, "duplicate": False, "filename": base_name}, 201
 
 
 @app.route("/api/inbox")
