@@ -189,7 +189,7 @@ const seenItems = new Set();
     const match = el.id.match(/^item-(\d+)$/);
     if (match) {
       const idx = match[1];
-      const name = el.querySelector('.item-header')?.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
+      const name = el.querySelector('.item-header')?.getAttribute('onclick')?.match(/'([^']+)'/)?.[ 1];
       if (name) seenItems.add(name);
     }
   });
@@ -224,7 +224,7 @@ async function pollInbox() {
     newItems.forEach(item => {
       const idx = items.indexOf(item) + 1;
       const html = `<div class="reading-item" id="item-${idx}">
-      <div class="item-header" onclick="toggleItem(${idx}, '${item.name.replace(/'/g, "\\'")}')">
+      <div class="item-header" onclick="toggleItem(${idx}, '${item.name.replace(/'/g, "\\'")}')">  
         <div class="item-body">
           <div class="item-title">${item.title.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
           <div class="item-meta">${item.date} &middot; ${item.name.replace(/</g,'&lt;').replace(/>/g,'&gt;')}${item.wikified ? '<span class="wikified-badge">Wikified ✓</span>' : ''}</div>
@@ -235,10 +235,10 @@ async function pollInbox() {
 
       <div class="item-actions">
         ${item.has_content ? `<a class="act-btn read" href="/inbox/read/${encodeURIComponent(item.name)}">Read</a>` : item.source_url ? `<a class="act-btn open" href="${item.source_url.replace(/"/g, '&quot;')}" target="_blank" rel="noopener">Open ↗</a>` : ''}
-        <button class="act-btn archive" onclick="archiveItem('${item.name.replace(/'/g, "\\'")}', ${idx})">Archive</button>
+        <button class="act-btn archive" onclick="archiveItem('${item.name.replace(/'/g, "\\'")}'  , ${idx})">Archive</button>
         <button class="act-btn wikify" id="wikify-${idx}"
-                onclick="wikifyItem('${item.name.replace(/'/g, "\\'")}', ${idx})">Wikify</button>
-        <button class="act-btn delete"  onclick="deleteItem('${item.name.replace(/'/g, "\\'")}', ${idx})">Delete</button>
+                onclick="wikifyItem('${item.name.replace(/'/g, "\\'")}'  , ${idx})">Wikify</button>
+        <button class="act-btn delete"  onclick="deleteItem('${item.name.replace(/'/g, "\\'")}'  , ${idx})">Delete</button>
       </div>
 
       <div class="item-progress" id="progress-${idx}"></div>
@@ -357,7 +357,7 @@ async function wikifyItem(name, idx) {
   try {
     const sendResp = await fetch('/chat/send', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: 'Process inbox file: ' + name}),
+      body: JSON.stringify({message: 'Ingest raw/inbox/' + name + ' — do not list_dir, the path is confirmed.'}),
     });
     if (!sendResp.ok) {
       const err = await sendResp.json().catch(() => ({}));
