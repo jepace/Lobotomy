@@ -534,7 +534,7 @@ def _autolink(args: dict) -> str:
                     if title:
                         rel = f.relative_to(WIKI_DIR)
                         up_parts = target_p.parent.relative_to(WIKI_DIR).parts
-                        up = "/".join([".."] * len(up_parts))
+                        up = "/".join([".." ] * len(up_parts))
                         link_path = f"{up}/{rel}" if up else str(rel)
                         title_map.append((title, link_path))
                     break
@@ -673,7 +673,7 @@ def _create_page(args: dict) -> str:
     else:
         created = today
 
-    tag_str = ", ".join(f'"{ t}"' for t in (tags if isinstance(tags, list) else [tags]))
+    tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]))
     src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]))
     frontmatter = (
         f'---\ntitle: "{title}"\ntype: {pg_type}\ntags: [{tag_str}]\n'
