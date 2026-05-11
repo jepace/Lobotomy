@@ -379,7 +379,7 @@ def _prepend_log(entry: str) -> str:
     text = log_path.read_text(encoding="utf-8")
 
     # Structure: frontmatter (---...---), prose paragraph, --- divider, then entries.
-    # Find the end of the frontmatter block (the closing ---).
+    # Find the end of the frontmatter block (the closing ***).
     fm_open = text.find("---")
     fm_close = text.find("\n---", fm_open + 3)
     if fm_close == -1:
@@ -487,9 +487,15 @@ def _rebuild_index(args: dict) -> str:
             continue
         sub_index = d / "index.md"
         existing_sub = sub_index.read_text(encoding="utf-8") if sub_index.exists() else ""
-        cut_sub = existing_sub.find("\n## ")
-        prose_sub = (existing_sub[:cut_sub].rstrip() if cut_sub != -1
-                     else f"# {heading}\n\n_Last updated: {today}_")
+        # Split at the first --- separator after the closing frontmatter ---.
+        fm_end_sub = existing_sub.find("\n---", existing_sub.find("---") + 3)
+        divider_sub = existing_sub.find("\n---\n", fm_end_sub + 4) if fm_end_sub != -1 else -1
+        if divider_sub != -1:
+            prose_sub = existing_sub[:divider_sub].rstrip()
+        elif existing_sub.strip():
+            prose_sub = existing_sub.rstrip()
+        else:
+            prose_sub = f"# {heading}\n\n_Last updated: {today}_"
         prose_sub = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose_sub)
         # Rewrite entries with relative paths (no subdir/ prefix needed from inside the subdir)
         block_local = section_blocks[subdir].replace(f"({subdir}/", "(")

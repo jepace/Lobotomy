@@ -44,7 +44,7 @@ def build_title_index() -> list[tuple[str, Path]]:
 
 def autolink_page(target_p: Path, title_index: list[tuple[str, Path]]) -> int:
     up_parts = target_p.parent.relative_to(WIKI_DIR).parts
-    up = "/".join([".."] * len(up_parts))
+    up = "/".join([".." ] * len(up_parts))
 
     title_map = []
     for title, src_p in title_index:
@@ -62,6 +62,10 @@ def autolink_page(target_p: Path, title_index: list[tuple[str, Path]]) -> int:
         (fm_match.group(1), content[len(fm_match.group(1)):])
         if fm_match else ("", content)
     )
+    # Split off the H1 title line so we never linkify inside it.
+    h1_match = re.match(r"^(# [^\n]*\n)", body)
+    h1_line = h1_match.group(1) if h1_match else ""
+    body = body[len(h1_line):]
 
     linked = 0
     for title, link_path in title_map:
@@ -87,7 +91,7 @@ def autolink_page(target_p: Path, title_index: list[tuple[str, Path]]) -> int:
             linked += 1
 
     if linked and not DRY_RUN:
-        target_p.write_text(frontmatter + body, encoding="utf-8")
+        target_p.write_text(frontmatter + h1_line + body, encoding="utf-8")
     return linked
 
 
