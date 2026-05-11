@@ -534,7 +534,7 @@ def _autolink(args: dict) -> str:
                     if title:
                         rel = f.relative_to(WIKI_DIR)
                         up_parts = target_p.parent.relative_to(WIKI_DIR).parts
-                        up = "/".join([".."] * len(up_parts))
+                        up = "/".join(["..."] * len(up_parts))
                         link_path = f"{up}/{rel}" if up else str(rel)
                         title_map.append((title, link_path))
                     break
@@ -575,6 +575,96 @@ def _autolink(args: dict) -> str:
 
     target_p.write_text(frontmatter + body, encoding="utf-8")
     return f"Autolinked {linked} title(s) in {target_str}."
+
+
+def _autolink_all(_args: dict) -> str:
+    """Run autolink on every page in the wiki — links first-occurrence of every
+    other wiki page title on every page, in both directions."""
+    import re
+
+    SUBDIRS = ("sources", "entities", "concepts", "synthesis")
+
+    # Build the full title map once: title -> (subdir, filename)
+    pages: list[tuple[str, Path]] = []  # (title, path)
+    for sd in SUBDIRS:
+        d = WIKI_DIR / sd
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.md")):
+            if f.name == "index.md":
+                continue
+            text = f.read_text(encoding="utf-8", errors="replace")
+            m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+            if not m:
+                continue
+            for line in m.group(1).splitlines():
+                if line.startswith("title:"):
+                    title = line.split(":", 1)[1].strip().strip('"\'')
+                    if title:
+                        pages.append((title, f))
+                    break
+
+    total_linked = 0
+    pages_changed = 0
+
+    for sd in SUBDIRS:
+        d = WIKI_DIR / sd
+        if not d.is_dir():
+            continue
+        for target_p in sorted(d.glob("*.md")):
+            if target_p.name == "index.md":
+                continue
+
+            # Build title->link_path map relative to this page's directory
+            up_parts = target_p.parent.relative_to(WIKI_DIR).parts
+            up = "/".join(["..."] * len(up_parts))
+
+            title_map: list[tuple[str, str]] = []
+            for title, src_p in pages:
+                if src_p.resolve() == target_p.resolve():
+                    continue
+                rel = src_p.relative_to(WIKI_DIR)
+                link_path = f"{up}/{rel}" if up else str(rel)
+                title_map.append((title, link_path))
+
+            title_map.sort(key=lambda x: -len(x[0]))
+
+            content  = target_p.read_text(encoding="utf-8", errors="replace")
+            fm_match = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
+            frontmatter, body = (
+                (fm_match.group(1), content[len(fm_match.group(1)):])
+                if fm_match else ("", content)
+            )
+
+            linked = 0
+            for title, link_path in title_map:
+                combined = re.compile(
+                    r'(\[[^\]]*\]\([^)]*\))'
+                    r'|(?<!\w)(' + re.escape(title) + r')(?!\w)',
+                    re.IGNORECASE,
+                )
+                replaced = False
+
+                def _replacer(m, p=link_path):
+                    nonlocal replaced
+                    if m.group(1):
+                        return m.group(1)
+                    if replaced:
+                        return m.group(2)
+                    replaced = True
+                    return f"[{m.group(2)}]({p})"
+
+                new_body = combined.sub(_replacer, body)
+                if replaced:
+                    body = new_body
+                    linked += 1
+
+            if linked:
+                target_p.write_text(frontmatter + body, encoding="utf-8")
+                total_linked += linked
+                pages_changed += 1
+
+    return f"Autolinked {total_linked} title(s) across {pages_changed} page(s)."
 
 
 def _fix_wiki_links(_args: dict) -> str:
@@ -690,8 +780,8 @@ def _create_page(args: dict) -> str:
     else:
         created = today
 
-    tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]))
-    src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]))
+    tag_str = ", ".join(f'"{ t}"' for t in (tags if isinstance(tags, list) else [tags]))
+    src_str = ", ".join(f'"{ s}"' for s in (sources if isinstance(sources, list) else [sources]))
     frontmatter = (
         f'---\ntitle: "{title}"\ntype: {pg_type}\ntags: [{tag_str}]\n'
         f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n---\n\n'
@@ -791,6 +881,7 @@ TOOL_FNS = {
     "prepend_log":      lambda a: _prepend_log(a["entry"]),
     "rebuild_index":    _rebuild_index,
     "autolink":         _autolink,
+    "autolink_all":     _autolink_all,
     "fix_wiki_links":   _fix_wiki_links,
     "search_wiki":      _search_wiki,
     "create_page":      _create_page,
@@ -945,6 +1036,18 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
+            "name":        "autolink_all",
+            "description": (
+                "Scan every page in the entire wiki and add first-occurrence links for every "
+                "other wiki page title — both forward and backward. Pure heuristic, no AI needed. "
+                "Use this to linkify the whole wiki in one call, or after a batch ingest."
+            ),
+            "parameters":  {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name":        "fix_wiki_links",
             "description": (
                 "Scan all wiki pages and repair bad relative links. Fixes: "
@@ -1043,7 +1146,8 @@ def system_prompt() -> str:
         "| write_file | Write wiki pages (raw/ is blocked). Use create_page for new pages instead. |\n"
         "| create_page | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
-        "| autolink | Call once per page after writing — adds cross-links automatically. |\n"
+        "| autolink | Call once per new page after writing — links titles on that page. |\n"
+        "| autolink_all | Run once to linkify every page in the entire wiki in one shot. |\n"
         "| fix_wiki_links | Run in Step 11 — repairs missing ../ prefixes in cross-links. |\n"
         "| rebuild_index | Call once at end of ingest — rebuilds wiki/index.md from frontmatter. |\n"
         "| prepend_log | Add entry to wiki/log.md. Never use write_file for the log. |\n"
