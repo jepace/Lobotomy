@@ -1425,7 +1425,9 @@ def api_inbound_email():
     To send an article: email your inbound address with the URL in the body,
     or forward an email with a readable body.
     """
+    log.debug("Inbound email webhook received")
     webhook_secret = cfg_get("api", "resend_webhook_secret", "").strip()
+    log.debug("Webhook secret configured: %s", bool(webhook_secret))
 
     # Verify Resend/Svix webhook signature if secret is configured
     if webhook_secret:
@@ -1434,14 +1436,21 @@ def api_inbound_email():
             msg_id        = request.headers.get("svix-id", "")
             msg_timestamp = request.headers.get("svix-timestamp", "")
             msg_signature = request.headers.get("svix-signature", "")
+            log.debug("Verifying webhook signature: id=%s timestamp=%s sig_present=%s",
+                     msg_id[:8] if msg_id else "missing",
+                     msg_timestamp,
+                     bool(msg_signature))
             if not (msg_id and msg_timestamp and msg_signature):
+                log.warning("Inbound email: missing webhook signature headers")
                 return {"error": "Missing webhook signature headers"}, 401
             # Reject timestamps older than 5 minutes
             try:
                 ts = int(msg_timestamp)
                 if abs(_time.time() - ts) > 300:
+                    log.warning("Inbound email: webhook timestamp too old (%s)", msg_timestamp)
                     return {"error": "Webhook timestamp too old"}, 401
             except ValueError:
+                log.warning("Inbound email: invalid timestamp format")
                 return {"error": "Invalid timestamp"}, 401
             signed_content = f"{msg_id}.{msg_timestamp}.{request.get_data(as_text=True)}"
             secret_bytes   = base64.b64decode(webhook_secret.removeprefix("whsec_"))
@@ -1451,18 +1460,23 @@ def api_inbound_email():
             # svix-signature may contain multiple comma-separated "v1,<sig>" entries
             sigs = [s.split(",", 1)[1] for s in msg_signature.split(" ") if "," in s]
             if not any(hmac.compare_digest(expected, s) for s in sigs):
+                log.warning("Inbound email: signature verification failed")
                 return {"error": "Invalid signature"}, 401
+            log.debug("Webhook signature verified successfully")
         except Exception as e:
-            log.warning("Inbound email signature check failed: %s", e)
+            log.warning("Inbound email signature check failed: %s", e, exc_info=True)
             return {"error": "Signature verification error"}, 401
 
     data = request.get_json(silent=True) or {}
+    log.debug("Inbound email payload keys: %s", list(data.keys()))
 
     # Reject if a magic inbound address is configured and this email wasn't sent to it
     inbound_address = cfg_get("api", "resend_inbound_address", "").strip().lower()
     if inbound_address:
         to_field = (data.get("to") or data.get("To") or "").strip().lower()
+        log.debug("Inbound address filter enabled: %s, to_field: %s", inbound_address, to_field)
         if inbound_address not in to_field:
+            log.info("Inbound email filtered: not sent to configured inbound address (%s)", inbound_address)
             return {"ok": True}  # silently discard spam
 
     # Resend inbound email payload fields
@@ -1470,7 +1484,13 @@ def api_inbound_email():
     from_addr = (data.get("from")    or data.get("From")    or "").strip()
     text_body = (data.get("text")    or data.get("plain")   or "").strip()
 
+    log.debug("Inbound email: subject=%s, from=%s, body_len=%d",
+             subject[:60] if subject else "(empty)",
+             from_addr,
+             len(text_body))
+
     if not subject and not text_body:
+        log.warning("Inbound email: rejected as empty (no subject and no body)")
         return {"error": "Empty email"}, 400
 
     title = subject or "Email article"
@@ -1483,38 +1503,45 @@ def api_inbound_email():
             line = line.strip()
             if re.match(r"https?://\S+$", line):
                 url = line
+                log.debug("Found URL in email body: %s", url)
                 break
 
     # Fetch the URL if found, otherwise use the text body as content
     content = ""
     if url:
-        fetched, _ = _clip_fetch(url)
+        log.debug("Attempting to fetch URL content from: %s", url)
+        fetched, fetch_err = _clip_fetch(url)
         if fetched:
             content = fetched
+            log.debug("URL fetch succeeded, content length: %d", len(content))
             if not subject:
                 for line in content.splitlines():
                     line = line.strip().lstrip("#").strip()
                     if line and not line.startswith("<"):
                         title = line[:120]
+                        log.debug("Auto-extracted title from fetched content: %s", title[:60])
                         break
         else:
+            log.debug("URL fetch failed (%s), using email body as content", fetch_err)
             content = text_body
     else:
+        log.debug("No URL found in email body, using body as content")
         content = text_body
 
     # Deduplication on URL
     inbox_dir = RAW_DIR / "inbox"
     inbox_dir.mkdir(parents=True, exist_ok=True)
     if url:
+        log.debug("Checking for duplicate URL in inbox")
         for existing in inbox_dir.glob("*.md"):
             try:
                 meta, _ = _parse_frontmatter(
                     existing.read_text(encoding="utf-8", errors="replace"))
                 if meta.get("url", "").strip() == url:
-                    log.info("Inbound email duplicate: %s", url)
+                    log.info("Inbound email duplicate: %s (existing file: %s)", url, existing.name)
                     return {"ok": True, "duplicate": True, "filename": existing.name}, 200
-            except (OSError, ValueError, KeyError):
-                pass
+            except (OSError, ValueError, KeyError) as e:
+                log.debug("Error checking duplicate for %s: %s", existing.name, e)
 
     # Build filename
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "email"
@@ -1524,6 +1551,7 @@ def api_inbound_email():
         import time as _t
         base_name = f"{slug}-{int(_t.time())}.md"
         dest = inbox_dir / base_name
+    log.debug("Will save to: %s", dest)
 
     today = datetime.date.today().isoformat()
     fm = ["---", f'title: "{title}"']
@@ -1535,9 +1563,13 @@ def api_inbound_email():
         fm.append(f"author: {from_addr}")
     fm += ["---", ""]
 
-    dest.write_text("\n".join(fm) + content, encoding="utf-8")
-    log.info("Inbound email saved: %s from %s", base_name, from_addr)
-    return {"ok": True, "duplicate": False, "filename": base_name}, 201
+    try:
+        dest.write_text("\n".join(fm) + content, encoding="utf-8")
+        log.info("Inbound email saved: %s from %s (size: %d bytes)", base_name, from_addr, len("\n".join(fm) + content))
+        return {"ok": True, "duplicate": False, "filename": base_name}, 201
+    except Exception as e:
+        log.error("Failed to save inbound email: %s", e, exc_info=True)
+        return {"error": "Failed to save email"}, 500
 
 
 @app.route("/api/inbox")
