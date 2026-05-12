@@ -1474,6 +1474,10 @@ def api_inbound_email():
     data = payload.get("data") or payload
     log.debug("Inbound email data keys: %s", list(data.keys()) if isinstance(data, dict) else type(data).__name__)
 
+    # Debug: log full data structure for troubleshooting (redact sensitive info)
+    safe_data = {k: v for k, v in data.items() if k not in ('from', 'to', 'cc', 'bcc')}
+    log.debug("Inbound email data (truncated): %s", str(safe_data)[:500])
+
     # Reject if a magic inbound address is configured and this email wasn't sent to it
     inbound_address = cfg_get("api", "resend_inbound_address", "").strip().lower()
     if inbound_address:
@@ -1491,7 +1495,7 @@ def api_inbound_email():
     # Resend inbound email payload fields
     subject   = (data.get("subject") or data.get("Subject") or "").strip()
     from_addr = (data.get("from")    or data.get("From")    or "").strip()
-    text_body = (data.get("text")    or data.get("plain")   or "").strip()
+    text_body = (data.get("text")    or data.get("plain")   or data.get("body") or "").strip()
 
     # Fall back to HTML body with tags stripped if plain text is absent
     if not text_body:
@@ -1500,6 +1504,13 @@ def api_inbound_email():
             text_body = re.sub(r"<[^>]+>", " ", html_body)
             text_body = re.sub(r"\s{2,}", " ", text_body).strip()
             log.debug("Fell back to HTML body, stripped length: %d", len(text_body))
+
+    # Log attachments info for debugging
+    attachments = data.get("attachments") or []
+    if attachments:
+        log.debug("Email has %d attachment(s): %s", len(attachments),
+                 [f"{a.get('filename', 'unknown')} ({a.get('content_type', 'unknown')})"
+                  for a in (attachments if isinstance(attachments, list) else [])][:5])
 
     log.debug("Inbound email: subject=%s, from=%s, body_len=%d",
              subject[:60] if subject else "(empty)",
