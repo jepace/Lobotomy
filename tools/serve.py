@@ -1472,6 +1472,7 @@ def api_inbound_email():
 
     # Resend wraps email fields under payload['data']
     data = payload.get("data") or payload
+    log.debug("Inbound email data keys: %s", list(data.keys()) if isinstance(data, dict) else type(data).__name__)
 
     # Reject if a magic inbound address is configured and this email wasn't sent to it
     inbound_address = cfg_get("api", "resend_inbound_address", "").strip().lower()
@@ -1491,6 +1492,14 @@ def api_inbound_email():
     subject   = (data.get("subject") or data.get("Subject") or "").strip()
     from_addr = (data.get("from")    or data.get("From")    or "").strip()
     text_body = (data.get("text")    or data.get("plain")   or "").strip()
+
+    # Fall back to HTML body with tags stripped if plain text is absent
+    if not text_body:
+        html_body = (data.get("html") or data.get("Html") or "").strip()
+        if html_body:
+            text_body = re.sub(r"<[^>]+>", " ", html_body)
+            text_body = re.sub(r"\s{2,}", " ", text_body).strip()
+            log.debug("Fell back to HTML body, stripped length: %d", len(text_body))
 
     log.debug("Inbound email: subject=%s, from=%s, body_len=%d",
              subject[:60] if subject else "(empty)",
