@@ -1496,6 +1496,38 @@ def api_inbound_email():
     subject   = (data.get("subject") or data.get("Subject") or "").strip()
     from_addr = (data.get("from")    or data.get("From")    or "").strip()
     text_body = (data.get("text")    or data.get("plain")   or data.get("body") or "").strip()
+    email_id  = data.get("email_id", "")
+
+    # Resend webhook doesn't include body — fetch from API if email_id available
+    if not text_body and email_id:
+        log.debug("No body in webhook, fetching from Resend API using email_id: %s", email_id)
+        try:
+            import urllib.request
+            import urllib.error
+            resend_api_key = cfg_get("email", "resend_api_key", "").strip()
+            if resend_api_key:
+                headers = {
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Accept": "application/json",
+                }
+                req = urllib.request.Request(
+                    f"https://api.resend.com/emails/{email_id}",
+                    headers=headers
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    import json as _json
+                    email_data = _json.loads(resp.read().decode())
+                    text_body = (email_data.get("text") or "").strip()
+                    if not text_body:
+                        html_body = (email_data.get("html") or "").strip()
+                        if html_body:
+                            text_body = re.sub(r"<[^>]+>", " ", html_body)
+                            text_body = re.sub(r"\s{2,}", " ", text_body).strip()
+                    log.debug("Fetched from API, body_len: %d", len(text_body))
+            else:
+                log.warning("Inbound email has no body and no Resend API key configured")
+        except Exception as e:
+            log.warning("Failed to fetch email from Resend API: %s", e)
 
     # Fall back to HTML body with tags stripped if plain text is absent
     if not text_body:
@@ -1503,7 +1535,7 @@ def api_inbound_email():
         if html_body:
             text_body = re.sub(r"<[^>]+>", " ", html_body)
             text_body = re.sub(r"\s{2,}", " ", text_body).strip()
-            log.debug("Fell back to HTML body, stripped length: %d", len(text_body))
+            log.debug("Using HTML from webhook, stripped length: %d", len(text_body))
 
     # Log attachments info for debugging
     attachments = data.get("attachments") or []
