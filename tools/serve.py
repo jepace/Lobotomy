@@ -1467,8 +1467,11 @@ def api_inbound_email():
             log.warning("Inbound email signature check failed: %s", e, exc_info=True)
             return {"error": "Signature verification error"}, 401
 
-    data = request.get_json(silent=True) or {}
-    log.debug("Inbound email payload keys: %s", list(data.keys()))
+    payload = request.get_json(silent=True) or {}
+    log.debug("Inbound email payload keys: %s", list(payload.keys()))
+
+    # Resend wraps email fields under payload['data']
+    data = payload.get("data") or payload
 
     # Reject if a magic inbound address is configured and this email wasn't sent to it
     inbound_address = cfg_get("api", "resend_inbound_address", "").strip().lower()
@@ -1480,7 +1483,7 @@ def api_inbound_email():
             return {"ok": True}  # silently discard spam
 
     # Resend inbound email payload fields
-    subject  = (data.get("subject") or data.get("Subject") or "").strip()
+    subject   = (data.get("subject") or data.get("Subject") or "").strip()
     from_addr = (data.get("from")    or data.get("From")    or "").strip()
     text_body = (data.get("text")    or data.get("plain")   or "").strip()
 
