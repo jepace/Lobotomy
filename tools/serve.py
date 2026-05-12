@@ -1476,7 +1476,12 @@ def api_inbound_email():
     # Reject if a magic inbound address is configured and this email wasn't sent to it
     inbound_address = cfg_get("api", "resend_inbound_address", "").strip().lower()
     if inbound_address:
-        to_field = (data.get("to") or data.get("To") or "").strip().lower()
+        to_raw = data.get("to") or data.get("To") or ""
+        # Resend sends 'to' as a list of email addresses
+        if isinstance(to_raw, list):
+            to_field = " ".join(to_raw).lower()
+        else:
+            to_field = str(to_raw).lower()
         log.debug("Inbound address filter enabled: %s, to_field: %s", inbound_address, to_field)
         if inbound_address not in to_field:
             log.info("Inbound email filtered: not sent to configured inbound address (%s)", inbound_address)
