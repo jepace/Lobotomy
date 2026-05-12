@@ -1454,6 +1454,13 @@ def api_inbound_email():
 
     data = request.get_json(silent=True) or {}
 
+    # Reject if a magic inbound address is configured and this email wasn't sent to it
+    inbound_address = cfg_get("api", "resend_inbound_address", "").strip().lower()
+    if inbound_address:
+        to_field = (data.get("to") or data.get("To") or "").strip().lower()
+        if inbound_address not in to_field:
+            return {"ok": True}  # silently discard spam
+
     # Resend inbound email payload fields
     subject  = (data.get("subject") or data.get("Subject") or "").strip()
     from_addr = (data.get("from")    or data.get("From")    or "").strip()
