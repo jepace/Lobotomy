@@ -72,6 +72,7 @@ tags: [tag1, tag2]
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 sources: ["sources/source-slug.md", "sources/other-slug.md"]
+url: "https://original-article-url"   # source pages only; omit on entity/concept/synthesis pages
 ---
 
 # Human Readable Title
@@ -89,6 +90,7 @@ sources: ["sources/source-slug.md", "sources/other-slug.md"]
 | `created` | YYYY-MM-DD | Date first created. Never change. |
 | `updated` | YYYY-MM-DD | Date of most recent edit. Update on every write. |
 | `sources` | list of strings | Relative paths from `wiki/` to supporting source pages |
+| `url` | string (quoted) | Original article URL. Source pages only. |
 
 ### Standard heading structures per page type
 
@@ -175,6 +177,8 @@ sections sequentially before proceeding.
 ### Step 3 — Create a source summary page
 Call `create_page` with `path=wiki/sources/{source-slug}.md`, `type=source`, and the body below.
 (Do not write frontmatter manually — `create_page` fills in dates automatically.)
+
+Include `url:` in frontmatter if the source has an original URL (from fetch_url or inbox metadata).
 
 Required sections:
 - **Summary**: 3–5 paragraphs synthesizing the source's main content and contribution
