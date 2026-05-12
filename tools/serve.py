@@ -57,545 +57,144 @@ sys.path.insert(0, str(Path(__file__).parent))
 def _setup_logging() -> None:
     _log_file = Path(__file__).resolve().parent / "server.log"
     fmt = logging.Formatter(
-        "%(asctime)s %(levelname)-8s %(name)s  %(message)s",
+        "%(asctime)s  %(name)-22s  %(levelname)-8s  %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
-
     fh = logging.handlers.RotatingFileHandler(
-        _log_file, maxBytes=5_000_000, backupCount=3, encoding="utf-8"
+        _log_file, maxBytes=2_000_000, backupCount=3, encoding="utf-8"
     )
-    fh.setLevel(logging.DEBUG)
     fh.setFormatter(fmt)
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+    root = logging.getLogger("lobotomy")
+    root.setLevel(logging.DEBUG)
     root.addHandler(fh)
-
-    ch = logging.StreamHandler(sys.stdout)
-    ch.setLevel(logging.INFO)
-    ch.setFormatter(fmt)
-    root.addHandler(ch)
+    root.addHandler(sh)
 
 _setup_logging()
 log = logging.getLogger("lobotomy.serve")
 
-from agent import (
-    REPO_ROOT, WIKI_DIR, RAW_DIR,
-    get_client_and_model,
-    run_agent_streaming,
-    system_prompt,
-    orientation_message,
-)
-from config import cfg_get, cfg_int, cfg_bool
-try:
-    from auth import (
-        auth_bp, require_login, get_current_user,
-        maybe_send_verification, _resend_ready,
-    )
-    HAS_AUTH = True
-except ImportError:
-    HAS_AUTH = False
+from config import cfg_get, cfg_bool, cfg_int, validate_config
+from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
+                   get_client_and_model, orientation_message,
+                   stream_agent_turn, system_prompt)
+
+BLOG_DIR = REPO_ROOT / "blog"
+from job_queue import JobQueue
+from task_manager import read_tasks, write_tasks, get_all_contexts, get_all_projects, TASKS_FILE
+from auth  import (user_exists, create_user, authenticate, get_user, update_password,
+                   set_verified, create_token, consume_token, record_attempt,
+                   is_locked_out, send_verification_email, send_reset_email,
+                   maybe_send_verification, _resend_ready,
+                   get_settings, update_settings)
 
 # ---------------------------------------------------------------------------
-# Flask app
+# App setup
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__, template_folder="templates")
-app.secret_key = cfg_get("web", "secret_key") or os.urandom(32)
 
-if HAS_AUTH:
-    app.register_blueprint(auth_bp)
+_secret_file = WIKI_DIR / ".secret"
+_secret = cfg_get("server", "secret")
+if _secret:
+    app.secret_key = _secret
+elif _secret_file.exists():
+    app.secret_key = _secret_file.read_text().strip()
+else:
+    _key = os.urandom(24).hex()
+    _secret_file.write_text(_key)
+    app.secret_key = _key
 
-def require_login(f):  # noqa: F811
-    if not HAS_AUTH:
-        return f
-    from auth import require_login as _rl
-    return _rl(f)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY = True,
+    SESSION_COOKIE_SAMESITE = "Lax",
+    SESSION_COOKIE_SECURE   = cfg_bool("server", "https"),
+)
 
-# ---------------------------------------------------------------------------
-# Setup / onboarding
-# ---------------------------------------------------------------------------
-
-def _is_configured() -> bool:
-    client, _, err = get_client_and_model()
-    return err is None
+@app.after_request
+def add_cors_headers(response):
+    """Add CORS headers for cross-origin requests."""
+    if request.path.startswith("/api/"):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        response.headers["Access-Control-Max-Age"] = "3600"
+    return response
 
 @app.before_request
-def _check_setup():
-    if request.endpoint in ("setup", "static"):
-        return
-    if HAS_AUTH and request.endpoint and request.endpoint.startswith("auth_"):
-        return
-    if not _is_configured():
-        return redirect(url_for("setup"))
-    if HAS_AUTH:
-        from auth import require_login as _rl
-        if request.endpoint not in ("setup",) and not request.path.startswith("/auth"):
-            pass
+def handle_preflight():
+    """Handle CORS preflight requests."""
+    if request.method == "OPTIONS" and request.path.startswith("/api/"):
+        response = make_response("", 204)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        response.headers["Access-Control-Max-Age"] = "3600"
+        return response
+
+# ---------------------------------------------------------------------------
+# Auth helpers
+# ---------------------------------------------------------------------------
+
+def require_login(f):
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        if not user_exists():
+            return redirect(url_for("setup"))
+        if not session.get("logged_in"):
+            next_url = request.full_path.rstrip("?")
+            return redirect(url_for("auth_login", next=next_url))
+        return f(*args, **kwargs)
+    return decorated
+
 
 @app.route("/setup", methods=["GET", "POST"])
 def setup():
-    error = email = None
-    if request.method == "POST":
-        action = request.form.get("action")
-        if action == "save_llm":
-            from config import cfg_set
-            provider = request.form.get("provider", "").strip()
-            api_key  = request.form.get("api_key", "").strip()
-            model    = request.form.get("model", "").strip()
-            if provider: cfg_set("llm", "provider", provider)
-            if api_key:  cfg_set("llm", "api_key",  api_key)
-            if model:    cfg_set("llm", "model",     model)
-            if _is_configured():
-                return redirect(url_for("index"))
-            error = "Configuration saved but API key test failed. Check your key."
-        elif action == "register" and HAS_AUTH:
-            username = request.form.get("username", "").strip()
-            password = request.form.get("password", "").strip()
-            email    = request.form.get("email", "").strip()
-            if not username or not password:
-                error = "Username and password are required."
-            else:
-                from auth import create_user, get_user
-                if get_user(username):
-                    error = f"User '{username}' already exists."
-                else:
-                    create_user(username, password, email=email, role="admin")
-                    if email and _resend_ready():
-                        maybe_send_verification(username, email)
-                    return redirect(url_for("auth_login"))
-    from agent import PROVIDERS
-    return render_template("setup.html", error=error, email=email,
-                           providers=list(PROVIDERS.keys()))
-
-# ---------------------------------------------------------------------------
-# Auth wrappers (no-op when auth module absent)
-# ---------------------------------------------------------------------------
-
-def get_current_user():  # noqa: F811
-    if not HAS_AUTH:
-        return {"username": "local", "role": "admin"}
-    from auth import get_current_user as _gcu
-    return _gcu()
-
-# ---------------------------------------------------------------------------
-# Auth routes (only when auth module is present)
-# ---------------------------------------------------------------------------
-
-@app.route("/auth/login", methods=["GET", "POST"])
-def auth_login():
-    if not HAS_AUTH:
-        return redirect(url_for("index"))
-    next_url = request.args.get("next", "")
+    if user_exists():
+        return redirect(url_for("auth_login"))
     error = None
+    email = ""
     if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "").strip()
-        from auth import check_password, get_user
-        u = get_user(username)
-        if u and check_password(u, password):
-            session["username"] = username
-            session.permanent = True
-            app.permanent_session_lifetime = datetime.timedelta(days=30)
-            if not next_url.startswith("/") or "//" in next_url or "%2f" in next_url.lower():
-                next_url = url_for("index")
-            return redirect(next_url)
-        error = "Invalid username or password."
-    return render_template("login.html", error=error)
-
-@app.route("/auth/logout")
-def auth_logout():
-    session.clear()
-    return redirect(url_for("auth_login"))
-
-@app.route("/auth/verify")
-def auth_verify():
-    if not HAS_AUTH:
-        return redirect(url_for("index"))
-    token = request.args.get("token", "")
-    from auth import verify_email_token, get_user
-    username = verify_email_token(token)
-    if username:
-        return render_template("verify_done.html")
-    return render_template("verify_done.html", error="This link is invalid or has expired.")
-
-@app.route("/auth/verify-pending")
-def auth_verify_pending():
-    msg = request.args.get("msg", "")
-    return render_template("verify_pending.html", message=msg)
-
-@app.route("/auth/resend-verification", methods=["POST"])
-def auth_resend_verification():
-    if not HAS_AUTH:
-        return redirect(url_for("index"))
-    username = request.form.get("username", "").strip()
-    from auth import get_user
-    u = get_user(username)
-    msg = "If that account exists and has an unverified email, a new link has been sent."
-    if u and u.get("email") and not u.get("email_verified") and _resend_ready():
-        maybe_send_verification(username, u["email"])
-    return render_template("verify_pending.html", message=msg)
-
-@app.route("/auth/forgot-password", methods=["GET", "POST"])
-def auth_forgot_password():
-    message = None
-    if request.method == "POST" and HAS_AUTH:
-        email = request.form.get("email", "").strip()
-        from auth import request_password_reset
-        message = request_password_reset(email)
-    return render_template("forgot_password.html", message=message)
-
-@app.route("/auth/reset-password", methods=["GET", "POST"])
-def auth_reset_password():
-    if not HAS_AUTH:
-        return redirect(url_for("index"))
-    token = request.args.get("token", "") or request.form.get("token", "")
-    error = None
-    if request.method == "POST":
-        password = request.form.get("password", "").strip()
-        confirm  = request.form.get("confirm", "").strip()
-        if password != confirm:
+        email    = request.form.get("email", "").strip()
+        password = request.form.get("password", "")
+        confirm  = request.form.get("confirm", "")
+        if not email or not password:
+            error = "Email and password are required."
+        elif password != confirm:
             error = "Passwords do not match."
         elif len(password) < 8:
             error = "Password must be at least 8 characters."
         else:
-            from auth import reset_password_with_token
-            ok = reset_password_with_token(token, password)
-            if ok:
-                return render_template("login.html",
-                    error="Password reset. Please log in with your new password.")
-            error = "This reset link is invalid or has expired."
-    return render_template("reset_password.html", token=token, error=error)
+            try:
+                create_user(email, password)
+                session["logged_in"] = True
+                session["email"] = email
+                return redirect(url_for("chat"))
+            except RuntimeError as e:
+                error = str(e)
+    return render_template("setup.html", error=error, email=email)
 
-@app.route("/settings")
-@require_login
-def user_settings():
-    u = get_current_user()
-    return render_template("settings.html",
-        username=u.get("username", ""),
-        email=u.get("email", ""),
-        email_verified=u.get("email_verified", False),
-        has_auth=HAS_AUTH,
-        resend_ready=_resend_ready() if HAS_AUTH else False,
-    )
 
-@app.route("/api/settings", methods=["POST"])
-@require_login
-def api_settings():
-    if not HAS_AUTH:
-        return {"ok": False, "error": "Auth not available"}, 400
-    u   = get_current_user()
-    data = request.get_json(silent=True) or {}
-    action = data.get("action")
-    if action == "change_password":
-        from auth import check_password, set_password, get_user
-        current  = data.get("current_password", "")
-        new_pw   = data.get("new_password", "")
-        if not check_password(get_user(u["username"]), current):
-            return {"ok": False, "error": "Current password is incorrect"}, 400
-        if len(new_pw) < 8:
-            return {"ok": False, "error": "New password must be at least 8 characters"}, 400
-        set_password(u["username"], new_pw)
-        return {"ok": True}
-    if action == "change_email":
-        email = data.get("email", "").strip()
-        from auth import update_user
-        update_user(u["username"], {"email": email, "email_verified": False})
-        if email and _resend_ready():
-            maybe_send_verification(u["username"], email)
-            return {"ok": True, "message": "Email updated. Verification email sent."}
-        return {"ok": True, "message": "Email updated."}
-    return {"ok": False, "error": "Unknown action"}, 400
-
-# ---------------------------------------------------------------------------
-# Chat history helpers
-# ---------------------------------------------------------------------------
-
-HISTORY_FILE = REPO_ROOT / "chat_history.json"
-_HISTORY_LOCK = __import__("threading").Lock()
-_MAX_HISTORY   = 200
-
-def _load_history() -> list:
-    if HISTORY_FILE.exists():
-        try:
-            return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return []
-
-def _save_history(hist: list) -> None:
-    HISTORY_FILE.write_text(
-        json.dumps(hist, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-def _trim_for_storage(msg: dict) -> dict:
-    """
-    Prepare a message for persistent storage.
-
-    0. Strip content from assistant messages that also have tool_calls — storing
-       both causes 'duplicate assistant message content' errors on replay.
-    1. Drop large base64 image blobs from user messages.
-    2. Drop binary tool-result content that would bloat the file.
-    """
-    msg = dict(msg)
-    if msg.get("role") == "assistant" and msg.get("tool_calls") and "content" in msg:
-        del msg["content"]
-    if msg.get("role") == "user" and isinstance(msg.get("content"), list):
-        cleaned = []
-        for blk in msg["content"]:
-            if isinstance(blk, dict) and blk.get("type") == "image_url":
-                url = blk.get("image_url", {}).get("url", "")
-                if url.startswith("data:"):
-                    continue
-            cleaned.append(blk)
-        msg["content"] = cleaned if cleaned else msg["content"]
-    if msg.get("role") == "tool" and isinstance(msg.get("content"), list):
-        cleaned = []
-        for blk in msg["content"]:
-            if isinstance(blk, dict) and blk.get("type") == "image_url":
-                continue
-            cleaned.append(blk)
-        msg["content"] = cleaned if cleaned else msg["content"]
-    return msg
-
-# ---------------------------------------------------------------------------
-# Index / redirects
-# ---------------------------------------------------------------------------
-
-@app.route("/")
-@require_login
-def index():
-    return redirect(url_for("chat"))
-
-# ---------------------------------------------------------------------------
-# Chat
-# ---------------------------------------------------------------------------
-
-@app.route("/chat")
-@require_login
-def chat():
-    return render_template("chat.html")
-
-@app.route("/api/chat-history")
-@require_login
-def api_chat_history():
-    with _HISTORY_LOCK:
-        hist = _load_history()
-    out = []
-    for msg in hist:
-        role = msg.get("role")
-        if role not in ("user", "assistant"):
-            continue
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            text_parts = [b.get("text", "") for b in content
-                          if isinstance(b, dict) and b.get("type") == "text"]
-            content = " ".join(text_parts).strip()
-        if content:
-            out.append({"role": role, "content": content})
-    return {"messages": out}
-
-@app.route("/api/clear-history", methods=["POST"])
-@require_login
-def api_clear_history():
-    with _HISTORY_LOCK:
-        _save_history([])
-    return {"ok": True}
-
-@app.route("/api/chat", methods=["POST"])
-@require_login
-def api_chat():
-    data    = request.get_json(silent=True) or {}
-    user_msg = data.get("message", "").strip()
-    files    = data.get("files", [])
-    if not user_msg and not files:
-        return {"error": "empty message"}, 400
-
-    client, model, err = get_client_and_model()
-    if err:
-        return {"error": err}, 500
-
-    with _HISTORY_LOCK:
-        history = _load_history()
-
-    if history and history[-1].get("role") == "assistant" and not history[-1].get("content"):
-        history = history[:-1]
-
-    if files:
-        content_parts = [{"type": "text", "text": user_msg}] if user_msg else []
-        for f in files:
-            name    = f.get("name", "file")
-            b64data = f.get("data", "")
-            mime    = f.get("type", "application/octet-stream")
-            if mime.startswith("image/"):
-                content_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{b64data}"},
-                })
-            else:
-                import base64
-                try:
-                    text = base64.b64decode(b64data).decode("utf-8", errors="replace")
-                    content_parts.append({
-                        "type": "text",
-                        "text": f"[Attached file: {name}]\n{text}",
-                    })
-                except Exception:
-                    content_parts.append({"type": "text", "text": f"[Attached file: {name} — could not decode]"})
-        history.append({"role": "user", "content": content_parts})
+@app.context_processor
+def inject_globals():
+    path = request.path
+    if path.startswith("/wiki"):
+        active = "wiki"
+    elif path.startswith("/tasks"):
+        active = "tasks"
+    elif path.startswith("/inbox"):
+        active = "inbox"
+    elif path.startswith("/blog"):
+        active = "blog"
+    elif path.startswith("/settings"):
+        active = "settings"
     else:
-        history.append({"role": "user", "content": user_msg})
-
-    sys_prompt = system_prompt()
-    if not history or history[0].get("role") != "assistant":
-        try:
-            orient = orientation_message()
-            history.insert(0, {"role": "assistant", "content": orient})
-        except Exception as e:
-            log.warning("orientation_message failed: %s", e)
-
-    def generate():
-        nonlocal history
-        new_msgs = []
-        try:
-            for chunk in run_agent_streaming(
-                client, model, sys_prompt, history
-            ):
-                if isinstance(chunk, str):
-                    yield f"data: {json.dumps({'text': chunk})}\n\n"
-                elif isinstance(chunk, dict) and chunk.get("type") == "new_messages":
-                    new_msgs = chunk["messages"]
-        except Exception as e:
-            log.exception("Agent error")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        yield "data: [DONE]\n\n"
-
-        to_store = list(history)
-        for m in new_msgs:
-            to_store.append(_trim_for_storage(m))
-        if len(to_store) > _MAX_HISTORY:
-            to_store = to_store[-_MAX_HISTORY:]
-        with _HISTORY_LOCK:
-            _save_history(to_store)
-
-    return Response(stream_with_context(generate()), mimetype="text/event-stream")
+        active = "chat"
+    user = get_user() if session.get("logged_in") else None
+    return {"active": active, "current_user": user}
 
 # ---------------------------------------------------------------------------
-# Inbox
-# ---------------------------------------------------------------------------
-
-INBOX_DIR = RAW_DIR / "inbox"
-
-@app.route("/inbox")
-@require_login
-def inbox():
-    return render_template("inbox.html")
-
-@app.route("/api/inbox")
-@require_login
-def api_inbox():
-    items = []
-    if INBOX_DIR.is_dir():
-        for f in sorted(INBOX_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-            if not f.is_file():
-                continue
-            stat = f.stat()
-            wikified = (WIKI_DIR / "sources" / (f.stem + ".md")).exists()
-            items.append({
-                "name":      f.name,
-                "size":      stat.st_size,
-                "mtime":     stat.st_mtime,
-                "wikified":  wikified,
-            })
-    return {"items": items}
-
-@app.route("/api/inbox/<path:filename>/delete", methods=["POST"])
-@require_login
-def api_inbox_delete(filename):
-    p = INBOX_DIR / filename
-    try:
-        p.resolve().relative_to(INBOX_DIR.resolve())
-    except ValueError:
-        abort(403)
-    if not p.exists():
-        abort(404)
-    p.unlink()
-    return {"ok": True}
-
-@app.route("/api/inbox/<path:filename>/view")
-@require_login
-def api_inbox_view(filename):
-    p = INBOX_DIR / filename
-    try:
-        p.resolve().relative_to(INBOX_DIR.resolve())
-    except ValueError:
-        abort(403)
-    if not p.exists():
-        abort(404)
-    suffix = p.suffix.lower()
-    if suffix == ".pdf":
-        return send_file(p, mimetype="application/pdf")
-    if suffix in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
-        import mimetypes
-        return send_file(p, mimetype=mimetypes.guess_type(str(p))[0] or "image/png")
-    text = p.read_text(encoding="utf-8", errors="replace")
-    return {"content": text}
-
-@app.route("/api/inbox/upload", methods=["POST"])
-@require_login
-def api_inbox_upload():
-    INBOX_DIR.mkdir(parents=True, exist_ok=True)
-    saved = []
-    for f in request.files.getlist("files"):
-        fname = Path(f.filename).name
-        if not fname:
-            continue
-        dest = INBOX_DIR / fname
-        base, ext = dest.stem, dest.suffix
-        i = 1
-        while dest.exists():
-            dest = INBOX_DIR / f"{base}-{i}{ext}"
-            i += 1
-        f.save(dest)
-        saved.append(dest.name)
-    return {"ok": True, "saved": saved}
-
-# ---------------------------------------------------------------------------
-# Blog
-# ---------------------------------------------------------------------------
-
-BLOG_DIR = REPO_ROOT / "blog"
-
-@app.route("/blog")
-@require_login
-def blog_list():
-    posts = []
-    if BLOG_DIR.is_dir():
-        for f in sorted(BLOG_DIR.glob("*.md"), reverse=True):
-            text = f.read_text(encoding="utf-8", errors="replace")
-            meta, body = _parse_frontmatter(text)
-            posts.append({
-                "slug":    f.stem,
-                "title":   meta.get("title", f.stem.replace("-", " ").title()),
-                "date":    meta.get("date", ""),
-                "excerpt": body.strip()[:200],
-            })
-    return render_template("blog.html", posts=posts)
-
-@app.route("/blog/<slug>")
-@require_login
-def blog_post(slug):
-    p = BLOG_DIR / f"{slug}.md"
-    if not p.exists():
-        abort(404)
-    text = p.read_text(encoding="utf-8", errors="replace")
-    meta, _ = _parse_frontmatter(text)
-    return render_template("blog-post.html",
-        content=render_md(p),
-        title=meta.get("title", slug.replace("-", " ").title()),
-    )
-
-# ---------------------------------------------------------------------------
-# Markdown rendering helpers
+# Blog helpers
 # ---------------------------------------------------------------------------
 
 def _parse_frontmatter(text: str) -> tuple:
@@ -616,49 +215,703 @@ def _parse_frontmatter(text: str) -> tuple:
             continue
         k, _, v = line.partition(":")
         k = k.strip()
-        v = v.strip().strip('"\'')
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+            v = v[1:-1]
         if v.startswith("[") and v.endswith("]"):
             inner = v[1:-1]
-            meta[k] = [x.strip().strip('"\'') for x in inner.split(",") if x.strip()]
+            meta[k] = [x.strip().strip('"').strip("'") for x in inner.split(",") if x.strip()]
+        elif v.lower() == "true":
+            meta[k] = True
+        elif v.lower() == "false":
+            meta[k] = False
         else:
             meta[k] = v
-    body = "\n".join(lines[end + 1:])
+    body = "\n".join(lines[end + 1:]).lstrip("\n")
     return meta, body
 
-def render_md(p: Path) -> str:
-    text = p.read_text(encoding="utf-8", errors="replace")
-    _, body = _parse_frontmatter(text)
-    extensions = ["tables", "fenced_code", "nl2br", "sane_lists"]
+
+def _rfc822(date_str: str) -> str:
     try:
-        extensions.append("mdx_linkify")
-    except Exception:
+        d = datetime.date.fromisoformat(str(date_str))
+        return d.strftime("%a, %d %b %Y 00:00:00 +0000")
+    except (ValueError, TypeError):
+        return ""
+
+
+def _blog_posts(published_only: bool = True) -> list:
+    BLOG_DIR.mkdir(parents=True, exist_ok=True)
+    posts = []
+    for f in sorted(BLOG_DIR.glob("*.md"), reverse=True):
+        text = f.read_text(encoding="utf-8")
+        meta, _ = _parse_frontmatter(text)
+        if published_only and not meta.get("published", False):
+            continue
+        posts.append({
+            "slug":      f.stem,
+            "title":     meta.get("title", f.stem),
+            "date":      meta.get("date", ""),
+            "tags":      meta.get("tags", []),
+            "summary":   meta.get("summary", ""),
+            "published": meta.get("published", False),
+        })
+    return posts
+
+# ---------------------------------------------------------------------------
+# Auth routes
+# ---------------------------------------------------------------------------
+
+@app.route("/auth/login", methods=["GET", "POST"])
+def auth_login():
+    if session.get("logged_in"):
+        return redirect(url_for("index"))
+
+    error = None
+    if request.method == "POST":
+        email    = (request.form.get("email")    or "").strip()
+        password = (request.form.get("password") or "").strip()
+        ok, msg  = authenticate(email, password)
+        record_attempt(ok)
+        if ok:
+            session.clear()
+            session["logged_in"]  = True
+            session.permanent     = True
+            app.permanent_session_lifetime = datetime.timedelta(days=30)
+            next_url = request.args.get("next") or ""
+            # Only follow safe relative paths (no scheme, no host, no path traversal)
+            if not next_url.startswith("/") or "//" in next_url or "%2f" in next_url.lower():
+                next_url = url_for("index")
+            return redirect(next_url)
+        error = msg
+
+    return render_template("login.html", error=error)
+
+
+@app.route("/auth/logout", methods=["POST"])
+def auth_logout():
+    session.clear()
+    return redirect(url_for("auth_login"))
+
+
+@app.route("/auth/verify/<token>")
+def auth_verify(token):
+    if consume_token(token, "verify"):
+        set_verified()
+        return render_template("verify_done.html")
+    return render_template("verify_done.html", error="This link is invalid or has expired.")
+
+
+@app.route("/auth/resend-verification", methods=["POST"])
+def auth_resend_verification():
+    sent = maybe_send_verification()
+    msg  = "Verification email sent." if sent else "Could not send email — check RESEND_API_KEY."
+    return render_template("verify_pending.html", message=msg)
+
+
+@app.route("/auth/forgot", methods=["GET", "POST"])
+def auth_forgot():
+    message = None
+    if request.method == "POST":
+        if not _resend_ready():
+            message = "Password reset requires Resend. Set RESEND_API_KEY."
+        else:
+            user = get_user()
+            if user:
+                token = create_token("reset", hours=1)
+                send_reset_email(user["email"], token)
+            # Always show the same message to prevent email enumeration
+            message = "If that email is registered, a reset link has been sent."
+    return render_template("forgot_password.html", message=message)
+
+
+@app.route("/auth/reset/<token>", methods=["GET", "POST"])
+def auth_reset(token):
+    error = None
+    if request.method == "POST":
+        pw1 = request.form.get("password",  "")
+        pw2 = request.form.get("password2", "")
+        if len(pw1) < 10:
+            error = "Password must be at least 10 characters."
+        elif pw1 != pw2:
+            error = "Passwords do not match."
+        else:
+            if consume_token(token, "reset"):
+                update_password(pw1)
+                session.clear()
+                return render_template("login.html",
+                                       message="Password updated. Please log in.")
+            error = "This reset link is invalid or has expired."
+    return render_template("reset_password.html", token=token, error=error)
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+@app.route("/settings")
+@require_login
+def settings_page():
+    user = get_user() or {}
+    settings = get_settings()
+    push_key = cfg_get("api", "push_key", "")
+    base_url = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
+    return render_template("settings.html",
+                           user=user,
+                           settings=settings,
+                           push_key=push_key,
+                           base_url=base_url)
+
+
+@app.route("/settings/password", methods=["POST"])
+@require_login
+def settings_password():
+    data = request.get_json(silent=True) or {}
+    current  = data.get("current", "")
+    new_pw   = data.get("new", "")
+    confirm  = data.get("confirm", "")
+    user = get_user()
+    if not user:
+        return {"error": "Not found"}, 404
+    from auth import _verify
+    if not _verify(current, user["pw_hash"]):
+        return {"error": "Current password is incorrect"}, 400
+    if len(new_pw) < 8:
+        return {"error": "Password must be at least 8 characters"}, 400
+    if new_pw != confirm:
+        return {"error": "Passwords do not match"}, 400
+    update_password(new_pw)
+    return {"ok": True}
+
+
+@app.route("/settings/preferences", methods=["POST"])
+@require_login
+def settings_preferences():
+    data = request.get_json(silent=True) or {}
+    allowed = {"daily_email_enabled", "daily_email_address"}
+    patch = {k: v for k, v in data.items() if k in allowed}
+    if patch:
+        update_settings(patch)
+    return {"ok": True}
+
+
+@app.route("/settings/profile", methods=["POST"])
+@require_login
+def settings_profile():
+    data = request.get_json(silent=True) or {}
+    allowed = {"display_name", "timezone"}
+    patch = {k: str(v).strip() for k, v in data.items() if k in allowed}
+    if patch:
+        update_settings(patch)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Chat history
+# ---------------------------------------------------------------------------
+
+HISTORY_FILE = WIKI_DIR / ".chat_history.json"
+MAX_HISTORY  = 80
+
+
+def load_history() -> list:
+    if HISTORY_FILE.exists():
+        try:
+            messages = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+            messages = _sanitize_history(messages)
+            return messages
+        except Exception as e:
+            log.error("Failed to load/sanitize chat history: %s", e, exc_info=True)
+    return []
+
+
+def _sanitize_history(messages: list) -> list:
+    """
+    Fix history for Gemini compatibility:
+    0. Strip content from assistant messages that also have tool_calls — storing
+       both causes Gemini's layer to split them into two model turns, placing a
+       function-call turn after a text turn which violates ordering rules.
+    1. Backfill 'name' in tool messages from preceding assistant tool_calls.
+    2. Remove incomplete tool-call sequences (assistant with tool_calls but
+       no following tool responses) — these are left by interrupted ingests
+       and cause "function call turn must come after user/function response" errors.
+    3. Drop any complete tool-call sequence where responses have unfixable empty names.
+    """
+    # Pass 0: strip content from tool-call messages to prevent Gemini ordering errors
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("tool_calls") and "content" in msg:
+            del msg["content"]
+
+    # Pass 1: backfill tool response names
+    id_to_name = {}
+    for msg in messages:
+        if msg.get("role") == "assistant":
+            for tc in (msg.get("tool_calls") or []):
+                tc_id = tc.get("id") or ""
+                tc_name = (tc.get("function") or {}).get("name") or ""
+                if tc_id and tc_name:
+                    id_to_name[tc_id] = tc_name
+        elif msg.get("role") == "tool" and not msg.get("name"):
+            tc_id = msg.get("tool_call_id") or ""
+            if tc_id in id_to_name:
+                msg["name"] = id_to_name[tc_id]
+
+    # Pass 2: drop incomplete or broken tool-call blocks
+    # An assistant message with tool_calls must be immediately followed by
+    # tool response(s) that all have non-empty names.  If the block is absent
+    # or any tool response still has an empty name after Pass 1, drop it.
+    # Any tool message outside a valid block is orphaned and also dropped.
+    clean = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            # Collect the span of tool responses that follow
+            j = i + 1
+            while j < len(messages) and messages[j].get("role") == "tool":
+                j += 1
+            if j == i + 1:
+                # No tool responses follow — incomplete block, drop it and stop
+                break
+            # Drop the block if any tool response still has an empty name
+            if any(not m.get("name") for m in messages[i + 1 : j]):
+                i = j  # skip to after the broken sequence; keep scanning
+                continue
+            # Valid block — include it
+            clean.extend(messages[i:j])
+            i = j
+        else:
+            # Any tool message here is orphaned (not part of a valid assistant
+            # tool_call block) — drop it unconditionally to prevent Gemini 400s.
+            if msg.get("role") == "tool":
+                i += 1
+                continue
+            clean.append(msg)
+            i += 1
+
+    return clean
+
+
+def save_history(messages: list) -> None:
+    """Clear history after every job so each new task starts with a clean context."""
+    clear_history()
+
+
+def clear_history() -> None:
+    if HISTORY_FILE.exists():
+        HISTORY_FILE.unlink()
+
+# ---------------------------------------------------------------------------
+# Markdown rendering
+# ---------------------------------------------------------------------------
+
+_MD_EXTENSIONS = ["tables", "toc", "fenced_code", "attr_list"]
+
+
+def _rewrite_md_link(href: str, from_page: Path) -> str:
+    if href.startswith(("http://", "https://", "/", "#", "mailto:")):
+        return href
+    resolved = (from_page.parent / href).resolve()
+    # Try wiki directory first
+    try:
+        rel = resolved.relative_to(WIKI_DIR.resolve())
+        # Strip .md extension for wiki links (router adds it back)
+        path_str = str(rel).replace("\\", "/")
+        if path_str.endswith(".md"):
+            path_str = path_str[:-3]
+        return f"/wiki/{path_str}"
+    except ValueError:
         pass
-    html = md_lib.markdown(body, extensions=extensions)
+    # Then try raw directory (keep extension for raw files)
+    try:
+        rel = resolved.relative_to(RAW_DIR.resolve())
+        return f"/raw/{rel}".replace("\\", "/")
+    except ValueError:
+        return href
+
+
+def render_md(path: Path) -> str:
+    if not path.exists():
+        return "<p><em>Page not found.</em></p>"
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
+    html = md_lib.markdown(text, extensions=_MD_EXTENSIONS)
+    html = re.sub(
+        r'href="([^"]*.md[^"]*)"',
+        lambda m: f'href="{_rewrite_md_link(m.group(1), path)}"',
+        html,
+    )
+    return html
+
+def render_md_raw(text: str) -> str:
+    """Render markdown from string content (for raw files)."""
+    text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
+    html = md_lib.markdown(text, extensions=_MD_EXTENSIONS)
     return html
 
 # ---------------------------------------------------------------------------
-# Wiki
+# Task helpers
+# ---------------------------------------------------------------------------
+
+def parse_tasks() -> list:
+    tasks_file = WIKI_DIR / "tasks.md"
+    if not tasks_file.exists():
+        return []
+    lines        = tasks_file.read_text(encoding="utf-8").splitlines()
+    tasks        = []
+    current_sect = "Inbox"
+    today        = datetime.date.today().isoformat()
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            current_sect = line[3:].strip()
+            continue
+        m = re.match(r"^(\s*)-\s+\[([ x])\]\s+(.+)$", line)
+        if not m:
+            continue
+        indent, checked, text = m.groups()
+        p   = re.search(r"#p:(\w+)",     text)
+        d   = re.search(r"#due:(\S+)",   text)
+        c   = re.search(r"#ctx:(\w+)",   text)
+        s   = re.search(r"#s:(\w+)",     text)
+        st  = re.search(r"#start:(\S+)", text)
+        lg  = re.search(r"#len:(\S+)",   text)
+        rep = re.search(r"#rep:(\S+)",   text)
+        start = st.group(1) if st else ""
+        # Hide tasks whose start date is in the future
+        if start and start > today and checked != "x":
+            continue
+        tasks.append({
+            "line":     i,
+            "done":     checked == "x",
+            "text":     re.sub(r"#\S+", "", text).strip(),
+            "section":  current_sect,
+            "indent":   len(indent) // 2,
+            "priority": p.group(1) if p else "",
+            "due":      d.group(1) if d else "",
+            "context":  c.group(1) if c else "",
+            "status":   s.group(1) if s else "",
+            "start":    start,
+            "length":   lg.group(1) if lg else "",
+            "repeat":   rep.group(1) if rep else "",
+            "star":     bool(re.search(r"#star\b", text)),
+        })
+    return tasks
+
+
+def _next_due(rep: str, current_due: str, done_date: str) -> str:
+    import calendar
+    m = re.match(r"^(\d+)([dwmy])(\+?)$", rep.lower())
+    if not m:
+        return ""
+    n, unit, after = int(m.group(1)), m.group(2), m.group(3) == "+"
+    base_str = done_date if after else current_due
+    try:
+        base = datetime.date.fromisoformat(base_str)
+    except (ValueError, TypeError):
+        return ""
+    if unit == "d":
+        return (base + datetime.timedelta(days=n)).isoformat()
+    if unit == "w":
+        return (base + datetime.timedelta(weeks=n)).isoformat()
+    if unit == "m":
+        mo = base.month - 1 + n
+        yr = base.year + mo // 12
+        mo = mo % 12 + 1
+        dy = min(base.day, calendar.monthrange(yr, mo)[1])
+        return datetime.date(yr, mo, dy).isoformat()
+    if unit == "y":
+        try:
+            return base.replace(year=base.year + n).isoformat()
+        except ValueError:
+            return base.replace(year=base.year + n, day=28).isoformat()
+    return ""
+
+
+def _toggle_task(line_num: int, action: str) -> bool:
+    tasks_file = WIKI_DIR / "tasks.md"
+    lines = tasks_file.read_text(encoding="utf-8").splitlines()
+    if not (0 <= line_num < len(lines)):
+        return False
+    line = lines[line_num]
+    if action == "complete" and "- [ ]" in line:
+        today = datetime.date.today().isoformat()
+        lines[line_num] = line.replace("- [ ]", "- [x]") + f" #done:{today}"
+        rep_m = re.search(r"#rep:(\S+)", line)
+        if rep_m:
+            due_m    = re.search(r"#due:(\S+)", line)
+            due      = due_m.group(1) if due_m else today
+            next_due = _next_due(rep_m.group(1), due, today)
+            if next_due:
+                new_line = re.sub(r"\s*#done:\S+", "", line)
+                if due_m:
+                    new_line = re.sub(r"#due:\S+", f"#due:{next_due}", new_line)
+                else:
+                    new_line += f" #due:{next_due}"
+                lines.insert(line_num + 1, new_line)
+    elif action == "reopen" and "- [x]" in line:
+        lines[line_num] = re.sub(r"\s*#done:\S+", "", line).replace("- [x]", "- [ ]")
+    else:
+        return False
+    tasks_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return True
+
+
+def _add_task(text: str, section: str = "Inbox") -> None:
+    tasks_file = WIKI_DIR / "tasks.md"
+    if not tasks_file.exists():
+        tasks_file.write_text("# Tasks\n\n## Inbox\n\n", encoding="utf-8")
+    content = tasks_file.read_text(encoding="utf-8")
+    entry   = f"- [ ] {text.strip()}\n"
+    pattern = rf"(## {re.escape(section)}\n)"
+    if re.search(pattern, content):
+        content = re.sub(pattern, r"\1" + entry, content, count=1)
+    else:
+        content = content.rstrip("\n") + f"\n\n## {section}\n\n{entry}"
+    tasks_file.write_text(content, encoding="utf-8")
+
+# ---------------------------------------------------------------------------
+# Inbox helpers
+# ---------------------------------------------------------------------------
+
+def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
+    """Fetch a URL and return (clean_text, error). Uses stdlib only."""
+    import urllib.request
+    import urllib.error
+    from html.parser import HTMLParser
+
+    class _Reader(HTMLParser):
+        SKIP  = {"script", "style", "noscript", "nav", "header", "footer",
+                 "aside", "template", "form", "button"}
+        BLOCK = {"p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6",
+                 "li", "tr", "blockquote", "article", "section", "pre"}
+
+        def __init__(self):
+            super().__init__()
+            self._skip = 0
+            self.parts = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag in self.SKIP:
+                self._skip += 1
+            elif tag in self.BLOCK and not self._skip:
+                self.parts.append("\n\n")
+
+        def handle_endtag(self, tag):
+            if tag in self.SKIP and self._skip:
+                self._skip -= 1
+
+        def handle_data(self, data):
+            if not self._skip:
+                self.parts.append(data)
+
+    headers = {
+        "User-Agent":              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept":                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language":         "en-US,en;q=0.9",
+        "Accept-Encoding":         "gzip, deflate, br",
+        "Sec-Fetch-Dest":          "document",
+        "Sec-Fetch-Mode":          "navigate",
+        "Sec-Fetch-Site":          "none",
+        "Sec-Fetch-User":          "?1",
+        "Upgrade-Insecure-Requests": "1",
+        "Connection":              "keep-alive",
+        "Cache-Control":           "max-age=0",
+        "Pragma":                  "no-cache",
+    }
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            ct  = resp.headers.get("Content-Type", "")
+            ce  = resp.headers.get("Content-Encoding", "")
+            raw = resp.read(1_000_000)
+        # Decompress if needed — check both header and magic bytes
+        # (some servers send gzip without declaring Content-Encoding)
+        if raw.startswith(b'\x1f\x8b'):  # gzip magic bytes
+            import gzip as _gzip
+            raw = _gzip.decompress(raw)
+        elif raw.startswith(b'\x78\x9c') or raw.startswith(b'\x78\xda'):  # deflate magic bytes
+            import zlib as _zlib
+            raw = _zlib.decompress(raw)
+        elif "gzip" in ce.lower():
+            import gzip as _gzip
+            raw = _gzip.decompress(raw)
+        elif "deflate" in ce.lower():
+            import zlib as _zlib
+            raw = _zlib.decompress(raw)
+    except urllib.error.HTTPError as e:
+        return None, f"HTTP {e.code}: {e.reason}"
+    except Exception as e:
+        return None, str(e)
+
+    # Sanity check: if we still have gzipped data, something went wrong
+    if raw.startswith(b'\x1f\x8b'):
+        return None, "Failed to decompress gzipped content"
+
+    if "html" in ct.lower():
+        parser = _Reader()
+        try:
+            parser.feed(raw.decode("utf-8", errors="replace"))
+        except Exception as e:
+            log.debug("HTML parse warning for %s: %s", url, e)
+        text = re.sub(r"\n{3,}", "\n\n", "".join(parser.parts)).strip()
+        if not text:
+            return None, "No text extracted — site may require JavaScript or be paywalled"
+        return text[:100_000], None
+    else:
+        text = raw.decode("utf-8", errors="replace")[:100_000]
+        if text.startswith('�'):  # Unicode replacement character, likely binary garbage
+            return None, "Response appears to be binary or unreadable"
+        return text, None
+
+
+def list_inbox() -> list:
+    inbox = RAW_DIR / "inbox"
+    if not inbox.is_dir():
+        return []
+    items = []
+    for f in sorted(inbox.iterdir(), key=lambda x: -x.stat().st_mtime):
+        if not f.is_file() or f.name.startswith("."):
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            text = ""
+
+        has_content = False
+        source_url  = ""
+        if f.suffix == ".md":
+            meta, _ = _parse_frontmatter(text)
+            if meta.get("url"):
+                has_content = True
+                source_url  = meta.get("url", "")
+                title       = meta.get("title", f.stem)[:100]
+                excerpt     = source_url
+            else:
+                lines   = [l.strip() for l in text.splitlines() if l.strip()]
+                title   = lines[0][:100] if lines else f.stem
+                excerpt = " ".join(lines[1:4])[:200] if len(lines) > 1 else ""
+        elif f.suffix == ".url":
+            lines      = [l.strip() for l in text.splitlines() if l.strip()]
+            title      = lines[0][:100] if lines else f.stem
+            url_line   = next((l for l in lines if l.startswith("URL:")), "")
+            source_url = url_line[4:].strip()
+            excerpt    = source_url
+        else:
+            lines   = [l.strip() for l in text.splitlines() if l.strip()]
+            title   = lines[0][:100] if lines else f.stem
+            excerpt = " ".join(lines[1:4])[:200] if len(lines) > 1 else ""
+
+        mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
+        wikified = False
+        try:
+            raw_text = f.read_text(encoding="utf-8", errors="replace")
+            fm, _ = _parse_frontmatter(raw_text)
+            wikified = bool(fm.get("wikified"))
+        except Exception:
+            pass
+        items.append({
+            "name":        f.name,
+            "title":       title,
+            "excerpt":     excerpt,
+            "date":        mtime,
+            "has_content": has_content,
+            "source_url":  source_url,
+            "ext":         f.suffix,
+            "wikified":    wikified,
+        })
+    return items
+
+# ---------------------------------------------------------------------------
+# Wiki navigation helpers
 # ---------------------------------------------------------------------------
 
 def wiki_sections() -> list:
-    sections = []
-    for label, subdir in [
-        ("Index",     "index.md"),
-        ("Sources",   "sources/index.md"),
-        ("Entities",  "entities/index.md"),
-        ("Concepts",  "concepts/index.md"),
-        ("Synthesis", "synthesis/index.md"),
+    pages = []
+    for name, label in [
+        ("index.md",        "Index"),
+        ("overview.md",     "Overview"),
+        ("reading-list.md", "Reading List"),
+        ("log.md",          "Log"),
     ]:
-        p = WIKI_DIR / subdir
-        if p.exists():
-            sections.append({"label": label, "path": subdir})
-    return sections
+        if (WIKI_DIR / name).exists():
+            pages.append({"path": name, "label": label})
+    for d in ["sources", "entities", "concepts", "synthesis"]:
+        dpath = WIKI_DIR / d
+        if dpath.is_dir():
+            # Only show tab if directory has content beyond the stub index.md
+            extra = [f for f in dpath.glob("*.md") if f.name != "index.md"]
+            if extra:
+                pages.append({"path": d + "/", "label": d.title()})
+    return pages
 
-@app.route("/wiki/")
-@app.route("/wiki")
+# ---------------------------------------------------------------------------
+# Main routes
+# ---------------------------------------------------------------------------
+
+@app.route("/")
 @require_login
-def wiki_home():
-    return redirect(url_for("wiki_page", page_path="index.md"))
+def index():
+    return redirect(url_for("chat"))
+
+
+@app.route("/chat")
+@require_login
+def chat():
+    history = load_history()
+    display = [
+        {"role": m["role"], "content": m.get("content", "")}
+        for m in history
+        if m["role"] in ("user", "assistant") and m.get("content")
+    ]
+    return render_template("chat.html", history=display)
+
+
+@app.route("/chat/send", methods=["POST"])
+@require_login
+def chat_send():
+    data    = request.get_json(silent=True) or {}
+    message = (data.get("message") or "").strip()
+    if not message:
+        return {"error": "Empty message"}, 400
+
+    client, model, error = get_client_and_model()
+    if error:
+        return {"error": error}, 503
+
+    sys_prompt = system_prompt()
+    history    = load_history()
+    if not history:
+        history = [
+            {"role": "user",      "content": orientation_message()},
+            {"role": "assistant", "content": "Oriented. Ready."},
+        ]
+    history.append({"role": "user", "content": message})
+
+    log.info("Chat send: model=%s history_len=%d", model, len(history))
+    job_id = job_queue.submit(client, model, history, sys_prompt,
+                              on_done=save_history)
+    return {"job_id": job_id}
+
+
+@app.route("/chat/stream/<job_id>")
+@require_login
+def chat_stream(job_id):
+    def generate():
+        yield from job_queue.tail(job_id)
+    return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
+
+
+@app.route("/chat/status")
+@require_login
+def chat_status():
+    return job_queue.status()
+
+
+@app.route("/chat/clear", methods=["POST"])
+@require_login
+def chat_clear():
+    clear_history()
+    return {"ok": True}
+
 
 @app.route("/wiki/search")
 @require_login
@@ -666,36 +919,43 @@ def wiki_search():
     q = request.args.get("q", "").strip()
     if not q or len(q) < 2:
         return {"results": []}
-
+    words = [w.lower() for w in q.split() if w]
     results = []
-    query_words = q.lower().split()
-
-    for subdir in ("", "sources", "entities", "concepts", "synthesis"):
-        d = WIKI_DIR / subdir if subdir else WIKI_DIR
-        if not d.is_dir():
+    for md_file in sorted(WIKI_DIR.rglob("*.md")):
+        try:
+            text = md_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
             continue
-        for f in d.glob("*.md"):
-            text = f.read_text(encoding="utf-8", errors="replace")
-            meta, body = _parse_frontmatter(text)
-            title = meta.get("title", f.stem.replace("-", " ").title())
-            haystack = (title + " " + body).lower()
-            if all(w in haystack for w in query_words):
-                excerpt = ""
-                for w in query_words:
-                    idx = body.lower().find(w)
-                    if idx != -1:
-                        start = max(0, idx - 60)
-                        excerpt = body[start:idx + 100].strip()
-                        excerpt = re.sub(r"\s+", " ", excerpt)
-                        break
-                rel = str(f.relative_to(WIKI_DIR))
-                results.append({"path": rel, "title": title, "excerpt": excerpt})
-                if len(results) >= 20:
-                    break
-        if len(results) >= 20:
+        text_lower = text.lower()
+        if not all(w in text_lower for w in words):
+            continue
+        # Extract title from frontmatter or filename
+        title = md_file.stem.replace("-", " ").title()
+        for line in text.splitlines():
+            m = re.match(r'^title:\s*["\']?(.+?)["\']?\s*$', line)
+            if m:
+                title = m.group(1)
+                break
+        # Find best matching excerpt
+        excerpt = ""
+        for line in text.splitlines():
+            if line.startswith("---") or re.match(r'^[a-z]+:', line):
+                continue
+            if any(w in line.lower() for w in words):
+                excerpt = line.strip()[:120]
+                break
+        rel = str(md_file.relative_to(WIKI_DIR))
+        results.append({"path": rel, "title": title, "excerpt": excerpt})
+        if len(results) >= 12:
             break
-
     return {"results": results}
+
+
+@app.route("/wiki/")
+@require_login
+def wiki_home():
+    return redirect(url_for("wiki_page", page_path="index.md"))
+
 
 @app.route("/wiki/<path:page_path>")
 @require_login
@@ -711,9 +971,9 @@ def wiki_page(page_path):
         abort(404)
     if not p.exists():
         abort(404)
-    raw_text = p.read_text(encoding="utf-8", errors="replace")
-    meta, _  = _parse_frontmatter(raw_text)
-    source_url = meta.get("url", "").strip()
+    raw_text   = p.read_text(encoding="utf-8", errors="replace")
+    meta, _    = _parse_frontmatter(raw_text)
+    source_url = meta.get("url", "").strip() or None
     return render_template(
         "wiki.html",
         content=render_md(p),
@@ -738,267 +998,415 @@ def wiki_edit(page_path):
         abort(404)
     if not p.exists():
         abort(404)
-    raw_text = p.read_text(encoding="utf-8", errors="replace")
-    meta, _  = _parse_frontmatter(raw_text)
     return render_template(
         "wiki-edit.html",
-        raw=raw_text,
-        title=meta.get("title", p.stem.replace("-", " ").title()),
+        raw=p.read_text(encoding="utf-8"),
+        title=p.stem.replace("-", " ").title(),
         page_path=str(p.relative_to(WIKI_DIR)),
     )
+
 
 @app.route("/api/wiki/<path:page_path>/save", methods=["POST"])
 @require_login
 def wiki_save(page_path):
     p = WIKI_DIR / page_path
-    if not p.suffix:
-        p = p.with_suffix(".md")
     try:
         p.resolve().relative_to(WIKI_DIR.resolve())
     except ValueError:
-        return {"ok": False, "error": "Invalid path"}, 403
+        return {"error": "Invalid path"}, 400
+    if not p.exists():
+        return {"error": "Page not found"}, 404
     data = request.get_json(silent=True) or {}
-    content = data.get("content", "")
-    if not content.strip():
-        return {"ok": False, "error": "Empty content"}, 400
-    p.parent.mkdir(parents=True, exist_ok=True)
+    content = data.get("content")
+    if content is None:
+        return {"error": "No content"}, 400
     p.write_text(content, encoding="utf-8")
     return {"ok": True}
 
-@app.route("/wiki-lint")
+
+@app.route("/wiki/lint")
 @require_login
 def wiki_lint():
-    if not WIKI_DIR.exists():
+    """Find orphaned pages (created but not in index.md)."""
+    index_path = WIKI_DIR / "index.md"
+    if not index_path.exists():
         return render_template("wiki-lint.html", orphans=[], broken_links=[])
 
+    index_text = index_path.read_text(encoding='utf-8')
+    indexed_paths = set()
+    for match in re.finditer(r'\]\(([\w/.-]+\.md)\)', index_text):
+        indexed_paths.add(match.group(1))
+
     _LINT_SKIP = {
-        "index.md",
-        "log.md",
-        "overview.md",
-        "reading-list.md",
-        "tasks.md",
-        "tasks-archive.md",
-        "sources/index.md",
-        "entities/index.md",
-        "concepts/index.md",
-        "synthesis/index.md",
+        'index.md', 'log.md', 'overview.md', 'reading-list.md', 'tasks.md',
+        'sources/index.md', 'entities/index.md', 'concepts/index.md', 'synthesis/index.md',
     }
 
-    index_p = WIKI_DIR / "index.md"
-    index_text = index_p.read_text(encoding="utf-8") if index_p.exists() else ""
+    # Find all .md files
+    all_files = set()
+    for root, dirs, files in os.walk(WIKI_DIR):
+        for f in files:
+            if f.endswith('.md'):
+                rel_path = str(Path(root) / f).replace(str(WIKI_DIR), '').lstrip('/')
+                if rel_path not in _LINT_SKIP:
+                    all_files.add(rel_path)
 
-    # Orphan check
-    orphans = []
-    for subdir in ("sources", "entities", "concepts", "synthesis"):
-        d = WIKI_DIR / subdir
-        if not d.is_dir():
-            continue
-        for f in d.glob("*.md"):
-            rel = str(f.relative_to(WIKI_DIR))
-            if rel in _LINT_SKIP:
-                continue
-            if rel not in index_text and f.name not in index_text:
-                orphans.append(rel)
+    orphans = sorted(all_files - indexed_paths)
 
-    # Broken link check
-    broken_links = []
-    for f in WIKI_DIR.rglob("*.md"):
-        text = f.read_text(encoding="utf-8", errors="replace")
-        for m in re.finditer(r'\[([^\]]*)\]\(([^)]+)\)', text):
-            href = m.group(2)
-            if href.startswith("http://") or href.startswith("https://"):
-                continue
-            href_path = href.split("#")[0]
-            if not href_path:
-                continue
-            target = (f.parent / href_path).resolve()
-            if not target.exists():
-                broken_links.append({
-                    "file": str(f.relative_to(WIKI_DIR)),
-                    "link": href,
-                    "text": m.group(1),
-                })
+    # Check for broken links
+    broken = []
+    for fpath in all_files | indexed_paths:
+        p = WIKI_DIR / fpath
+        if p.exists():
+            content = p.read_text(encoding='utf-8', errors='replace')
+            for match in re.finditer(r'\[([^\]]+)\]\(([^")]+)\)', content):
+                link_target = match.group(2)
+                if not link_target.startswith(('http://', 'https://', '/', '#')):
+                    resolved = (p.parent / link_target).resolve()
+                    if not resolved.exists():
+                        broken.append({"file": fpath, "link": link_target, "text": match.group(1)})
 
-    return render_template("wiki-lint.html", orphans=orphans, broken_links=broken_links)
+    return render_template("wiki-lint.html", orphans=orphans, broken_links=broken)
 
-# ---------------------------------------------------------------------------
-# Tasks
-# ---------------------------------------------------------------------------
 
-TASKS_FILE = WIKI_DIR / "tasks.md"
+@app.route("/raw/<path:filename>")
+@require_login
+def raw_file(filename):
+    p = RAW_DIR / filename
+    try:
+        p.resolve().relative_to(RAW_DIR.resolve())
+    except ValueError:
+        abort(404)
+    if not p.exists():
+        abort(404)
+    if p.is_dir():
+        abort(404)
+
+    # Serve as plain text or HTML depending on file type
+    if p.suffix in ('.md', '.txt', '.url'):
+        content = p.read_text(encoding='utf-8', errors='replace')
+        return render_template(
+            "raw.html",
+            title=p.stem.replace("-", " ").title(),
+            content=content if p.suffix == '.txt' else render_md_raw(content),
+            filename=filename,
+        )
+    else:
+        # For other files, serve as download
+        return send_file(p, as_attachment=True)
+
 
 @app.route("/tasks")
 @require_login
 def tasks():
-    return render_template("tasks.html")
+    tasks_list = read_tasks()
+    tasks_list.sort(key=lambda t: t.due or "9999-12-31")
+    return render_template("tasks_view.html", tasks=tasks_list,
+                           all_contexts=get_all_contexts(),
+                           all_projects=get_all_projects())
 
-@app.route("/api/tasks")
-@require_login
-def api_tasks():
-    if not TASKS_FILE.exists():
-        return {"tasks": []}
-    text = TASKS_FILE.read_text(encoding="utf-8")
-    tasks_list = _parse_tasks(text)
-    return {"tasks": tasks_list}
 
-@app.route("/api/tasks/toggle", methods=["POST"])
+@app.route("/tasks/toggle", methods=["POST"])
 @require_login
-def api_tasks_toggle():
+def tasks_toggle():
+    data   = request.get_json(silent=True) or {}
+    line   = data.get("line")
+    action = data.get("action")
+    if line is None or action not in ("complete", "reopen"):
+        return {"error": "bad request"}, 400
+    return {"ok": _toggle_task(int(line), action)}
+
+
+@app.route("/tasks/add", methods=["POST"])
+@require_login
+def tasks_add():
     data    = request.get_json(silent=True) or {}
-    line_no = data.get("line")
-    if line_no is None:
-        return {"ok": False, "error": "missing line"}, 400
-    if not TASKS_FILE.exists():
-        return {"ok": False, "error": "tasks file missing"}, 404
-    lines = TASKS_FILE.read_text(encoding="utf-8").splitlines(keepends=True)
-    if line_no < 0 or line_no >= len(lines):
-        return {"ok": False, "error": "line out of range"}, 400
-    line = lines[line_no]
-    today = datetime.date.today().isoformat()
-    if "- [x]" in line:
-        line = line.replace("- [x]", "- [ ]", 1)
-        line = re.sub(r"\s*#done:\d{4}-\d{2}-\d{2}", "", line)
-    elif "- [ ]" in line:
-        line = line.replace("- [ ]", "- [x]", 1)
-        line = line.rstrip("\n") + f" #done:{today}\n"
-    lines[line_no] = line
-    TASKS_FILE.write_text("".join(lines), encoding="utf-8")
+    text    = (data.get("text")    or "").strip()
+    section = (data.get("section") or "Inbox").strip()
+    if not text:
+        return {"error": "Empty task"}, 400
+    _add_task(text, section)
     return {"ok": True}
 
-def _parse_tasks(text: str) -> list:
-    tasks_list = []
-    current_section = "Inbox"
-    lines = text.splitlines()
-    for i, line in enumerate(lines):
-        if line.startswith("## "):
-            current_section = line[3:].strip()
-            continue
-        m = re.match(r'^(\s*)- \[([ x])\] (.+)$', line)
-        if not m:
-            continue
-        indent  = len(m.group(1))
-        checked = m.group(2) == "x"
-        body    = m.group(3)
-        tags    = {}
-        for tag in re.findall(r'#(\w+)(?::(\S+))?', body):
-            tags[tag[0]] = tag[1] or True
-        clean = re.sub(r'#\w+(?::\S+)?', '', body).strip()
-        tasks_list.append({
-            "line":    i,
-            "indent":  indent,
-            "done":    checked,
-            "text":    clean,
-            "raw":     body,
-            "section": current_section,
-            "tags":    tags,
-        })
-    return tasks_list
 
-# ---------------------------------------------------------------------------
-# Reading list
-# ---------------------------------------------------------------------------
-
-READING_LIST_FILE = WIKI_DIR / "reading-list.md"
-
-@app.route("/reading-list")
+@app.route("/tasks/update", methods=["POST"])
 @require_login
-def reading_list():
-    return render_template("reading-list.html")
+def tasks_update():
+    data = request.get_json(silent=True) or {}
+    task_id = data.get("task_id")
+    field = data.get("field")
+    value = data.get("value", "").strip()
 
-@app.route("/api/reading-list")
+    if task_id is None or field is None:
+        return {"error": "missing task_id or field"}, 400
+
+    tasks_list = read_tasks()
+    if not (0 <= task_id < len(tasks_list)):
+        return {"error": "task not found"}, 404
+
+    task = tasks_list[task_id]
+    next_task = None
+
+    if field == "description":
+        task.description = value
+    elif field == "context":
+        task.set_context(value if value else None)
+    elif field == "due":
+        task.set_due(value if value else None)
+    elif field == "priority":
+        task.set_priority(value if value else None)
+    elif field == "project":
+        task.set_project(value if value else None)
+    elif field == "recurrence":
+        task.set_recurrence(value if value else None)
+    elif field == "start":
+        task.set_start(value if value else None)
+    elif field == "notes":
+        task.set_notes(value)
+    elif field == "complete":
+        if value == "true":
+            task.complete_task()
+            # Handle recurrence: create next occurrence if recurring
+            next_task = task.get_next_recurrence()
+        else:
+            task.reopen_task()
+    else:
+        return {"error": "unknown field"}, 400
+
+    # Write the updated tasks
+    write_tasks(tasks_list)
+
+    # If a new recurring task was created, append it to the file
+    if next_task:
+        next_line = next_task.to_line()
+        next_notes = next_task.raw_notes.strip()
+
+        with open(TASKS_FILE, 'a', encoding='utf-8') as f:
+            f.write('\n' + next_line)
+            if next_notes:
+                for note_line in next_notes.split('\n'):
+                    f.write('\n' + note_line)
+
+    result = {"ok": True}
+    if next_task:
+        result["next_task"] = {
+            "description": next_task.description,
+            "due": next_task.due,
+            "priority": next_task.priority,
+            "context": next_task.context,
+            "recurrence": next_task.recurrence,
+        }
+    return result
+
+
+@app.route("/tasks/bulk-update", methods=["POST"])
 @require_login
-def api_reading_list():
-    if not READING_LIST_FILE.exists():
-        return {"items": []}
-    text = READING_LIST_FILE.read_text(encoding="utf-8")
-    items = []
-    for line in text.splitlines():
-        m = re.match(r'^\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(\S+)\s*\|\s*(\S+)\s*\|', line)
-        if not m or m.group(1).lower() in ("title", "---"):
+def tasks_bulk_update():
+    data = request.get_json(silent=True) or {}
+    action = data.get("action")
+    task_ids = data.get("task_ids", [])
+    value = data.get("value", "").strip()
+
+    if action is None:
+        return {"error": "missing action"}, 400
+
+    tasks_list = read_tasks()
+
+    for task_id in task_ids:
+        if not (0 <= task_id < len(tasks_list)):
             continue
-        items.append({
-            "title":  m.group(1),
-            "source": m.group(2),
-            "added":  m.group(3),
-            "status": m.group(4),
-        })
+
+        task = tasks_list[task_id]
+
+        if action == "set-priority":
+            task.set_priority(value if value else None)
+        elif action == "set-context":
+            task.set_context(value if value else None)
+        elif action == "set-due":
+            task.set_due(value if value else None)
+        elif action == "set-project":
+            task.set_project(value if value else None)
+        elif action == "delete":
+            task.description = "[DELETED]"
+            task.complete = True
+        else:
+            return {"error": "unknown action"}, 400
+
+    write_tasks(tasks_list)
+    return {"ok": True}
+
+
+@app.route("/inbox")
+@require_login
+def inbox():
+    return render_template("inbox.html", items=list_inbox())
+
+
+@app.route("/inbox/list")
+@require_login
+def inbox_list():
+    """API endpoint that returns inbox items as JSON for polling/auto-refresh."""
+    items = list_inbox()
     return {"items": items}
 
-# ---------------------------------------------------------------------------
-# Navigation helper
-# ---------------------------------------------------------------------------
-
-@app.route("/nav")
-@require_login
-def nav():
-    return render_template("nav.html")
 
 # ---------------------------------------------------------------------------
-# Job queue (long-running agent tasks)
+# External API — /api/*
 # ---------------------------------------------------------------------------
 
-try:
-    from job_queue import job_queue_bp, start_job_queue_worker
-    app.register_blueprint(job_queue_bp)
-    start_job_queue_worker()
-    log.info("Job queue worker started.")
-except ImportError:
-    log.info("job_queue module not found — long-running jobs disabled.")
+def _api_auth():
+    """
+    Validate Bearer token for external API routes.
+    Returns (True, None) on success, or (False, (body, status)) on failure.
+    """
+    push_key = cfg_get("api", "push_key", "").strip()
+    if not push_key:
+        return False, ({"error": "API not configured — set api.push_key in config.json",
+                        "code": "NOT_CONFIGURED"}, 501)
+    auth = request.headers.get("Authorization", "").strip()
+    if not auth.startswith("Bearer "):
+        return False, ({"error": "Authorization header required: Bearer <token>",
+                        "code": "UNAUTHORIZED"}, 401)
+    if auth[7:].strip() != push_key:
+        return False, ({"error": "Invalid API key", "code": "FORBIDDEN"}, 403)
+    return True, None
 
-# ---------------------------------------------------------------------------
-# Admin
-# ---------------------------------------------------------------------------
 
-@app.route("/admin")
-@require_login
-def admin():
-    u = get_current_user()
-    if HAS_AUTH and u.get("role") != "admin":
-        abort(403)
-    from auth import list_users
-    users = list_users() if HAS_AUTH else []
-    return render_template("admin.html", users=users)
+@app.route("/api/status")
+def api_status():
+    """
+    Health check — no auth required.
+    Returns whether the push API is configured and the API version.
+    """
+    return {
+        "ok": True,
+        "version": "1",
+        "push_configured": bool(cfg_get("api", "push_key", "").strip()),
+    }
 
-@app.route("/api/admin/users", methods=["POST"])
-@require_login
-def api_admin_users():
-    u = get_current_user()
-    if HAS_AUTH and u.get("role") != "admin":
-        abort(403)
-    data   = request.get_json(silent=True) or {}
-    action = data.get("action")
-    if action == "create":
-        from auth import create_user, get_user
-        username = data.get("username", "").strip()
-        password = data.get("password", "").strip()
-        email    = data.get("email", "").strip()
-        role     = data.get("role", "user")
-        if not username or not password:
-            return {"ok": False, "error": "username and password required"}, 400
-        if get_user(username):
-            return {"ok": False, "error": f"User '{username}' already exists"}, 400
-        create_user(username, password, email=email, role=role)
-        return {"ok": True}
-    if action == "delete":
-        from auth import delete_user
-        username = data.get("username", "")
-        if username == u.get("username"):
-            return {"ok": False, "error": "Cannot delete yourself"}, 400
-        delete_user(username)
-        return {"ok": True}
-    if action == "reset_password":
-        from auth import set_password
-        username = data.get("username", "")
-        password = data.get("password", "")
-        if len(password) < 8:
-            return {"ok": False, "error": "Password must be at least 8 characters"}, 400
-        set_password(username, password)
-        return {"ok": True}
-    return {"ok": False, "error": "unknown action"}, 400
 
-# ---------------------------------------------------------------------------
-# API: inbound email webhook (Resend)
-# ---------------------------------------------------------------------------
+@app.route("/api/push", methods=["POST", "OPTIONS"])
+def api_push():
+    """
+    Push an article into the Lobotomy reading list inbox.
+
+    Auth: Authorization: Bearer <push_key>
+
+    Body (JSON):
+      url        string   URL of the article. If content is omitted, Lobotomy
+                          fetches the page automatically.
+      title      string   Article title. Auto-extracted if omitted.
+      content    string   Full article body text. Skips the fetch if provided.
+      tags       string[] Optional tag list.
+      source     string   Identifier for the calling application.
+      author     string   Article author.
+
+    At least one of url or content is required.
+    If only content is given, title is also required.
+    """
+    # CORS preflight — bookmarklet runs from foreign origins
+    if request.method == "OPTIONS":
+        resp = make_response("", 204)
+        resp.headers["Access-Control-Allow-Origin"]  = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+        return resp
+
+    ok, err = _api_auth()
+    if not ok:
+        return err
+
+    data       = request.get_json(silent=True) or {}
+    url        = (data.get("url")     or "").strip()
+    title      = (data.get("title")   or "").strip()
+    content    = (data.get("content") or "").strip()
+    tags       = data.get("tags")   or []
+    source     = (data.get("source") or "external-api").strip()
+    author     = (data.get("author") or "").strip()
+
+    if not isinstance(tags, list):
+        tags = [str(tags)]
+    tags = [str(t).strip() for t in tags if str(t).strip()]
+
+    # Validation
+    if not url and not content:
+        return {"error": "Provide url, content, or both", "code": "MISSING_FIELDS"}, 400
+    if not url and not title:
+        return {"error": "title is required when url is not provided",
+                "code": "MISSING_FIELDS"}, 400
+
+    # Deduplication: if the same URL already exists in inbox, return it
+    inbox_dir = RAW_DIR / "inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    if url:
+        for existing in inbox_dir.glob("*.md"):
+            try:
+                meta, _ = _parse_frontmatter(
+                    existing.read_text(encoding="utf-8", errors="replace"))
+                if meta.get("url", "").strip() == url:
+                    return {
+                        "ok":        True,
+                        "duplicate": True,
+                        "id":        existing.stem,
+                        "filename":  existing.name,
+                        "title":     meta.get("title", existing.stem),
+                        "url":       url,
+                        "saved":     meta.get("saved", ""),
+                    }
+            except (OSError, ValueError, KeyError) as e:
+                log.debug("Skipping unreadable inbox file %s: %s", existing.name, e)
+
+    # If URL given but no content, fetch the page
+    if url and not content:
+        fetched, _ = _clip_fetch(url)
+        if fetched:
+            content = fetched
+            # Auto-extract title from first non-empty non-markup line
+            if not title:
+                for line in content.splitlines():
+                    line = line.strip().lstrip("#").strip()
+                    if line and not line.startswith("<"):
+                        title = line[:120]
+                        break
+
+    # Final title fallback
+    if not title:
+        title = url.rstrip("/").split("/")[-1].split("?")[0].replace("-", " ").replace("_", " ") or url
+
+    # Build unique slug filename
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "article"
+    base_name = f"{slug}.md"
+    dest = inbox_dir / base_name
+    if dest.exists():
+        import time as _t
+        base_name = f"{slug}-{int(_t.time())}.md"
+        dest = inbox_dir / base_name
+
+    # Write file with YAML frontmatter
+    today = datetime.date.today().isoformat()
+    fm    = ["---", f'title: "{title}"']
+    if url:
+        fm.append(f"url: {url}")
+    fm.append(f"saved: {today}")
+    fm.append(f"source: {source}")
+    if author:
+        fm.append(f"author: {author}")
+    if tags:
+        fm.append(f"tags: {json.dumps(tags)}")
+    fm += ["---", ""]
+
+    dest.write_text("\n".join(fm) + (content or ""), encoding="utf-8")
+
+    return {
+        "ok":        True,
+        "duplicate": False,
+        "id":        dest.stem,
+        "filename":  base_name,
+        "title":     title,
+        "url":       url or None,
+        "saved":     today,
+    }, 201, {"Access-Control-Allow-Origin": "*"}
+
 
 @app.route("/api/inbound-email", methods=["POST"])
 def api_inbound_email():
@@ -1073,95 +1481,609 @@ def api_inbound_email():
     if text_body:
         for line in text_body.splitlines()[:10]:
             line = line.strip()
-            if re.match(r'https?://\S+', line):
+            if re.match(r"https?://\S+$", line):
                 url = line
                 break
 
-    # Build the inbox file content
-    INBOX_DIR.mkdir(parents=True, exist_ok=True)
-    slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
-    slug = slug or "email"
-    fname = f"{slug}.md"
-    dest  = INBOX_DIR / fname
-    base, ext = dest.stem, dest.suffix
-    i = 1
-    while dest.exists():
-        dest = INBOX_DIR / f"{base}-{i}{ext}"
-        i += 1
-
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    # Fetch the URL if found, otherwise use the text body as content
+    content = ""
     if url:
-        file_content = f"{url}\n"
+        fetched, _ = _clip_fetch(url)
+        if fetched:
+            content = fetched
+            if not subject:
+                for line in content.splitlines():
+                    line = line.strip().lstrip("#").strip()
+                    if line and not line.startswith("<"):
+                        title = line[:120]
+                        break
+        else:
+            content = text_body
     else:
-        file_content = (
-            f"---\ntitle: {json.dumps(title)}\nfrom: {json.dumps(from_addr)}\ndate: {now}\n---\n\n"
-            + text_body
+        content = text_body
+
+    # Deduplication on URL
+    inbox_dir = RAW_DIR / "inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    if url:
+        for existing in inbox_dir.glob("*.md"):
+            try:
+                meta, _ = _parse_frontmatter(
+                    existing.read_text(encoding="utf-8", errors="replace"))
+                if meta.get("url", "").strip() == url:
+                    log.info("Inbound email duplicate: %s", url)
+                    return {"ok": True, "duplicate": True, "filename": existing.name}, 200
+            except (OSError, ValueError, KeyError):
+                pass
+
+    # Build filename
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "email"
+    base_name = f"{slug}.md"
+    dest = inbox_dir / base_name
+    if dest.exists():
+        import time as _t
+        base_name = f"{slug}-{int(_t.time())}.md"
+        dest = inbox_dir / base_name
+
+    today = datetime.date.today().isoformat()
+    fm = ["---", f'title: "{title}"']
+    if url:
+        fm.append(f"url: {url}")
+    fm.append(f"saved: {today}")
+    fm.append(f"source: email")
+    if from_addr:
+        fm.append(f"author: {from_addr}")
+    fm += ["---", ""]
+
+    dest.write_text("\n".join(fm) + content, encoding="utf-8")
+    log.info("Inbound email saved: %s from %s", base_name, from_addr)
+    return {"ok": True, "duplicate": False, "filename": base_name}, 201
+
+
+@app.route("/api/inbox")
+def api_inbox_list():
+    """
+    List items currently in the inbox.
+
+    Auth: Authorization: Bearer <push_key>
+
+    Query params:
+      limit   int    Max items to return (default 20, max 100).
+      since   date   ISO date — only return items saved on or after this date.
+      source  str    Filter by source application name.
+    """
+    ok, err = _api_auth()
+    if not ok:
+        return err
+
+    limit  = min(max(int(request.args.get("limit", 20)), 1), 100)
+    since  = request.args.get("since",  "").strip()
+    source = request.args.get("source", "").strip()
+
+    items = []
+    inbox_dir = RAW_DIR / "inbox"
+    if inbox_dir.is_dir():
+        candidates = sorted(inbox_dir.glob("*.md"),
+                            key=lambda f: -f.stat().st_mtime)
+        for f in candidates:
+            try:
+                meta, _ = _parse_frontmatter(
+                    f.read_text(encoding="utf-8", errors="replace"))
+                saved = meta.get("saved", "")
+                if since and saved and saved < since:
+                    continue
+                if source and meta.get("source", "") != source:
+                    continue
+                items.append({
+                    "id":       f.stem,
+                    "filename": f.name,
+                    "title":    meta.get("title", f.stem),
+                    "url":      meta.get("url")    or None,
+                    "saved":    saved,
+                    "source":   meta.get("source", ""),
+                    "author":   meta.get("author", "") or None,
+                    "tags":     meta.get("tags")   or [],
+                })
+                if len(items) >= limit:
+                    break
+            except (OSError, ValueError, KeyError) as e:
+                log.debug("Skipping unreadable inbox file %s: %s", f.name, e)
+
+    return {"ok": True, "items": items, "count": len(items)}
+
+
+@app.route("/api/inbox/<path:filename>", methods=["DELETE"])
+def api_inbox_delete(filename):
+    """
+    Delete an item from the inbox by filename.
+
+    Auth: Authorization: Bearer <push_key>
+
+    Only items still in raw/inbox/ can be deleted this way. Items that have
+    already been archived or ingested into the wiki are not affected.
+    """
+    ok, err = _api_auth()
+    if not ok:
+        return err
+
+    p = RAW_DIR / "inbox" / filename
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        return {"error": "Invalid filename", "code": "INVALID_PATH"}, 400
+
+    if not p.exists():
+        return {"error": "Item not found in inbox", "code": "NOT_FOUND"}, 404
+
+    p.unlink()
+    return {"ok": True, "deleted": filename}
+
+
+@app.route("/inbox/clip")
+@require_login
+def inbox_clip():
+    """
+    Browser bookmarklet / iOS Shortcut endpoint.
+    GET /inbox/clip?url=...&title=...
+    Fetches the article, saves full content as .md (falls back to .url if fetch fails).
+    Returns a lightweight dark-mode confirmation page.
+    """
+    url   = request.args.get("url",   "").strip()
+    title = request.args.get("title", "").strip()
+    if not url:
+        return "Missing url parameter", 400
+
+    display_title = title or url
+    slug_src = title if title else url.split("//")[-1].split("?")[0]
+    slug = re.sub(r"[^a-z0-9]+", "-", slug_src.lower())[:60].strip("-") or "clipping"
+    (RAW_DIR / "inbox").mkdir(parents=True, exist_ok=True)
+
+    def _unique(base_name):
+        dest = RAW_DIR / "inbox" / base_name
+        if not dest.exists():
+            return base_name, dest
+        stem, ext = base_name.rsplit(".", 1)
+        import time as _t
+        name = f"{stem}-{int(_t.time())}.{ext}"
+        return name, RAW_DIR / "inbox" / name
+
+    # Try to fetch full article content
+    text, fetch_err = _clip_fetch(url)
+    read_url = None
+
+    if text:
+        base_name, dest = _unique(f"{slug}.md")
+        today = datetime.date.today().isoformat()
+        md_content = (
+            f'---\ntitle: "{display_title}"\nurl: {url}\nsaved: {today}\n---\n\n'
+            f'{text}'
         )
+        dest.write_text(md_content, encoding="utf-8")
+        read_url = url_for("inbox_read", filename=base_name)
+        status_msg = "Saved with full content"
+    else:
+        base_name, dest = _unique(f"{slug}.url")
+        dest.write_text(f"{display_title}\nURL: {url}\n", encoding="utf-8")
+        status_msg = f"URL saved — offline reading unavailable ({fetch_err or 'fetch failed'})"
 
-    dest.write_text(file_content, encoding="utf-8")
-    log.info("Inbound email saved: %s (from %s)", dest.name, from_addr)
-    return {"ok": True, "saved": dest.name}
+    inbox_url = url_for("inbox")
+    read_link = f'<a href="{read_url}">Read now</a>' if read_url else ""
+    return f"""<!doctype html>
+<html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<style>
+  body{{font-family:-apple-system,sans-serif;background:#000;color:#f2f2f7;
+       display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:16px;box-sizing:border-box}}
+  .card{{background:#1c1c1e;border-radius:16px;padding:28px 24px;max-width:340px;width:100%;text-align:center}}
+  h1{{font-size:22px;margin:0 0 6px}}
+  .sub{{color:#8e8e93;font-size:13px;margin:0 0 20px;word-break:break-word}}
+  a{{display:block;text-decoration:none;border-radius:10px;padding:12px;
+     font-weight:600;font-size:16px;margin-bottom:10px}}
+  .pri{{background:#0a84ff;color:#fff}}
+  .sec{{background:#2c2c2e;color:#f2f2f7}}
+</style></head>
+<body><div class="card">
+  <h1>Saved</h1>
+  <p class="sub">{display_title[:80]}</p>
+  {read_link}
+  <a class="pri" href="{inbox_url}">Reading List</a>
+  <a class="sec" href="javascript:window.close()">Close</a>
+</div>
+<script>
+setTimeout(()=>window.close(),2000)
+</script>
+</body></html>"""
 
-# ---------------------------------------------------------------------------
-# API: browser extension / bookmarklet
-# ---------------------------------------------------------------------------
 
-@app.route("/api/save-url", methods=["POST"])
+@app.route("/inbox/read/<path:filename>")
 @require_login
-def api_save_url():
-    """Save a URL to the inbox. Called by the browser extension."""
+def inbox_read(filename):
+    p = RAW_DIR / "inbox" / filename
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        abort(404)
+    if not p.exists():
+        abort(404)
+    text = p.read_text(encoding="utf-8", errors="replace")
+    meta, body = _parse_frontmatter(text)
+    return render_template(
+        "reader.html",
+        title   = meta.get("title", p.stem),
+        url     = meta.get("url", ""),
+        saved   = meta.get("saved", ""),
+        body    = body,
+        filename= filename,
+    )
+
+
+@app.route("/inbox/add", methods=["POST"])
+@require_login
+def inbox_add():
+    data    = request.get_json(silent=True) or {}
+    content = (data.get("content")  or "").strip()
+    name    = (data.get("filename") or "").strip()
+    if not content:
+        return {"error": "Empty content"}, 400
+    if not name:
+        slug = re.sub(r"[^a-z0-9]+", "-", content[:60].lower()).strip("-")
+        name = f"{slug}.txt"
+    dest = RAW_DIR / "inbox" / name
+    dest.write_text(content, encoding="utf-8")
+    return {"ok": True, "filename": name}
+
+
+@app.route("/inbox/delete", methods=["POST"])
+@require_login
+def inbox_delete():
     data = request.get_json(silent=True) or {}
-    url  = (data.get("url") or "").strip()
-    if not url or not url.startswith("http"):
-        return {"ok": False, "error": "invalid url"}, 400
-    INBOX_DIR.mkdir(parents=True, exist_ok=True)
-    title = (data.get("title") or url)[:80]
-    slug  = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:50]
-    slug  = slug or "article"
-    fname = f"{slug}.md"
-    dest  = INBOX_DIR / fname
-    base, ext = dest.stem, dest.suffix
-    i = 1
-    while dest.exists():
-        dest = INBOX_DIR / f"{base}-{i}{ext}"
-        i += 1
-    dest.write_text(url + "\n", encoding="utf-8")
-    log.info("URL saved to inbox: %s → %s", url, dest.name)
-    return {"ok": True, "saved": dest.name}
+    name = (data.get("filename") or "").strip()
+    if not name:
+        return {"error": "No filename"}, 400
+    p = RAW_DIR / "inbox" / name
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        return {"error": "Invalid path"}, 400
+    if p.exists():
+        p.unlink()
+    return {"ok": True}
 
-# ---------------------------------------------------------------------------
-# Bookmarklet page
-# ---------------------------------------------------------------------------
 
-@app.route("/bookmarklet")
+@app.route("/inbox/view/<path:filename>")
 @require_login
-def bookmarklet():
-    base = request.host_url.rstrip("/")
-    return render_template("bookmarklet.html", base_url=base)
+def inbox_view(filename):
+    p = RAW_DIR / "inbox" / filename
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        abort(404)
+    if not p.exists():
+        abort(404)
+    content = p.read_text(encoding="utf-8", errors="replace")
+    # For .url files, expose the URL separately so the UI can open it
+    if p.suffix == ".url":
+        url_line = next((l for l in content.splitlines() if l.startswith("URL:")), "")
+        url = url_line[4:].strip()
+        return {"content": content, "url": url}
+    # Strip YAML frontmatter before returning to the inline reader
+    meta, body = _parse_frontmatter(content)
+    source_url = meta.get("url", "") or None
+    return {"content": body.strip(), "url": source_url}
 
-# ---------------------------------------------------------------------------
-# Stats / housekeeping
-# ---------------------------------------------------------------------------
 
-@app.route("/api/stats")
+@app.route("/inbox/debug-fetch")
 @require_login
-def api_stats():
-    stats = {}
-    if WIKI_DIR.exists():
-        stats["wiki_pages"] = sum(1 for _ in WIKI_DIR.rglob("*.md"))
-    if INBOX_DIR.exists():
-        stats["inbox_items"] = sum(1 for f in INBOX_DIR.iterdir() if f.is_file())
-    hist = _load_history()
-    stats["chat_messages"] = sum(1 for m in hist if m.get("role") in ("user", "assistant"))
-    return stats
+def inbox_debug_fetch():
+    """Debug endpoint: test what _clip_fetch returns for a URL."""
+    url = request.args.get("url", "").strip()
+    if not url:
+        return {"error": "Missing url parameter"}, 400
+    text, err = _clip_fetch(url)
+    return {
+        "url": url,
+        "success": text is not None,
+        "error": err,
+        "text_length": len(text) if text else 0,
+        "text_preview": (text[:200] if text else "") if text and not text.startswith('�') else "[binary or error]",
+        "starts_with_gzip": text.startswith('\x1f\x8b') if text else False,
+    }
+
+
+@app.route("/inbox/archive", methods=["POST"])
+@require_login
+def inbox_archive():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("filename") or "").strip()
+    if not name:
+        return {"error": "No filename"}, 400
+    src = RAW_DIR / "inbox" / name
+    try:
+        src.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        return {"error": "Invalid path"}, 400
+    if not src.exists():
+        return {"error": "File not found"}, 404
+    dst = RAW_DIR / name
+    # Avoid overwriting existing files in raw/
+    if dst.exists():
+        stem, suffix = src.stem, src.suffix
+        i = 1
+        while dst.exists():
+            dst = RAW_DIR / f"{stem}-{i}{suffix}"
+            i += 1
+    src.rename(dst)
+    return {"ok": True}
+
+
+@app.route("/inbox/mark-wikified", methods=["POST"])
+@require_login
+def inbox_mark_wikified():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("filename") or "").strip()
+    if not name:
+        return {"error": "No filename"}, 400
+    p = RAW_DIR / "inbox" / name
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        return {"error": "Invalid path"}, 400
+    if not p.exists():
+        return {"error": "File not found"}, 404
+    try:
+        text = p.read_text(encoding="utf-8")
+        fm, body = _parse_frontmatter(text)
+        fm["wikified"] = True
+        # Rebuild file with updated frontmatter
+        fm_lines = ["---"]
+        for k, v in fm.items():
+            if isinstance(v, list):
+                fm_lines.append(f"{k}: {json.dumps(v)}")
+            elif isinstance(v, bool):
+                fm_lines.append(f"{k}: {'true' if v else 'false'}")
+            else:
+                sv = str(v)
+                needs_quotes = '"' in sv or "'" in sv or ":" in sv
+                fm_lines.append(f"{k}: {json.dumps(sv) if needs_quotes else sv}")
+        fm_lines.append("---")
+        new_text = "\n".join(fm_lines) + "\n" + body
+        p.write_text(new_text, encoding="utf-8")
+    except Exception as e:
+        log.error("mark-wikified failed for %s: %s", name, e)
+        return {"error": str(e)}, 500
+    return {"ok": True}
+
+# ---------------------------------------------------------------------------
+# Blog routes
+# ---------------------------------------------------------------------------
+
+@app.route("/blog/")
+def blog_index():
+    logged_in = bool(session.get("logged_in"))
+    posts = _blog_posts(published_only=not logged_in)
+    return render_template("blog_index.html", posts=posts)
+
+
+@app.route("/blog/rss.xml")
+def blog_rss():
+    import xml.etree.ElementTree as ET
+    posts = _blog_posts(published_only=True)
+    base  = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
+
+    rss  = ET.Element("rss", attrib={"version": "2.0"})
+    chan = ET.SubElement(rss, "channel")
+    ET.SubElement(chan, "title").text       = "Lobotomy Blog"
+    ET.SubElement(chan, "link").text        = f"{base}/blog/"
+    ET.SubElement(chan, "description").text = "Posts from Lobotomy"
+    ET.SubElement(chan, "language").text    = "en"
+
+    for p in posts[:20]:
+        item = ET.SubElement(chan, "item")
+        ET.SubElement(item, "title").text       = p["title"]
+        ET.SubElement(item, "link").text        = f"{base}/blog/{p['slug']}"
+        ET.SubElement(item, "guid").text        = f"{base}/blog/{p['slug']}"
+        ET.SubElement(item, "pubDate").text     = _rfc822(p["date"])
+        ET.SubElement(item, "description").text = p["summary"]
+
+    xml_str = ET.tostring(rss, encoding="unicode")
+    return Response(
+        '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str,
+        mimetype="application/rss+xml",
+    )
+
+
+@app.route("/blog/new", methods=["GET", "POST"])
+@require_login
+def blog_new():
+    error = None
+    if request.method == "POST":
+        title     = (request.form.get("title")   or "").strip()
+        tags_raw  = (request.form.get("tags")    or "").strip()
+        summary   = (request.form.get("summary") or "").strip()
+        body      = (request.form.get("body")    or "").strip()
+        published = bool(request.form.get("published"))
+        if not title:
+            error = "Title is required."
+        else:
+            today    = datetime.date.today().isoformat()
+            slug     = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+            slug     = f"{today}-{slug}"
+            tag_list = [t.strip() for t in tags_raw.split(",") if t.strip()]
+            tag_str  = "[" + ", ".join(tag_list) + "]" if tag_list else "[]"
+            pub_str  = "true" if published else "false"
+            content  = (
+                f'---\ntitle: "{title}"\ndate: {today}\ntags: {tag_str}\n'
+                f'published: {pub_str}\nsummary: "{summary}"\n---\n\n{body}'
+            )
+            BLOG_DIR.mkdir(parents=True, exist_ok=True)
+            (BLOG_DIR / f"{slug}.md").write_text(content, encoding="utf-8")
+            return redirect(url_for("blog_post", slug=slug))
+    return render_template("blog_new.html", post=None, slug=None, error=error)
+
+
+@app.route("/blog/<slug>/edit", methods=["GET", "POST"])
+@require_login
+def blog_edit(slug):
+    if not re.match(r"^[\w-]+$", slug):
+        abort(404)
+    f = BLOG_DIR / f"{slug}.md"
+    if not f.exists():
+        abort(404)
+    error = None
+    if request.method == "POST":
+        title     = (request.form.get("title")   or "").strip()
+        tags_raw  = (request.form.get("tags")    or "").strip()
+        summary   = (request.form.get("summary") or "").strip()
+        body      = (request.form.get("body")    or "").strip()
+        published = bool(request.form.get("published"))
+        if not title:
+            error = "Title is required."
+        else:
+            orig_meta, _ = _parse_frontmatter(f.read_text(encoding="utf-8"))
+            date     = orig_meta.get("date", datetime.date.today().isoformat())
+            tag_list = [t.strip() for t in tags_raw.split(",") if t.strip()]
+            tag_str  = "[" + ", ".join(tag_list) + "]" if tag_list else "[]"
+            pub_str  = "true" if published else "false"
+            content  = (
+                f'---\ntitle: "{title}"\ndate: {date}\ntags: {tag_str}\n'
+                f'published: {pub_str}\nsummary: "{summary}"\n---\n\n{body}'
+            )
+            f.write_text(content, encoding="utf-8")
+            return redirect(url_for("blog_post", slug=slug))
+    text = f.read_text(encoding="utf-8")
+    meta, body = _parse_frontmatter(text)
+    tags_val   = meta.get("tags", [])
+    post = {
+        "title":     meta.get("title", ""),
+        "tags":      ", ".join(tags_val) if isinstance(tags_val, list) else str(tags_val),
+        "summary":   meta.get("summary", ""),
+        "body":      body,
+        "published": meta.get("published", False),
+    }
+    return render_template("blog_new.html", post=post, slug=slug, error=error)
+
+
+@app.route("/blog/<slug>")
+def blog_post(slug):
+    if not re.match(r"^[\w-]+$", slug):
+        abort(404)
+    f = BLOG_DIR / f"{slug}.md"
+    if not f.exists():
+        abort(404)
+    text = f.read_text(encoding="utf-8")
+    meta, body = _parse_frontmatter(text)
+    if not meta.get("published") and not session.get("logged_in"):
+        abort(404)
+    html = md_lib.markdown(body, extensions=_MD_EXTENSIONS)
+    return render_template("blog_post.html", meta=meta, content=html, slug=slug)
+
+# ---------------------------------------------------------------------------
+# Daily tasks email
+# ---------------------------------------------------------------------------
+
+def _build_daily_email() -> str | None:
+    """Return HTML email body for overdue + today tasks, or None if nothing to send."""
+    today_str = datetime.date.today().isoformat()
+    tasks = read_tasks()
+    overdue = [t for t in tasks if not t.complete and t.due and t.due < today_str]
+    due_today = [t for t in tasks if not t.complete and t.due == today_str]
+    if not overdue and not due_today:
+        return None
+
+    def task_row(t):
+        pri = f"[{t.priority.upper()}] " if t.priority else ""
+        ctx = f" @{t.context}" if t.context else ""
+        return f"<li>{pri}{t.description}{ctx}</li>"
+
+    sections = []
+    if overdue:
+        items = "".join(task_row(t) for t in sorted(overdue, key=lambda t: t.due or ""))
+        sections.append(f"<h3 style='color:#ff3b30;margin:16px 0 6px'>Overdue ({len(overdue)})</h3><ul>{items}</ul>")
+    if due_today:
+        items = "".join(task_row(t) for t in due_today)
+        sections.append(f"<h3 style='color:#ff9500;margin:16px 0 6px'>Due today ({len(due_today)})</h3><ul>{items}</ul>")
+
+    body = "".join(sections)
+    base_url = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
+    return (
+        f"<div style='font-family:-apple-system,sans-serif;max-width:480px;margin:0 auto;padding:16px'>"
+        f"<h2 style='margin:0 0 4px'>Lobotomy — Daily Summary</h2>"
+        f"<p style='color:#8e8e93;font-size:13px;margin:0 0 16px'>{today_str}</p>"
+        f"{body}"
+        f"<p style='margin-top:20px;font-size:13px'><a href='{base_url}/tasks'>Open Tasks</a></p>"
+        f"</div>"
+    )
+
+
+def _send_daily_tasks_email() -> None:
+    """Send the daily tasks summary if enabled and configured."""
+    from auth import _resend_ready, _send_email, get_user, get_settings
+    if not _resend_ready():
+        return
+    settings = get_settings()
+    if not settings.get("daily_email_enabled"):
+        return
+    user = get_user() or {}
+    recipient = settings.get("daily_email_address") or user.get("email", "")
+    if not recipient:
+        return
+    html = _build_daily_email()
+    if not html:
+        return
+    today_str = datetime.date.today().isoformat()
+    try:
+        _send_email(recipient, f"Tasks for {today_str}", html)
+        log.info("Daily email sent to %s", recipient)
+    except Exception as e:
+        log.error("Daily email send failed: %s", e, exc_info=True)
+
+
+def _daily_email_loop() -> None:
+    import time as _time
+    last_sent = None
+    while True:
+        _time.sleep(60)
+        try:
+            send_hour = cfg_int("email", "daily_tasks_hour", default=-1)
+            if send_hour < 0:
+                continue  # not configured → disabled
+            now = datetime.datetime.now()
+            today_str = now.date().isoformat()
+            if now.hour == send_hour and last_sent != today_str:
+                _send_daily_tasks_email()
+                last_sent = today_str
+        except Exception as e:
+            log.error("Daily email loop error: %s", e, exc_info=True)
+
+
+import threading as _threading
+_threading.Thread(target=_daily_email_loop, daemon=True, name="daily-email").start()
+
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
+job_queue = JobQueue(WIKI_DIR / ".jobs")
+
+
 if __name__ == "__main__":
-    host = cfg_get("web", "host", "0.0.0.0")
-    port = cfg_int("web", "port", 5000)
-    debug = cfg_bool("web", "debug", False)
-    log.info("Starting Lobotomy server on %s:%d (debug=%s)", host, port, debug)
-    app.run(host=host, port=port, debug=debug)
+    host = cfg_get("server", "host", "127.0.0.1")
+    port = cfg_int("server", "port", default=8080)
+
+    issues = validate_config()
+    for level, msg in issues:
+        prefix = "ERROR" if level == "error" else "WARNING"
+        print(f"[{prefix}] {msg}")
+
+    errors = [m for l, m in issues if l == "error"]
+    if errors:
+        print("\nFix these errors and restart.")
+        sys.exit(1)
+
+    if not user_exists():
+        print(f"[INFO] No account found. Visit http://{host}:{port}/setup to create one.")
+
+    provider = cfg_get("llm", "provider", "openai")
+    print(f"\nLobotomy  http://{host}:{port}  (provider: {provider})\n")
+    app.run(host=host, port=port, debug=False, threaded=True)
