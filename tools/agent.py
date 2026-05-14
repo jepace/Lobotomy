@@ -780,7 +780,7 @@ def _validate_ingest(args: dict) -> str:
         ok = False
         lines.append(f"\n### ❌ Pages not in index ({len(not_indexed)})")
         lines.extend(f"  - {p}" for p in not_indexed[:20])
-        lines.append("  → Fix: call rebuild_index")
+        lines.append("  → Fix: index is rebuilt automatically at end of wikification")
     else:
         lines.append("### ✓ All pages in index")
 
@@ -795,7 +795,7 @@ TOOL_FNS = {
     "move_file":        lambda a: _move_file(a["src"], a["dst"]),
     "fetch_url":        lambda a: _fetch_url(a["url"]),
     "prepend_log":      lambda a: _prepend_log(a["entry"]),
-    "rebuild_index":    _rebuild_index,
+
     "autolink":         _autolink,
 
     "search_wiki":      _search_wiki,
@@ -917,19 +917,6 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
-            "name":        "rebuild_index",
-            "description": (
-                "Rebuild wiki/index.md automatically from the frontmatter of every page in "
-                "sources/, entities/, concepts/, synthesis/. Entries are sorted alphabetically "
-                "within each section. Call this once at the end of ingest instead of manually "
-                "editing wiki/index.md — it is faster and never makes ordering mistakes."
-            ),
-            "parameters":  {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name":        "autolink",
             "description": (
                 "In the given wiki page, find the first bare occurrence of every other wiki "
@@ -1037,7 +1024,6 @@ def system_prompt() -> str:
         "| create_page | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
         "| autolink | Call once per new page after writing — links titles on that page. |\n"
-        "| rebuild_index | Call once at end of ingest — rebuilds wiki/index.md from frontmatter. |\n"
         "| prepend_log | Add entry to wiki/log.md. Never use write_file for the log. |\n"
         "| validate_ingest | Call at end of ingest — checks links, frontmatter, index coverage. |\n"
         "| list_dir | List directory contents. |\n"

@@ -77,7 +77,7 @@ log = logging.getLogger("lobotomy.serve")
 from config import cfg_get, cfg_bool, cfg_int, validate_config
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
-                   stream_agent_turn, system_prompt, _fix_wiki_links)
+                   stream_agent_turn, system_prompt, _fix_wiki_links, _rebuild_index)
 
 BLOG_DIR = REPO_ROOT / "blog"
 from job_queue import JobQueue
@@ -936,6 +936,8 @@ def _mark_inbox_wikified(filename: str) -> None:
             log.info("Archived %s -> raw/sources/%s", filename, p.name)
         result = _fix_wiki_links({})
         log.info("fix_wiki_links: %s", result)
+        result = _rebuild_index({})
+        log.info("rebuild_index: %s", result)
     except Exception as e:
         log.error("_mark_inbox_wikified failed for %s: %s", filename, e)
 
@@ -2018,6 +2020,52 @@ def inbox_mark_wikified():
         log.error("mark-wikified failed for %s: %s", name, e)
         return {"error": str(e)}, 500
     return {"ok": True}
+
+@app.route("/wiki/debug-sources")
+@require_login
+def debug_sources():
+    """Debug endpoint: shows raw/sources/ state and how wiki/sources/ pages would match."""
+    raw_sources_dir = RAW_DIR / "sources"
+    wiki_sources_dir = WIKI_DIR / "sources"
+
+    raw_files = []
+    if raw_sources_dir.is_dir():
+        for f in sorted(raw_sources_dir.iterdir()):
+            if f.is_file():
+                try:
+                    meta, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
+                    raw_files.append({"name": f.name, "stem": f.stem, "url": meta.get("url", "")})
+                except Exception as e:
+                    raw_files.append({"name": f.name, "stem": f.stem, "url": f"[error: {e}]"})
+
+    wiki_pages = []
+    if wiki_sources_dir.is_dir():
+        for f in sorted(wiki_sources_dir.glob("*.md")):
+            try:
+                meta, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
+                wiki_url = meta.get("url", "").strip()
+                matched = None
+                for r in raw_files:
+                    if wiki_url and r["url"].strip() == wiki_url:
+                        matched = f"url:{r['name']}"
+                        break
+                if not matched:
+                    for r in raw_files:
+                        if r["stem"] == f.stem:
+                            matched = f"stem:{r['name']}"
+                            break
+                wiki_pages.append({"name": f.name, "url": wiki_url, "matched_raw": matched})
+            except Exception as e:
+                wiki_pages.append({"name": f.name, "url": "", "matched_raw": f"[error: {e}]"})
+
+    return {
+        "raw_sources_dir_exists": raw_sources_dir.is_dir(),
+        "raw_sources_dir_path": str(raw_sources_dir),
+        "raw_files": raw_files,
+        "wiki_sources_dir_exists": wiki_sources_dir.is_dir(),
+        "wiki_pages": wiki_pages,
+    }
+
 
 @app.route("/raw/sources/<path:filename>")
 @require_login
