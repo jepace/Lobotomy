@@ -915,7 +915,13 @@ def chat_send():
     def on_done(messages):
         save_history(messages)
         if inbox_file:
-            _mark_inbox_wikified(inbox_file)
+            ingested = any(
+                isinstance(m.get("content"), str) and m["content"].startswith("__ingested__:1")
+                for m in messages
+                if m.get("role") == "system"
+            )
+            if ingested:
+                _mark_inbox_wikified(inbox_file)
 
     log.info("Chat send: model=%s history_len=%d", model, len(history))
     job_id = job_queue.submit(client, model, history, sys_prompt, on_done=on_done)
