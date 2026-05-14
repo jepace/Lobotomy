@@ -174,6 +174,14 @@ def _read_file(path: str) -> "str | list":
     if p.suffix.lower() in _IMAGE_EXTS:
         return _read_image(p)
     text = p.read_text(encoding="utf-8", errors="replace")
+    # If this inbox file is just a URL stub and we already fetched it, return the cached content
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+        stripped = text.strip()
+        if stripped.startswith("http") and "\n" not in stripped and stripped in _fetch_cache:
+            return _fetch_cache[stripped]
+    except ValueError:
+        pass
     try:
         p.resolve().relative_to(RAW_DIR.resolve())
         limit = _RAW_READ_LIMIT
@@ -256,6 +264,20 @@ def _read_pdf(p) -> "str | list":
     )
 
 
+def _strip_broken_wiki_links(content: str, page_path: Path) -> str:
+    """Replace any internal wiki link whose target doesn't exist with bare link text."""
+    import re
+    def _check(m):
+        text, target = m.group(1), m.group(2)
+        if target.startswith("http") or target.startswith("#") or target.startswith("mailto"):
+            return m.group(0)
+        resolved = (page_path.parent / target).resolve()
+        if resolved.exists():
+            return m.group(0)
+        return text  # drop the broken link, keep display text
+    return re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _check, content)
+
+
 def _write_file(path: str, content: str) -> str:
     p = REPO_ROOT / path
     try:
@@ -268,6 +290,7 @@ def _write_file(path: str, content: str) -> str:
     if p.resolve() == (WIKI_DIR / "log.md").resolve():
         return "Error: write_file refused on wiki/log.md — use prepend_log to add entries."
     p.parent.mkdir(parents=True, exist_ok=True)
+    content = _strip_broken_wiki_links(content, p)
     p.write_text(content, encoding="utf-8")
     _autolink({"path": path})
     return f"Written {len(content)} bytes to {path}"
@@ -284,6 +307,9 @@ def _list_dir(directory: str) -> str:
         f"  [{'dir' if e.is_dir() else 'file'}]  {e.relative_to(REPO_ROOT)}"
         for e in entries
     )
+
+
+_fetch_cache: dict[str, str] = {}
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -334,6 +360,9 @@ def _backfill_inbox_from_fetch(url: str, content: str) -> None:
 
 
 def _fetch_url(url: str) -> str:
+    if url in _fetch_cache:
+        log.debug("fetch_url cache hit: %s", url)
+        return _fetch_cache[url]
     import urllib.parse
     from html.parser import HTMLParser
     from http.cookiejar import CookieJar
@@ -399,6 +428,7 @@ def _fetch_url(url: str) -> str:
     else:
         text = raw.decode("utf-8", errors="replace")
     text = text[:50_000]
+    _fetch_cache[url] = text
     _backfill_inbox_from_fetch(url, text)
     return text
 
@@ -758,7 +788,7 @@ def _create_page(args: dict) -> str:
         f'---\ntitle: "{title}"\ntype: {pg_type}\ntags: [{tag_str}]\n'
         f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n---\n\n'
     )
-    content = frontmatter + body.lstrip("\n")
+    content = frontmatter + _strip_broken_wiki_links(body.lstrip("\n"), p)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     _autolink({"path": path})
