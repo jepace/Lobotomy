@@ -77,7 +77,8 @@ log = logging.getLogger("lobotomy.serve")
 from config import cfg_get, cfg_bool, cfg_int, validate_config
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
-                   stream_agent_turn, system_prompt)
+                   stream_agent_turn, system_prompt,
+                   _fix_wiki_links, _rebuild_index, _validate_ingest)
 
 BLOG_DIR = REPO_ROOT / "blog"
 from job_queue import JobQueue
@@ -934,6 +935,12 @@ def _mark_inbox_wikified(filename: str) -> None:
         if not dest.exists():
             p.rename(dest)
             log.info("Archived %s -> raw/sources/%s", filename, p.name)
+        result = _fix_wiki_links({})
+        log.info("fix_wiki_links: %s", result)
+        result = _rebuild_index({})
+        log.info("rebuild_index: %s", result)
+        report = _validate_ingest({})
+        log.info("validate_ingest:\n%s", report)
     except Exception as e:
         log.error("_mark_inbox_wikified failed for %s: %s", filename, e)
 
@@ -1099,46 +1106,44 @@ def wiki_save(page_path):
 @app.route("/wiki/lint")
 @require_login
 def wiki_lint():
-    """Find orphaned pages (created but not in index.md)."""
-    index_path = WIKI_DIR / "index.md"
-    if not index_path.exists():
-        return render_template("wiki-lint.html", orphans=[], broken_links=[])
+    import re as _re
+    SKIP = {"index.md", "log.md", "overview.md", "reading-list.md", "tasks.md", "tasks-archive.md"}
+    required_fields = {"title", "type", "tags", "created", "updated", "sources"}
+    index_text = (WIKI_DIR / "index.md").read_text(encoding="utf-8") if (WIKI_DIR / "index.md").exists() else ""
 
-    index_text = index_path.read_text(encoding='utf-8')
-    indexed_paths = set()
-    for match in re.finditer(r'\]\(([\w/.-]+\.md)\)', index_text):
-        indexed_paths.add(match.group(1))
+    broken_links, missing_fm, not_indexed = [], [], []
+    for f in sorted(WIKI_DIR.rglob("*.md")):
+        if f.name in SKIP:
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = str(f.relative_to(WIKI_DIR))
 
-    _LINT_SKIP = {
-        'index.md', 'log.md', 'overview.md', 'reading-list.md', 'tasks.md',
-        'sources/index.md', 'entities/index.md', 'concepts/index.md', 'synthesis/index.md',
-    }
+        fm_match = _re.match(r"^---\s*\n(.*?)\n---", text, _re.DOTALL)
+        if fm_match:
+            fm_keys = {l.split(":", 1)[0].strip() for l in fm_match.group(1).splitlines() if ":" in l}
+            missing = required_fields - fm_keys
+            if missing:
+                missing_fm.append({"file": rel, "missing": ", ".join(sorted(missing))})
+        else:
+            missing_fm.append({"file": rel, "missing": "no frontmatter"})
 
-    # Find all .md files
-    all_files = set()
-    for root, dirs, files in os.walk(WIKI_DIR):
-        for f in files:
-            if f.endswith('.md'):
-                rel_path = str(Path(root) / f).replace(str(WIKI_DIR), '').lstrip('/')
-                if rel_path not in _LINT_SKIP:
-                    all_files.add(rel_path)
+        for link_text, link_path in _re.findall(r'\[([^\]]+)\]\(([^)]+)\)', text):
+            if link_path.startswith(("http", "#", "mailto")):
+                continue
+            target = (f.parent / link_path).resolve()
+            if not target.exists():
+                broken_links.append({"file": rel, "link": link_path, "text": link_text})
 
-    orphans = sorted(all_files - indexed_paths)
+        if f.parent != WIKI_DIR and rel not in index_text:
+            not_indexed.append(rel)
 
-    # Check for broken links
-    broken = []
-    for fpath in all_files | indexed_paths:
-        p = WIKI_DIR / fpath
-        if p.exists():
-            content = p.read_text(encoding='utf-8', errors='replace')
-            for match in re.finditer(r'\[([^\]]+)\]\(([^")]+)\)', content):
-                link_target = match.group(2)
-                if not link_target.startswith(('http://', 'https://', '/', '#')):
-                    resolved = (p.parent / link_target).resolve()
-                    if not resolved.exists():
-                        broken.append({"file": fpath, "link": link_target, "text": match.group(1)})
-
-    return render_template("wiki-lint.html", orphans=orphans, broken_links=broken)
+    return render_template("wiki-lint.html",
+                           broken_links=broken_links,
+                           missing_fm=missing_fm,
+                           not_indexed=not_indexed)
 
 
 @app.route("/raw/<path:filename>")
@@ -2016,6 +2021,52 @@ def inbox_mark_wikified():
         log.error("mark-wikified failed for %s: %s", name, e)
         return {"error": str(e)}, 500
     return {"ok": True}
+
+@app.route("/wiki/debug-sources")
+@require_login
+def debug_sources():
+    """Debug endpoint: shows raw/sources/ state and how wiki/sources/ pages would match."""
+    raw_sources_dir = RAW_DIR / "sources"
+    wiki_sources_dir = WIKI_DIR / "sources"
+
+    raw_files = []
+    if raw_sources_dir.is_dir():
+        for f in sorted(raw_sources_dir.iterdir()):
+            if f.is_file():
+                try:
+                    meta, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
+                    raw_files.append({"name": f.name, "stem": f.stem, "url": meta.get("url", "")})
+                except Exception as e:
+                    raw_files.append({"name": f.name, "stem": f.stem, "url": f"[error: {e}]"})
+
+    wiki_pages = []
+    if wiki_sources_dir.is_dir():
+        for f in sorted(wiki_sources_dir.glob("*.md")):
+            try:
+                meta, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
+                wiki_url = meta.get("url", "").strip()
+                matched = None
+                for r in raw_files:
+                    if wiki_url and r["url"].strip() == wiki_url:
+                        matched = f"url:{r['name']}"
+                        break
+                if not matched:
+                    for r in raw_files:
+                        if r["stem"] == f.stem:
+                            matched = f"stem:{r['name']}"
+                            break
+                wiki_pages.append({"name": f.name, "url": wiki_url, "matched_raw": matched})
+            except Exception as e:
+                wiki_pages.append({"name": f.name, "url": "", "matched_raw": f"[error: {e}]"})
+
+    return {
+        "raw_sources_dir_exists": raw_sources_dir.is_dir(),
+        "raw_sources_dir_path": str(raw_sources_dir),
+        "raw_files": raw_files,
+        "wiki_sources_dir_exists": wiki_sources_dir.is_dir(),
+        "wiki_pages": wiki_pages,
+    }
+
 
 @app.route("/raw/sources/<path:filename>")
 @require_login

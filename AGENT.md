@@ -224,23 +224,14 @@ Determine whether the new source warrants:
 Update to reflect the new source. The overview must always represent the current state of the wiki
 accurately. At minimum update: Current State, Domains Covered, Major Entities, Major Concepts.
 
-### Step 9 — Update `wiki/index.md`
-Call `rebuild_index`. It reads all page frontmatter and regenerates the index alphabetically.
-Do not edit `wiki/index.md` manually.
-
-### Step 10 — Append to `wiki/log.md`
+### Step 9 — Append to `wiki/log.md`
 Call `prepend_log` with the new entry text. Do NOT use `write_file` for the log — it would
 overwrite and destroy existing entries. `prepend_log` inserts the entry at the top automatically.
 Follow Section 12 for the entry format.
 
-### Step 11 — Self-check
-1. Call `fix_wiki_links()` — repairs any relative link paths missing a `../` prefix.
-2. Call `validate_ingest(source_slug)`. It checks:
-- All frontmatter fields present on every page
-- No broken internal links
-- All new pages appearing in the index
-
-Fix any issues it reports, then call `done()`.
+### Step 10 — Done
+Call `done()`. The server runs health checks automatically (broken links, missing frontmatter,
+index coverage) — results are visible at `/wiki/lint`.
 
 ---
 
@@ -563,7 +554,7 @@ Do not modify any file until the user gives an explicit instruction.
 - Do not skip calling `autolink` after writing each page
 - Do not write wiki cross-links manually — always use `autolink`; manual links get the relative path wrong
 - Never write a link as `(entities/foo.md)` from inside a subdir page — it needs `../` prefix; `autolink` handles this correctly
-- Do not skip calling `validate_ingest` at the end of every ingest
+
 - Do not resolve contradictions without user instruction
 - Do not delete wiki pages — set `deprecated: true` in frontmatter instead, then note it in the log
 - Do not ingest sources from outside `raw/`
