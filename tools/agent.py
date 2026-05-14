@@ -521,7 +521,7 @@ def _autolink(args: dict) -> str:
     except ValueError:
         return "Error: autolink only works on wiki/ pages."
 
-    # Build title -> link-path map (relative from target's directory)
+    # Build title -> relative-link-path map
     title_map: list[tuple[str, str]] = []
     for subdir in ("sources", "entities", "concepts", "synthesis"):
         d = WIKI_DIR / subdir
@@ -539,47 +539,53 @@ def _autolink(args: dict) -> str:
                     title = line.split(":", 1)[1].strip().strip('"')
                     if title:
                         rel = f.relative_to(WIKI_DIR)
+                        # Build correct relative path (../ per directory level)
                         up_parts = target_p.parent.relative_to(WIKI_DIR).parts
-                        up = "/".join(["..."] * len(up_parts))
-                        link_path = f"{up}/{rel}" if up else str(rel)
+                        prefix = "../" * len(up_parts)
+                        link_path = f"{prefix}{rel}"
                         title_map.append((title, link_path))
                     break
 
     if not title_map:
         return "No other wiki pages found to link."
 
-    title_map.sort(key=lambda x: -len(x[0]))  # longest first to avoid partial matches
+    title_map.sort(key=lambda x: -len(x[0]))  # longest first — avoids partial matches
 
     content  = target_p.read_text(encoding="utf-8", errors="replace")
     fm_match = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
     frontmatter, body = (fm_match.group(1), content[len(fm_match.group(1)):]) if fm_match else ("", content)
 
+    # Split body into alternating [non-link, link, non-link, link, ...]
+    # Substitute only in non-link segments to avoid corrupting existing link URLs.
+    _LINK_RE = re.compile(r'\[[^\]]*\]\([^)]*\)')
+    segments = _LINK_RE.split(body)
+    links    = _LINK_RE.findall(body)
+
     linked = 0
     for title, link_path in title_map:
-        # Match existing [text](url) links (to skip them) OR bare title occurrences.
-        # Group 1 = existing link (preserve as-is); group 2 = bare title (replace once).
-        combined = re.compile(
-            r'(\[[^\]]*\]\([^)]*\))'
-            r'|(?<!\w)(' + re.escape(title) + r')(?!\w)',
-            re.IGNORECASE,
-        )
+        pattern = re.compile(r'(?<!\w)(' + re.escape(title) + r')(?!\w)', re.IGNORECASE)
         replaced = False
-
-        def _replacer(m, p=link_path):
-            nonlocal replaced
-            if m.group(1):          # existing link — leave it alone
-                return m.group(1)
-            if replaced:            # already inserted one link for this title
-                return m.group(2)
-            replaced = True
-            return f"[{m.group(2)}]({p})"
-
-        new_body = combined.sub(_replacer, body)
+        new_segments = []
+        for seg in segments:
+            if not replaced:
+                def _rep(m, _lp=link_path):
+                    nonlocal replaced
+                    if replaced:
+                        return m.group(1)
+                    replaced = True
+                    return f"[{m.group(1)}]({_lp})"
+                seg = pattern.sub(_rep, seg)
+            new_segments.append(seg)
         if replaced:
-            body = new_body
+            segments = new_segments
             linked += 1
 
-    target_p.write_text(frontmatter + body, encoding="utf-8")
+    # Reassemble: interleave segments and preserved links
+    result = segments[0]
+    for lnk, seg in zip(links, segments[1:]):
+        result += lnk + seg
+
+    target_p.write_text(frontmatter + result, encoding="utf-8")
     return f"Autolinked {linked} title(s) in {target_str}."
 
 
