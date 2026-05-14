@@ -420,6 +420,11 @@ async function saveEdit(name, idx) {
   });
   const data = await resp.json();
   if (data.ok) {
+    if (data.filename && data.filename !== name) {
+      // File was renamed (e.g. .url promoted to .md) — reload to reflect new state
+      location.reload();
+      return;
+    }
     cancelEdit(idx);
     // Refresh the inline reader if it was open
     const card = document.getElementById('item-' + idx);
