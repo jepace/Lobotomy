@@ -45,7 +45,6 @@ wiki/                  All LLM-generated content lives here.
 wiki/index.md          Master catalog. Every wiki page listed here exactly once.
 wiki/log.md            Append-only operation log. Never delete entries.
 wiki/overview.md       High-level synthesis. Updated after every ingest.
-wiki/tasks.md          Task manager. All tasks with priority, context, due date.
 wiki/sources/          One summary page per ingested source document.
 wiki/entities/         People, organizations, products, projects, codebases.
 wiki/concepts/         Ideas, techniques, frameworks, algorithms, terms.
@@ -66,7 +65,7 @@ Every wiki page (sources, entities, concepts, synthesis, overview) uses this str
 ```markdown
 ---
 title: "Human Readable Title"
-type: source | entity | concept | synthesis | overview | tasks
+type: source | entity | concept | synthesis | overview
 tags: [tag1, tag2]
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
@@ -84,7 +83,7 @@ url: "https://original-article-url"   # source pages only; omit on entity/concep
 | Field | Type | Rules |
 |-------|------|-------|
 | `title` | string (quoted) | Title-case, human readable |
-| `type` | enum | One of: `source`, `entity`, `concept`, `synthesis`, `overview`, `tasks` |
+| `type` | enum | One of: `source`, `entity`, `concept`, `synthesis`, `overview` |
 | `tags` | list of strings | lowercase, hyphenated, no spaces |
 | `created` | YYYY-MM-DD | Date first created. Never change. |
 | `updated` | YYYY-MM-DD | Date of most recent edit. Update on every write. |
@@ -364,82 +363,7 @@ you want to process but have not gotten to yet.
 
 ---
 
-## 10. Task Management Workflow
-
-**Trigger**: User says "add a task", "show tasks", "complete a task", or asks about the task list.
-
-Tasks live in `wiki/tasks.md`. All task management is done by editing that file.
-
-### Task format
-
-```markdown
-- [ ] Task description #p:high #due:2026-05-01 #start:2026-04-25 #ctx:work #proj:project-name #s:next #rep:1w #len:30m #star
-  Notes: optional notes on indented line
-    - [ ] Subtask (double-indented)
-    - [ ] Another subtask
-```
-
-All tags are optional. Only include what is relevant.
-
-### Tag reference
-
-| Tag | Example values | Meaning |
-|-----|----------------|--------|
-| `#p:` | `top`, `high`, `medium`, `low` | Priority (omit for none) |
-| `#due:` | `2026-05-01` | Due date in YYYY-MM-DD format |
-| `#start:` | `2026-04-25` | Hide task until this date |
-| `#ctx:` | `home`, `work`, `computer`, `errands`, `calls` | GTD context |
-| `#proj:` | `any-project-slug` | Project |
-| `#s:` | `next`, `waiting`, `someday`, `hold` | Status (omit = active) |
-| `#rep:` | `1d`, `7d`, `2w`, `1m`, `3m`, `1y` | Fixed recurrence period |
-| `#rep:` (relative) | `7d+`, `1m+` | Recur N days/weeks/months after *completion* |
-| `#len:` | `30m`, `2h` | Estimated duration |
-| `#star` | (no value) | Starred / flagged |
-| `#done:` | `2026-04-27` | Added automatically when marking complete |
-
-### Recurrence behaviour
-
-When a recurring task (`#rep:`) is marked complete:
-- A new instance is automatically created immediately below it with the next due date.
-- **Fixed** (`#rep:1w`): next due = current due date + period. Use for bills, meetings, scheduled events.
-- **Relative** (`#rep:7d+`): next due = completion date + period. Use for habits, maintenance tasks.
-
-### Task sections in `wiki/tasks.md`
-
-```markdown
-## Inbox
-(uncategorized quick-capture tasks go here)
-
-## [Project Name]
-(add new sections as projects are created)
-```
-
-### Task operations
-
-**Add a task**: Append to the appropriate project section. Quick-capture goes to Inbox. If no
-matching section exists, create it.
-
-**Complete a task**: Change `- [ ]` to `- [x]` and append `#done:YYYY-MM-DD`.
-
-**Archive completed tasks**: Move all `- [x]` lines (and their indented subtasks/notes) from
-`wiki/tasks.md` to `wiki/tasks-archive.md`, grouped by completion month. Create the archive file
-if it does not exist. Update `wiki/log.md`.
-
-**Prioritize**: Ask the LLM to review all open tasks and suggest an ordering by due date and
-priority. The LLM presents the ordered list but does not modify the file unless asked.
-
-**CLI filter** (no LLM needed):
-```sh
-python tools/tasks.py                    # all open tasks, sorted by due/priority
-python tools/tasks.py --due-today        # due today or overdue
-python tools/tasks.py --priority high    # high and top priority tasks
-python tools/tasks.py --context work     # tasks with @work context
-python tools/tasks.py --overdue          # past due date
-```
-
----
-
-## 11. `wiki/index.md` Protocol
+## 10. `wiki/index.md` Protocol
 
 The master catalog. Every wiki page appears here exactly once, under the correct section.
 
@@ -461,11 +385,11 @@ The master catalog. Every wiki page appears here exactly once, under the correct
 - Insert new entries in alphabetical order — do not append to the end.
 - Update the `_Last updated: YYYY-MM-DD_` line at the top on every modification.
 - The files `wiki/overview.md`, `wiki/log.md`, `wiki/index.md`, and
-  `wiki/tasks.md` are **not** listed in the index (they are operational files, not knowledge pages).
+  `wiki/overview.md`, `wiki/log.md`, and `wiki/index.md` are **not** listed in the index (they are operational files, not knowledge pages).
 
 ---
 
-## 12. `wiki/log.md` Protocol
+## 11. `wiki/log.md` Protocol
 
 Append-only operation log. Never delete or modify existing entries. Always prepend new entries at
 the **top** (newest-first ordering).
@@ -489,7 +413,7 @@ Rules:
 
 ---
 
-## 13. Handling Contradictions
+## 12. Handling Contradictions
 
 When a new source contradicts an existing wiki page:
 
@@ -509,7 +433,7 @@ When a new source contradicts an existing wiki page:
 
 ---
 
-## 14. Handling Uncertainty
+## 13. Handling Uncertainty
 
 - Reflect hedged claims with appropriate language: "according to [Source](path)",
   "as of YYYY-MM-DD", "the author suggests but does not confirm"
@@ -520,7 +444,7 @@ When a new source contradicts an existing wiki page:
 
 ---
 
-## 15. Cold-Start Checklist
+## 14. Cold-Start Checklist
 
 If you are a fresh LLM session with no context beyond this file and the wiki directory:
 
@@ -528,13 +452,13 @@ If you are a fresh LLM session with no context beyond this file and the wiki dir
 2. Read `wiki/index.md` — understand what knowledge currently exists
 3. Read the top 10 entries of `wiki/log.md` — understand recent operations
 4. Read `wiki/overview.md` — understand the current synthesis
-5. Ask the user what operation to perform: ingest / query / lint / process inbox / manage tasks
+5. Ask the user what operation to perform: ingest / query / lint / process inbox
 
 Do not modify any file until the user gives an explicit instruction.
 
 ---
 
-## 16. Do Not Do These Things
+## 15. Do Not Do These Things
 
 - Do not call `list_dir` to verify a file exists before reading it — call `read_file` directly
 - Do not modify, move, or delete anything in `raw/` — it is immutable
