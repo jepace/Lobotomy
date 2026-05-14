@@ -2349,6 +2349,23 @@ def inbox_edit():
             p.write_text(existing[:m.end()] + "\n" + content, encoding="utf-8")
         else:
             p.write_text(content, encoding="utf-8")
+    elif p.suffix == ".url":
+        # User pasted article text into a URL-only item — promote to .md with frontmatter
+        existing = p.read_text(encoding="utf-8", errors="replace")
+        lines = [l.strip() for l in existing.splitlines() if l.strip()]
+        title = lines[0] if lines else p.stem
+        url_line = next((l for l in lines if l.startswith("URL:")), "")
+        url_val = url_line[4:].strip() if url_line else ""
+        today = datetime.date.today().isoformat()
+        md_name = p.stem + ".md"
+        md_path = p.parent / md_name
+        fm = f'---\ntitle: "{title}"\n'
+        if url_val:
+            fm += f'url: {url_val}\n'
+        fm += f'saved: {today}\n---\n\n'
+        md_path.write_text(fm + content, encoding="utf-8")
+        p.unlink()
+        return {"ok": True, "filename": md_name}
     else:
         p.write_text(content, encoding="utf-8")
     return {"ok": True}
