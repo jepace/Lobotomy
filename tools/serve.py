@@ -1013,6 +1013,14 @@ def wiki_page(page_path):
     raw_text   = p.read_text(encoding="utf-8", errors="replace")
     meta, _    = _parse_frontmatter(raw_text)
     source_url = meta.get("url", "").strip() or None
+    # For wiki/sources/ pages, check if a matching archived raw file exists
+    raw_source_url = None
+    rel = p.relative_to(WIKI_DIR)
+    if str(rel).startswith("sources/"):
+        raw_sources_dir = RAW_DIR / "sources"
+        for candidate in raw_sources_dir.glob(p.stem + ".*") if raw_sources_dir.is_dir() else []:
+            raw_source_url = f"/raw/sources/{candidate.name}"
+            break
     return render_template(
         "wiki.html",
         content=render_md(p),
@@ -1020,6 +1028,7 @@ def wiki_page(page_path):
         sections=wiki_sections(),
         current_path=str(p.relative_to(WIKI_DIR)),
         source_url=source_url,
+        raw_source_url=raw_source_url,
     )
 
 
@@ -1983,6 +1992,19 @@ def inbox_mark_wikified():
         log.error("mark-wikified failed for %s: %s", name, e)
         return {"error": str(e)}, 500
     return {"ok": True}
+
+@app.route("/raw/sources/<path:filename>")
+@require_login
+def raw_source_file(filename):
+    p = RAW_DIR / "sources" / filename
+    try:
+        p.resolve().relative_to((RAW_DIR / "sources").resolve())
+    except ValueError:
+        abort(404)
+    if not p.exists():
+        abort(404)
+    return send_file(p, mimetype="text/plain; charset=utf-8", as_attachment=False)
+
 
 @app.route("/inbox/edit", methods=["POST"])
 @require_login
