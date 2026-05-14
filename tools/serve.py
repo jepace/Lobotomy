@@ -928,7 +928,7 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
     if not wiki_sources.is_dir():
         return
 
-    raw_rel = f"raw/sources/{raw_path.name}"
+    raw_rel = str(raw_path.relative_to(REPO_ROOT))
     now = time.time()
     best = None
 
@@ -990,6 +990,37 @@ def _rewrite_log_target(filename: str) -> None:
     log.info("Updated log.md: %s -> %s", old, new)
 
 
+def _update_raw_source_path(filename: str, new_rel: str) -> None:
+    """Update raw_source frontmatter in the wiki/sources/ page that references raw/inbox/{filename}."""
+    import json as _json
+    old_rel = f"raw/inbox/{filename}"
+    wiki_sources = WIKI_DIR / "sources"
+    if not wiki_sources.is_dir():
+        return
+    for wf in wiki_sources.glob("*.md"):
+        try:
+            wtext = wf.read_text(encoding="utf-8")
+            wmeta, wbody = _parse_frontmatter(wtext)
+            if wmeta.get("raw_source") != old_rel:
+                continue
+            wmeta["raw_source"] = new_rel
+            fm_lines = ["---"]
+            for k, v in wmeta.items():
+                if isinstance(v, list):
+                    fm_lines.append(f"{k}: {_json.dumps(v)}")
+                elif isinstance(v, bool):
+                    fm_lines.append(f"{k}: {'true' if v else 'false'}")
+                else:
+                    sv = str(v)
+                    fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
+            fm_lines.append("---")
+            wf.write_text("\n".join(fm_lines) + "\n" + wbody, encoding="utf-8")
+            log.info("Updated raw_source in %s: %s -> %s", wf.name, old_rel, new_rel)
+            return
+        except Exception as e:
+            log.warning("_update_raw_source_path failed for %s: %s", wf.name, e)
+
+
 def _mark_inbox_wikified(filename: str) -> None:
     """Mark an inbox file as wikified in its frontmatter. Safe to call from any thread."""
     import json as _json
@@ -1020,15 +1051,7 @@ def _mark_inbox_wikified(filename: str) -> None:
         fm_lines.append("---")
         p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
         log.info("Marked wikified: %s", filename)
-        # Archive the raw file to raw/sources/ so wiki pages can link to it
-        dest_dir = RAW_DIR / "sources"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / p.name
-        if not dest.exists():
-            p.rename(dest)
-            log.info("Archived %s -> raw/sources/%s", filename, p.name)
-        _rewrite_log_target(filename)
-        _link_raw_source_to_wiki(dest, fm.get("url", "").strip())
+        _link_raw_source_to_wiki(p, fm.get("url", "").strip())
         result = _fix_wiki_links({})
         log.info("fix_wiki_links: %s", result)
         result = _rebuild_index({})
@@ -2162,15 +2185,26 @@ def inbox_archive():
         return {"error": "Invalid path"}, 400
     if not src.exists():
         return {"error": "File not found"}, 404
-    dst = RAW_DIR / name
-    # Avoid overwriting existing files in raw/
+    # Wikified files go to raw/sources/; others go to raw/
+    try:
+        fm, _ = _parse_frontmatter(src.read_text(encoding="utf-8", errors="replace"))
+        is_wikified = bool(fm.get("wikified"))
+    except Exception:
+        is_wikified = False
+    dest_dir = RAW_DIR / "sources" if is_wikified else RAW_DIR
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dst = dest_dir / name
     if dst.exists():
         stem, suffix = src.stem, src.suffix
         i = 1
         while dst.exists():
-            dst = RAW_DIR / f"{stem}-{i}{suffix}"
+            dst = dest_dir / f"{stem}-{i}{suffix}"
             i += 1
     src.rename(dst)
+    if is_wikified:
+        _rewrite_log_target(name)
+        # Update raw_source in the matching wiki/sources/ page
+        _update_raw_source_path(name, f"raw/sources/{dst.name}")
     return {"ok": True}
 
 
