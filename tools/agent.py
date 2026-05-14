@@ -800,7 +800,7 @@ TOOL_FNS = {
 
     "search_wiki":      _search_wiki,
     "create_page":      _create_page,
-    "validate_ingest":  _validate_ingest,
+
     "done":             _done,
 }
 
@@ -980,28 +980,6 @@ TOOL_DEFS = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name":        "validate_ingest",
-            "description": (
-                "Run all Step 11 self-checks automatically: broken internal links, missing "
-                "frontmatter fields, pages not yet in the index. Call this at the end of "
-                "every ingest instead of manually re-reading pages. Fix any reported issues, "
-                "then call done()."
-            ),
-            "parameters":  {
-                "type": "object",
-                "properties": {
-                    "source_slug": {
-                        "type":        "string",
-                        "description": "Slug of the ingested source, e.g. 'smith-2024-attention'. Used for context in the report.",
-                    },
-                },
-                "required": ["source_slug"],
-            },
-        },
-    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -1025,7 +1003,6 @@ def system_prompt() -> str:
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
         "| autolink | Call once per new page after writing — links titles on that page. |\n"
         "| prepend_log | Add entry to wiki/log.md. Never use write_file for the log. |\n"
-        "| validate_ingest | Call at end of ingest — checks links, frontmatter, index coverage. |\n"
         "| list_dir | List directory contents. |\n"
         "| move_file | Move files within raw/ only. |\n"
         "| fetch_url | Fetch a web page for inbox processing. |\n"

@@ -77,7 +77,8 @@ log = logging.getLogger("lobotomy.serve")
 from config import cfg_get, cfg_bool, cfg_int, validate_config
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
-                   stream_agent_turn, system_prompt, _fix_wiki_links, _rebuild_index)
+                   stream_agent_turn, system_prompt,
+                   _fix_wiki_links, _rebuild_index, _validate_ingest)
 
 BLOG_DIR = REPO_ROOT / "blog"
 from job_queue import JobQueue
@@ -938,6 +939,8 @@ def _mark_inbox_wikified(filename: str) -> None:
         log.info("fix_wiki_links: %s", result)
         result = _rebuild_index({})
         log.info("rebuild_index: %s", result)
+        report = _validate_ingest({})
+        log.info("validate_ingest:\n%s", report)
     except Exception as e:
         log.error("_mark_inbox_wikified failed for %s: %s", filename, e)
 
@@ -1103,46 +1106,44 @@ def wiki_save(page_path):
 @app.route("/wiki/lint")
 @require_login
 def wiki_lint():
-    """Find orphaned pages (created but not in index.md)."""
-    index_path = WIKI_DIR / "index.md"
-    if not index_path.exists():
-        return render_template("wiki-lint.html", orphans=[], broken_links=[])
+    import re as _re
+    SKIP = {"index.md", "log.md", "overview.md", "reading-list.md", "tasks.md", "tasks-archive.md"}
+    required_fields = {"title", "type", "tags", "created", "updated", "sources"}
+    index_text = (WIKI_DIR / "index.md").read_text(encoding="utf-8") if (WIKI_DIR / "index.md").exists() else ""
 
-    index_text = index_path.read_text(encoding='utf-8')
-    indexed_paths = set()
-    for match in re.finditer(r'\]\(([\w/.-]+\.md)\)', index_text):
-        indexed_paths.add(match.group(1))
+    broken_links, missing_fm, not_indexed = [], [], []
+    for f in sorted(WIKI_DIR.rglob("*.md")):
+        if f.name in SKIP:
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = str(f.relative_to(WIKI_DIR))
 
-    _LINT_SKIP = {
-        'index.md', 'log.md', 'overview.md', 'reading-list.md', 'tasks.md',
-        'sources/index.md', 'entities/index.md', 'concepts/index.md', 'synthesis/index.md',
-    }
+        fm_match = _re.match(r"^---\s*\n(.*?)\n---", text, _re.DOTALL)
+        if fm_match:
+            fm_keys = {l.split(":", 1)[0].strip() for l in fm_match.group(1).splitlines() if ":" in l}
+            missing = required_fields - fm_keys
+            if missing:
+                missing_fm.append({"file": rel, "missing": ", ".join(sorted(missing))})
+        else:
+            missing_fm.append({"file": rel, "missing": "no frontmatter"})
 
-    # Find all .md files
-    all_files = set()
-    for root, dirs, files in os.walk(WIKI_DIR):
-        for f in files:
-            if f.endswith('.md'):
-                rel_path = str(Path(root) / f).replace(str(WIKI_DIR), '').lstrip('/')
-                if rel_path not in _LINT_SKIP:
-                    all_files.add(rel_path)
+        for link_text, link_path in _re.findall(r'\[([^\]]+)\]\(([^)]+)\)', text):
+            if link_path.startswith(("http", "#", "mailto")):
+                continue
+            target = (f.parent / link_path).resolve()
+            if not target.exists():
+                broken_links.append({"file": rel, "link": link_path, "text": link_text})
 
-    orphans = sorted(all_files - indexed_paths)
+        if f.parent != WIKI_DIR and rel not in index_text:
+            not_indexed.append(rel)
 
-    # Check for broken links
-    broken = []
-    for fpath in all_files | indexed_paths:
-        p = WIKI_DIR / fpath
-        if p.exists():
-            content = p.read_text(encoding='utf-8', errors='replace')
-            for match in re.finditer(r'\[([^\]]+)\]\(([^")]+)\)', content):
-                link_target = match.group(2)
-                if not link_target.startswith(('http://', 'https://', '/', '#')):
-                    resolved = (p.parent / link_target).resolve()
-                    if not resolved.exists():
-                        broken.append({"file": fpath, "link": link_target, "text": match.group(1)})
-
-    return render_template("wiki-lint.html", orphans=orphans, broken_links=broken)
+    return render_template("wiki-lint.html",
+                           broken_links=broken_links,
+                           missing_fm=missing_fm,
+                           not_indexed=not_indexed)
 
 
 @app.route("/raw/<path:filename>")
