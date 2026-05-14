@@ -1998,7 +1998,8 @@ def inbox_mark_wikified():
     except ValueError:
         return {"error": "Invalid path"}, 400
     if not p.exists():
-        return {"error": "File not found"}, 404
+        # Already archived by the background thread — not an error
+        return {"ok": True, "already_done": True}
     try:
         text = p.read_text(encoding="utf-8")
         fm, body = _parse_frontmatter(text)
