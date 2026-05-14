@@ -927,6 +927,13 @@ def _mark_inbox_wikified(filename: str) -> None:
         fm_lines.append("---")
         p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
         log.info("Marked wikified: %s", filename)
+        # Archive the raw file to raw/sources/ so wiki pages can link to it
+        dest_dir = RAW_DIR / "sources"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / p.name
+        if not dest.exists():
+            p.rename(dest)
+            log.info("Archived %s -> raw/sources/%s", filename, p.name)
     except Exception as e:
         log.error("_mark_inbox_wikified failed for %s: %s", filename, e)
 
@@ -1013,14 +1020,31 @@ def wiki_page(page_path):
     raw_text   = p.read_text(encoding="utf-8", errors="replace")
     meta, _    = _parse_frontmatter(raw_text)
     source_url = meta.get("url", "").strip() or None
-    # For wiki/sources/ pages, check if a matching archived raw file exists
+    # For wiki/sources/ pages, find the matching archived raw file.
+    # Match by URL field first (reliable), then fall back to stem match.
     raw_source_url = None
     rel = p.relative_to(WIKI_DIR)
     if str(rel).startswith("sources/"):
         raw_sources_dir = RAW_DIR / "sources"
-        for candidate in raw_sources_dir.glob(p.stem + ".*") if raw_sources_dir.is_dir() else []:
-            raw_source_url = f"/raw/sources/{candidate.name}"
-            break
+        if raw_sources_dir.is_dir():
+            wiki_url = source_url  # already extracted above
+            stem_match = None
+            for candidate in raw_sources_dir.iterdir():
+                if not candidate.is_file():
+                    continue
+                if wiki_url:
+                    try:
+                        ctext = candidate.read_text(encoding="utf-8", errors="replace")
+                        cmeta, _ = _parse_frontmatter(ctext)
+                        if cmeta.get("url", "").strip() == wiki_url:
+                            raw_source_url = f"/raw/sources/{candidate.name}"
+                            break
+                    except OSError:
+                        pass
+                if candidate.stem == p.stem and stem_match is None:
+                    stem_match = candidate.name
+            if not raw_source_url and stem_match:
+                raw_source_url = f"/raw/sources/{stem_match}"
     return render_template(
         "wiki.html",
         content=render_md(p),

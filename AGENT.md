@@ -168,7 +168,8 @@ Execute all steps in order. Do not skip any step.
 
 ### Step 1 — Verify source location
 The file must be in `raw/` or `raw/inbox/`. If the user gives pasted text, ask them to save it
-to `raw/` first as a `.txt` or `.md` file.
+to `raw/` first as a `.txt` or `.md` file. Never move or delete anything in `raw/inbox/` — the
+server archives files automatically when wikification completes.
 
 ### Step 2 — Read the source completely
 Read the entire file before writing anything. If it is very long (>20,000 words), read it in
@@ -239,17 +240,7 @@ Follow Section 12 for the entry format.
 - No broken internal links
 - All new pages appearing in the index
 
-Fix any issues it reports.
-
-### Step 12 — Archive the raw source file
-If the source came from `raw/inbox/`, move it to `raw/sources/` using `move_file`:
-```
-move_file(src="raw/inbox/{filename}", dst="raw/sources/{source-slug}{ext}")
-```
-Use the same slug as the `wiki/sources/` page. The server automatically links the raw file
-from the wiki/sources/ page — no manual link needed.
-
-Then call `done()`.
+Fix any issues it reports, then call `done()`.
 
 ---
 
