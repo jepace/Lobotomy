@@ -539,7 +539,8 @@ _DONE_SENTINEL = "__AGENT_DONE__:"
 
 
 def _done(args: dict) -> str:
-    return _DONE_SENTINEL + args.get("summary", "")
+    ingested = "1" if args.get("ingested") else "0"
+    return _DONE_SENTINEL + ingested + "|" + args.get("summary", "")
 
 
 def _rebuild_index(args: dict) -> str:
@@ -693,19 +694,16 @@ def _autolink(args: dict) -> str:
     linked = 0
     for title, link_path in title_map:
         pattern = re.compile(r'(?<!\w)(' + re.escape(title) + r')(?!\w)', re.IGNORECASE)
-        replaced = False
         new_segments = []
+        any_replaced = False
         for seg in segments:
-            if not replaced:
-                def _rep(m, _lp=link_path):
-                    nonlocal replaced
-                    if replaced:
-                        return m.group(1)
-                    replaced = True
-                    return f"[{m.group(1)}]({_lp})"
-                seg = pattern.sub(_rep, seg)
-            new_segments.append(seg)
-        if replaced:
+            def _rep(m, _lp=link_path):
+                return f"[{m.group(1)}]({_lp})"
+            new_seg = pattern.sub(_rep, seg)
+            if new_seg != seg:
+                any_replaced = True
+            new_segments.append(new_seg)
+        if any_replaced:
             segments = new_segments
             linked += 1
 
@@ -1022,7 +1020,8 @@ TOOL_DEFS = [
             "description": (
                 "Signal that you have finished ALL your work for this task. "
                 "You MUST call this tool when your task is complete — do not simply stop responding. "
-                "Provide a concise summary of what you accomplished."
+                "Provide a concise summary of what you accomplished. "
+                "Set ingested=true ONLY if you successfully created a new wiki source page during this session."
             ),
             "parameters":  {
                 "type": "object",
@@ -1030,6 +1029,10 @@ TOOL_DEFS = [
                     "summary": {
                         "type":        "string",
                         "description": "What you accomplished — files created/updated, actions taken.",
+                    },
+                    "ingested": {
+                        "type":        "boolean",
+                        "description": "True only if a new wiki source page was created in this session.",
                     },
                 },
                 "required": ["summary"],
@@ -1292,10 +1295,12 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
 
             # done() ends the loop — return immediately without sending it back to the LLM.
             if isinstance(result, str) and result.startswith(_DONE_SENTINEL):
-                summary = result[len(_DONE_SENTINEL):]
-                log.info("Agent called done() in round %d: %s", _round, summary[:120])
+                payload = result[len(_DONE_SENTINEL):]
+                ingested_flag, _, summary = payload.partition("|")
+                log.info("Agent called done() in round %d (ingested=%s): %s", _round, ingested_flag, summary[:120])
                 if summary:
                     messages.append({"role": "assistant", "content": summary})
+                messages.append({"role": "system", "content": f"__ingested__:{ingested_flag}"})
                 return messages
 
             if not isinstance(result, str):
@@ -1512,11 +1517,12 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
 
             # done() is a control signal — it ends the loop, not a message for the LLM.
             if isinstance(result, str) and result.startswith(_DONE_SENTINEL):
-                summary = result[len(_DONE_SENTINEL):]
-                log.info("Agent called done() in round %d: %s", _round, summary[:120])
+                payload = result[len(_DONE_SENTINEL):]
+                ingested_flag, _, summary = payload.partition("|")
+                log.info("Agent called done() in round %d (ingested=%s): %s", _round, ingested_flag, summary[:120])
                 if summary:
                     yield json.dumps({"type": "text", "content": summary}) + "\n"
-                yield json.dumps({"type": "done"}) + "\n"
+                yield json.dumps({"type": "done", "ingested": ingested_flag == "1"}) + "\n"
                 return
 
             yield json.dumps({"type": "tool", "name": fn_name or "(unknown)", "arg": arg_preview}) + "\n"

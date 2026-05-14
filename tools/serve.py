@@ -915,7 +915,13 @@ def chat_send():
     def on_done(messages):
         save_history(messages)
         if inbox_file:
-            _mark_inbox_wikified(inbox_file)
+            ingested = any(
+                isinstance(m.get("content"), str) and m["content"].startswith("__ingested__:1")
+                for m in messages
+                if m.get("role") == "system"
+            )
+            if ingested:
+                _mark_inbox_wikified(inbox_file)
 
     log.info("Chat send: model=%s history_len=%d", model, len(history))
     job_id = job_queue.submit(client, model, history, sys_prompt, on_done=on_done)
@@ -2236,35 +2242,14 @@ def inbox_mark_wikified():
     name = (data.get("filename") or "").strip()
     if not name:
         return {"error": "No filename"}, 400
-    p = RAW_DIR / "inbox" / name
+    # Validate path
     try:
-        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+        (RAW_DIR / "inbox" / name).resolve().relative_to((RAW_DIR / "inbox").resolve())
     except ValueError:
         return {"error": "Invalid path"}, 400
-    if not p.exists():
-        # Already archived by the background thread — not an error
-        return {"ok": True, "already_done": True}
-    try:
-        text = p.read_text(encoding="utf-8")
-        fm, body = _parse_frontmatter(text)
-        fm["wikified"] = True
-        # Rebuild file with updated frontmatter
-        fm_lines = ["---"]
-        for k, v in fm.items():
-            if isinstance(v, list):
-                fm_lines.append(f"{k}: {json.dumps(v)}")
-            elif isinstance(v, bool):
-                fm_lines.append(f"{k}: {'true' if v else 'false'}")
-            else:
-                sv = str(v)
-                needs_quotes = '"' in sv or "'" in sv or ":" in sv
-                fm_lines.append(f"{k}: {json.dumps(sv) if needs_quotes else sv}")
-        fm_lines.append("---")
-        new_text = "\n".join(fm_lines) + "\n" + body
-        p.write_text(new_text, encoding="utf-8")
-    except Exception as e:
-        log.error("mark-wikified failed for %s: %s", name, e)
-        return {"error": str(e)}, 500
+    # Run the full mark-wikified pipeline (idempotent); this stamps raw_source
+    # into the matching wiki/sources/ page so the lookup below finds it.
+    _mark_inbox_wikified(name)
     # Find the matching wiki/sources/ page to return a direct link
     wiki_path = ""
     for raw_rel in (f"raw/inbox/{name}", f"raw/sources/{name}"):
