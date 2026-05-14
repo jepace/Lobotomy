@@ -269,6 +269,7 @@ def _write_file(path: str, content: str) -> str:
         return "Error: write_file refused on wiki/log.md — use prepend_log to add entries."
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
+    _autolink({"path": path})
     return f"Written {len(content)} bytes to {path}"
 
 
@@ -711,6 +712,7 @@ def _create_page(args: dict) -> str:
     content = frontmatter + body.lstrip("\n")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
+    _autolink({"path": path})
     action = "Updated" if existed else "Created"
     return f"{action} {path} ({len(content)} bytes)"
 
@@ -802,7 +804,7 @@ TOOL_FNS = {
     "fetch_url":        lambda a: _fetch_url(a["url"]),
     "prepend_log":      lambda a: _prepend_log(a["entry"]),
 
-    "autolink":         _autolink,
+
 
     "search_wiki":      _search_wiki,
     "create_page":      _create_page,
@@ -923,27 +925,6 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
-            "name":        "autolink",
-            "description": (
-                "In the given wiki page, find the first bare occurrence of every other wiki "
-                "page title and replace it with a markdown link. Call after writing each new "
-                "page — handles cross-linking automatically so you don't have to hunt for mentions."
-            ),
-            "parameters":  {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type":        "string",
-                        "description": "Repo-relative path to the wiki page to process, e.g. wiki/sources/my-article.md",
-                    },
-                },
-                "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name":        "search_wiki",
             "description": (
                 "Keyword search across all wiki pages. Returns matching page titles, paths, and "
@@ -1007,7 +988,6 @@ def system_prompt() -> str:
         "| write_file | Write wiki pages (raw/ is blocked). Use create_page for new pages instead. |\n"
         "| create_page | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
-        "| autolink | Call once per new page after writing — links titles on that page. |\n"
         "| prepend_log | Add entry to wiki/log.md. Never use write_file for the log. |\n"
         "| list_dir | List directory contents. |\n"
         "| move_file | Move files within raw/ only. |\n"

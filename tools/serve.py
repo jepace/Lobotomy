@@ -1094,9 +1094,17 @@ def wiki_page(page_path):
     source_url = meta.get("url", "").strip() or None
     # For wiki/sources/ pages, check for a stamped raw_source field in frontmatter.
     raw_source_url = None
+    # Check raw_source: field first, then fall back to sources: entries starting with raw/
+    raw_source_url = None
     raw_source = meta.get("raw_source", "").strip()
     if raw_source and (REPO_ROOT / raw_source).exists():
         raw_source_url = "/" + raw_source
+    else:
+        for s in meta.get("sources", []):
+            s = s.strip()
+            if s.startswith("raw/") and (REPO_ROOT / s).exists():
+                raw_source_url = "/" + s
+                break
     return render_template(
         "wiki.html",
         content=render_md(p),
