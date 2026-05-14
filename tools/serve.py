@@ -803,12 +803,24 @@ def list_inbox() -> list:
 
         mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
         wikified = False
+        wiki_path = ""
         try:
             raw_text = f.read_text(encoding="utf-8", errors="replace")
             fm, _ = _parse_frontmatter(raw_text)
             wikified = bool(fm.get("wikified"))
         except Exception:
             pass
+        if wikified:
+            # Find the wiki/sources/ page that has raw_source pointing to this file
+            raw_rel = f"raw/sources/{f.name}"
+            for wf in (WIKI_DIR / "sources").glob("*.md") if (WIKI_DIR / "sources").is_dir() else []:
+                try:
+                    wm, _ = _parse_frontmatter(wf.read_text(encoding="utf-8", errors="replace"))
+                    if wm.get("raw_source") == raw_rel:
+                        wiki_path = str(wf.relative_to(WIKI_DIR))
+                        break
+                except Exception:
+                    pass
         items.append({
             "name":        f.name,
             "title":       title,
@@ -818,6 +830,7 @@ def list_inbox() -> list:
             "source_url":  source_url,
             "ext":         f.suffix,
             "wikified":    wikified,
+            "wiki_path":   wiki_path,
         })
     return items
 
