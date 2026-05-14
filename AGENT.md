@@ -168,7 +168,8 @@ Execute all steps in order. Do not skip any step.
 
 ### Step 1 — Verify source location
 The file must be in `raw/` or `raw/inbox/`. If the user gives pasted text, ask them to save it
-to `raw/` first as a `.txt` or `.md` file. Never move or delete anything in `raw/inbox/`.
+to `raw/` first as a `.txt` or `.md` file. Never move or delete anything in `raw/inbox/` — the
+server archives files automatically when wikification completes.
 
 ### Step 2 — Read the source completely
 Read the entire file before writing anything. If it is very long (>20,000 words), read it in

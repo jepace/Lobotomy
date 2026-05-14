@@ -95,6 +95,7 @@
     <a href="/wiki/" style="color:var(--accent); text-decoration:none; font-size:22px; line-height:1;">‹</a>
     <h1>{{ title }}</h1>
     {% if source_url %}<a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;" href="{{ source_url }}" target="_blank" rel="noopener">Source ↗</a>{% endif %}
+    {% if raw_source_url %}<a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;" href="{{ raw_source_url }}" target="_blank">Raw ↗</a>{% endif %}
     <a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;" href="/wiki/{{ current_path }}/edit">Edit</a>
     <a class="chat-about" href="/chat" onclick="setChatPrompt('Tell me about {{ title }}')">Ask AI</a>
   </div>
