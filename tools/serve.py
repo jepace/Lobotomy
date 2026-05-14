@@ -1984,6 +1984,34 @@ def inbox_mark_wikified():
         return {"error": str(e)}, 500
     return {"ok": True}
 
+@app.route("/inbox/edit", methods=["POST"])
+@require_login
+def inbox_edit():
+    data    = request.get_json(silent=True) or {}
+    name    = (data.get("filename") or "").strip()
+    content = (data.get("content")  or "").strip()
+    if not name:
+        return {"error": "No filename"}, 400
+    p = RAW_DIR / "inbox" / name
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        return {"error": "Invalid path"}, 400
+    if not p.exists():
+        return {"error": "File not found"}, 404
+    if p.suffix == ".md":
+        existing = p.read_text(encoding="utf-8", errors="replace")
+        # Preserve the frontmatter block, replace only the body
+        m = re.match(r'^---\n.*?\n---\n', existing, re.DOTALL)
+        if m:
+            p.write_text(existing[:m.end()] + "\n" + content, encoding="utf-8")
+        else:
+            p.write_text(content, encoding="utf-8")
+    else:
+        p.write_text(content, encoding="utf-8")
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # Blog routes
 # ---------------------------------------------------------------------------
