@@ -205,7 +205,6 @@ For each significant entity (person, organization, product, project) in the sour
   suggests it might be a different entity with a similar name.
 - If a page exists and is correct, update it with `write_file`.
 - If the entity is new and significant, use `create_page` to create `wiki/entities/{slug}.md`.
-- After writing, call `autolink(path)` on the page.
 - Note any contradictions with existing claims in a `## Contradictions` section.
 
 ### Step 6 — Update or create concept pages
@@ -213,7 +212,6 @@ For each significant concept, technique, framework, or term:
 - Use `search_wiki` to check whether a page already exists.
 - If a page exists and is correct, update it with `write_file`.
 - If no page exists and the concept warrants one, use `create_page` for `wiki/concepts/{slug}.md`.
-- After writing, call `autolink(path)` on the page.
 
 ### Step 7 — Update synthesis pages
 Determine whether the new source warrants:
@@ -551,9 +549,6 @@ Do not modify any file until the user gives an explicit instruction.
 - Do not modify `AGENT.md` unless the user explicitly asks you to update the schema
 - Do not edit `wiki/index.md` manually — always use `rebuild_index`
 - Do not write wiki page frontmatter manually — always use `create_page` for new pages
-- Do not skip calling `autolink` after writing each page
-- Do not write wiki cross-links manually — always use `autolink`; manual links get the relative path wrong
-- Never write a link as `(entities/foo.md)` from inside a subdir page — it needs `../` prefix; `autolink` handles this correctly
 
 - Do not resolve contradictions without user instruction
 - Do not delete wiki pages — set `deprecated: true` in frontmatter instead, then note it in the log

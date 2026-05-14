@@ -898,6 +898,70 @@ def chat_send():
     return {"job_id": job_id}
 
 
+def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
+    """
+    After archiving a raw file, find the matching wiki/sources/ page and stamp
+    raw_source: into its frontmatter so wiki_page() can link to it directly.
+
+    Matching strategy (in order):
+      1. wiki/sources/ page whose url: frontmatter matches inbox_url
+      2. wiki/sources/ page modified most recently (within the last 5 min)
+    """
+    import json as _json
+    import time
+
+    wiki_sources = WIKI_DIR / "sources"
+    if not wiki_sources.is_dir():
+        return
+
+    raw_rel = f"raw/sources/{raw_path.name}"
+    now = time.time()
+    best = None
+
+    for wf in wiki_sources.glob("*.md"):
+        if wf.name == "index.md":
+            continue
+        try:
+            wtext = wf.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        wmeta, _ = _parse_frontmatter(wtext)
+        if wmeta.get("raw_source"):
+            if wmeta["raw_source"] == raw_rel:
+                return  # already stamped correctly
+            continue    # already linked to something else
+        if inbox_url and wmeta.get("url", "").strip() == inbox_url:
+            best = wf
+            break
+        age = now - wf.stat().st_mtime
+        if age < 300:   # modified in last 5 minutes
+            if best is None or wf.stat().st_mtime > best.stat().st_mtime:
+                best = wf
+
+    if best is None:
+        log.warning("_link_raw_source_to_wiki: no wiki/sources/ page found for %s", raw_path.name)
+        return
+
+    try:
+        wtext = best.read_text(encoding="utf-8")
+        wmeta, wbody = _parse_frontmatter(wtext)
+        wmeta["raw_source"] = raw_rel
+        fm_lines = ["---"]
+        for k, v in wmeta.items():
+            if isinstance(v, list):
+                fm_lines.append(f"{k}: {_json.dumps(v)}")
+            elif isinstance(v, bool):
+                fm_lines.append(f"{k}: {'true' if v else 'false'}")
+            else:
+                sv = str(v)
+                fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
+        fm_lines.append("---")
+        best.write_text("\n".join(fm_lines) + "\n" + wbody, encoding="utf-8")
+        log.info("Stamped raw_source=%s into %s", raw_rel, best.name)
+    except Exception as e:
+        log.error("_link_raw_source_to_wiki failed for %s: %s", raw_path.name, e)
+
+
 def _mark_inbox_wikified(filename: str) -> None:
     """Mark an inbox file as wikified in its frontmatter. Safe to call from any thread."""
     import json as _json
@@ -935,6 +999,7 @@ def _mark_inbox_wikified(filename: str) -> None:
         if not dest.exists():
             p.rename(dest)
             log.info("Archived %s -> raw/sources/%s", filename, p.name)
+        _link_raw_source_to_wiki(dest, fm.get("url", "").strip())
         result = _fix_wiki_links({})
         log.info("fix_wiki_links: %s", result)
         result = _rebuild_index({})
@@ -1027,31 +1092,19 @@ def wiki_page(page_path):
     raw_text   = p.read_text(encoding="utf-8", errors="replace")
     meta, _    = _parse_frontmatter(raw_text)
     source_url = meta.get("url", "").strip() or None
-    # For wiki/sources/ pages, find the matching archived raw file.
-    # Match by URL field first (reliable), then fall back to stem match.
+    # For wiki/sources/ pages, check for a stamped raw_source field in frontmatter.
     raw_source_url = None
-    rel = p.relative_to(WIKI_DIR)
-    if str(rel).startswith("sources/"):
-        raw_sources_dir = RAW_DIR / "sources"
-        if raw_sources_dir.is_dir():
-            wiki_url = source_url  # already extracted above
-            stem_match = None
-            for candidate in raw_sources_dir.iterdir():
-                if not candidate.is_file():
-                    continue
-                if wiki_url:
-                    try:
-                        ctext = candidate.read_text(encoding="utf-8", errors="replace")
-                        cmeta, _ = _parse_frontmatter(ctext)
-                        if cmeta.get("url", "").strip() == wiki_url:
-                            raw_source_url = f"/raw/sources/{candidate.name}"
-                            break
-                    except OSError:
-                        pass
-                if candidate.stem == p.stem and stem_match is None:
-                    stem_match = candidate.name
-            if not raw_source_url and stem_match:
-                raw_source_url = f"/raw/sources/{stem_match}"
+    # Check raw_source: field first, then fall back to sources: entries starting with raw/
+    raw_source_url = None
+    raw_source = meta.get("raw_source", "").strip()
+    if raw_source and (REPO_ROOT / raw_source).exists():
+        raw_source_url = "/" + raw_source
+    else:
+        for s in meta.get("sources", []):
+            s = s.strip()
+            if s.startswith("raw/") and (REPO_ROOT / s).exists():
+                raw_source_url = "/" + s
+                break
     return render_template(
         "wiki.html",
         content=render_md(p),
