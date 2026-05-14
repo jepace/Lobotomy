@@ -28,6 +28,11 @@
     <span class="count-pill {{ 'count-ok' if not broken_links else 'count-bad' }}">
       {{ broken_links|length }} broken link{{ '' if broken_links|length == 1 else 's' }}
     </span>
+    {% if broken_links %}
+    <form method="post" action="/wiki/fix-broken-links" style="margin:0">
+      <button type="submit" class="count-pill" style="cursor:pointer;background:var(--bg2);border:none;">Strip broken links</button>
+    </form>
+    {% endif %}
     <span class="count-pill {{ 'count-ok' if not missing_fm else 'count-bad' }}">
       {{ missing_fm|length }} missing frontmatter
     </span>
