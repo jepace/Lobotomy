@@ -446,23 +446,6 @@ def _fetch_url(url: str) -> str:
     return text
 
 
-def _move_file(src: str, dst: str) -> str:
-    s = REPO_ROOT / src
-    d = REPO_ROOT / dst
-    if not s.exists():
-        return f"Error: source not found: {src}"
-    try:
-        s.resolve().relative_to((RAW_DIR / "inbox").resolve())
-    except ValueError:
-        return f"Error: move only permitted from raw/inbox/. Got: {src}"
-    try:
-        d.resolve().relative_to(RAW_DIR.resolve())
-    except ValueError:
-        return f"Error: destination must be inside raw/. Got: {dst}"
-    d.parent.mkdir(parents=True, exist_ok=True)
-    s.rename(d)
-    return f"Moved {src} -> {dst}"
-
 
 def _prepend_log(entry: str) -> str:
     """Prepend a log entry to wiki/log.md, preserving all existing entries."""
@@ -893,7 +876,6 @@ TOOL_FNS = {
     "read_file":       lambda a: _read_file(a["path"]),
     "write_file":       lambda a: _write_file(a["path"], a["content"]),
     "list_dir":         lambda a: _list_dir(a["directory"]),
-    "move_file":        lambda a: _move_file(a["src"], a["dst"]),
     "fetch_url":        lambda a: _fetch_url(a["url"]),
     "prepend_log":      lambda a: _prepend_log(a["entry"]),
 
@@ -942,21 +924,6 @@ TOOL_DEFS = [
                 "type": "object",
                 "properties": {"directory": {"type": "string", "description": "Directory path relative to repo root"}},
                 "required": ["directory"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name":        "move_file",
-            "description": "Move a file from raw/inbox/ to raw/ (inbox processing workflow).",
-            "parameters":  {
-                "type": "object",
-                "properties": {
-                    "src": {"type": "string", "description": "Source path, must be inside raw/inbox/"},
-                    "dst": {"type": "string", "description": "Destination path, must be inside raw/"},
-                },
-                "required": ["src", "dst"],
             },
         },
     },
@@ -1083,7 +1050,6 @@ def system_prompt() -> str:
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
         "| prepend_log | Add entry to wiki/log.md. Never use write_file for the log. |\n"
         "| list_dir | List directory contents. |\n"
-        "| move_file | Move files within raw/ only. |\n"
         "| fetch_url | Fetch a web page for inbox processing. |\n"
         "| done | **Required** — signal task complete. Never stop without calling done(). |\n\n"
         "Exception: purely conversational replies need no tool use and no done() call."
