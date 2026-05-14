@@ -174,10 +174,11 @@ Read the entire file before writing anything. If it is very long (>20,000 words)
 sections sequentially before proceeding.
 
 ### Step 3 — Create a source summary page
-Call `create_page` with `path=wiki/sources/{source-slug}.md`, `type=source`, and the body below.
-(Do not write frontmatter manually — `create_page` fills in dates automatically.)
-
-Include `url:` in frontmatter if the source has an original URL (from fetch_url or inbox metadata).
+Call `create_page` with:
+- `path`: `wiki/sources/{source-slug}.md` — always a wiki/ path, never a URL
+- `type`: `source`
+- `url`: the original article URL if available (this goes into frontmatter metadata, not the path)
+- `body`: the content below (do not write frontmatter manually — `create_page` fills in dates automatically)
 
 Required sections:
 - **Summary**: 3–5 paragraphs synthesizing the source's main content and contribution
