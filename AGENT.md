@@ -95,11 +95,11 @@ url: "https://original-article-url"   # source pages only; omit on entity/concep
 
 **Source page** (`wiki/sources/`):
 - Summary
-- Key Claims
-- Key Entities
-- Key Concepts
-- Notable Quotes
-- Relation to Existing Wiki
+- Claims
+- Entities
+- Concepts
+- Quotes
+- Wiki Context
 
 **Entity page** (`wiki/entities/`):
 - Overview
@@ -181,11 +181,11 @@ Include `url:` in frontmatter if the source has an original URL (from fetch_url 
 
 Required sections:
 - **Summary**: 3–5 paragraphs synthesizing the source's main content and contribution
-- **Key Claims**: bulleted list of the most important factual or analytical claims
-- **Key Entities**: bulleted list of significant people, orgs, products, projects (each linked to its wiki page). Plain links only — no annotations like "(new)" or "(update)". Whether a page is new or existing is a workflow detail, not page content.
-- **Key Concepts**: bulleted list of important concepts and terms (each linked to its wiki page). Plain links only — no annotations like "(new)" or "(update)".
-- **Notable Quotes**: 3–5 direct quotes with section references if available
-- **Relation to Existing Wiki**: how it relates to, extends, supports, or contradicts existing pages
+- **Claims**: bulleted list of factual or analytical claims from the source
+- **Entities**: bulleted list of people, orgs, products, projects (each linked to its wiki page). Plain links only — no annotations like "(new)" or "(update)".
+- **Concepts**: bulleted list of important concepts and terms (each linked to its wiki page). Plain links only — no annotations like "(new)" or "(update)".
+- **Quotes**: 3–5 direct quotes with section references if available
+- **Wiki Context**: how it relates to, extends, supports, or contradicts existing pages
 
 ### Step 4 — Identify affected existing pages
 Call `search_wiki` for each significant entity and concept found in the source. This is faster
@@ -495,7 +495,7 @@ When a new source contradicts an existing wiki page:
      [Source B](../sources/source-b.md) states Y. These contradict because Z.
      *Status: unresolved as of YYYY-MM-DD*
    ```
-3. Note the contradiction in the new source page under "Relation to Existing Wiki".
+3. Note the contradiction in the new source page under "Wiki Context".
 4. **Do not resolve contradictions yourself** unless the user explicitly asks. Surface; do not
    adjudicate.
 5. If a later ingest resolves a contradiction, update the entry:
