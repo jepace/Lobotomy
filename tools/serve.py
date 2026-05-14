@@ -1167,13 +1167,14 @@ def wiki_save(page_path):
 @require_login
 def wiki_lint():
     import re as _re
-    SKIP = {"index.md", "log.md", "overview.md", "reading-list.md", "tasks.md", "tasks-archive.md"}
+    SKIP_ALL   = {"log.md"}
+    SKIP_FM    = {"index.md", "overview.md", "reading-list.md", "tasks.md", "tasks-archive.md"}
     required_fields = {"title", "type", "tags", "created", "updated", "sources"}
     index_text = (WIKI_DIR / "index.md").read_text(encoding="utf-8") if (WIKI_DIR / "index.md").exists() else ""
 
     broken_links, missing_fm, not_indexed = [], [], []
     for f in sorted(WIKI_DIR.rglob("*.md")):
-        if f.name in SKIP:
+        if f.name in SKIP_ALL:
             continue
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
@@ -1181,14 +1182,15 @@ def wiki_lint():
             continue
         rel = str(f.relative_to(WIKI_DIR))
 
-        fm_match = _re.match(r"^---\s*\n(.*?)\n---", text, _re.DOTALL)
-        if fm_match:
-            fm_keys = {l.split(":", 1)[0].strip() for l in fm_match.group(1).splitlines() if ":" in l}
-            missing = required_fields - fm_keys
-            if missing:
-                missing_fm.append({"file": rel, "missing": ", ".join(sorted(missing))})
-        else:
-            missing_fm.append({"file": rel, "missing": "no frontmatter"})
+        if f.name not in SKIP_FM:
+            fm_match = _re.match(r"^---\s*\n(.*?)\n---", text, _re.DOTALL)
+            if fm_match:
+                fm_keys = {l.split(":", 1)[0].strip() for l in fm_match.group(1).splitlines() if ":" in l}
+                missing = required_fields - fm_keys
+                if missing:
+                    missing_fm.append({"file": rel, "missing": ", ".join(sorted(missing))})
+            else:
+                missing_fm.append({"file": rel, "missing": "no frontmatter"})
 
         for link_text, link_path in _re.findall(r'\[([^\]]+)\]\(([^)]+)\)', text):
             if link_path.startswith(("http", "#", "mailto")):
@@ -1197,7 +1199,7 @@ def wiki_lint():
             if not target.exists():
                 broken_links.append({"file": rel, "link": link_path, "text": link_text})
 
-        if f.parent != WIKI_DIR and rel not in index_text:
+        if f.name not in SKIP_FM and f.parent != WIKI_DIR and rel not in index_text:
             not_indexed.append(rel)
 
     return render_template("wiki-lint.html",
@@ -1210,7 +1212,7 @@ def wiki_lint():
 @require_login
 def wiki_fix_broken_links():
     import re as _re
-    SKIP = {"index.md", "log.md", "overview.md", "reading-list.md", "tasks.md", "tasks-archive.md"}
+    SKIP = {"log.md"}
     total_fixed = 0
     pages_fixed = 0
 
