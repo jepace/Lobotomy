@@ -94,6 +94,20 @@
   .reader-loading { color: var(--text2); font-size: 13px; padding: 20px 0; text-align: center; }
 
   .empty-state { text-align: center; padding: 50px 20px; color: var(--text2); }
+
+  /* Inline edit panel */
+  .item-edit {
+    display: none; border-top: 1px solid var(--border);
+    padding: 10px 14px 14px; background: var(--bg2);
+  }
+  .item-edit.open { display: block; }
+  .item-edit textarea {
+    width: 100%; min-height: 140px; resize: vertical;
+    font-size: 13px; font-family: inherit; line-height: 1.5;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px; box-sizing: border-box; margin-bottom: 8px;
+  }
+  .item-edit-actions { display: flex; gap: 6px; }
 </style>
 {% endblock %}
 
@@ -127,7 +141,15 @@
     <div class="reading-item" id="item-{{ loop.index }}">
       <div class="item-header" onclick="toggleItem({{ loop.index }}, '{{ item.name | e }}')">
         <div class="item-body">
-          <div class="item-title">{{ item.title }}</div>
+          <div class="item-title">
+            {%- if item.source_url -%}
+              <a href="{{ item.source_url }}" target="_blank" rel="noopener"
+                 onclick="event.stopPropagation()"
+                 style="color:inherit;text-decoration:none;">{{ item.title }}</a>&#8202;<a href="{{ item.source_url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;color:var(--text2);text-decoration:none;">↗</a>
+            {%- else -%}
+              {{ item.title }}
+            {%- endif -%}
+          </div>
           <div class="item-meta">{{ item.date }} &middot; {{ item.name }}{% if item.wikified %}<span class="wikified-badge">Wikified ✓</span>{% endif %}</div>
           {% if item.excerpt %}<div class="item-excerpt">{{ item.excerpt }}</div>{% endif %}
         </div>
@@ -144,6 +166,15 @@
         <button class="act-btn wikify" id="wikify-{{ loop.index }}"
                 onclick="wikifyItem('{{ item.name | e }}', {{ loop.index }})">Wikify</button>
         <button class="act-btn delete"  onclick="deleteItem('{{ item.name | e }}', {{ loop.index }})">Delete</button>
+        <button class="act-btn" onclick="editItem('{{ item.name | e }}', {{ loop.index }})">Edit</button>
+      </div>
+
+      <div class="item-edit" id="edit-{{ loop.index }}">
+        <textarea id="edit-body-{{ loop.index }}" placeholder="Paste article text here…"></textarea>
+        <div class="item-edit-actions">
+          <button class="act-btn wikify" onclick="saveEdit('{{ item.name | e }}', {{ loop.index }})">Save</button>
+          <button class="act-btn" onclick="cancelEdit({{ loop.index }})">Cancel</button>
+        </div>
       </div>
 
       <div class="item-progress" id="progress-{{ loop.index }}"></div>
@@ -226,7 +257,9 @@ async function pollInbox() {
       const html = `<div class="reading-item" id="item-${idx}">
       <div class="item-header" onclick="toggleItem(${idx}, '${item.name.replace(/'/g, "\\'")}')">
         <div class="item-body">
-          <div class="item-title">${item.title.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+          <div class="item-title">${item.source_url
+            ? `<a href="${item.source_url.replace(/"/g,'&quot;')}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:inherit;text-decoration:none;">${item.title.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</a>&#8202;<a href="${item.source_url.replace(/"/g,'&quot;')}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;color:var(--text2);text-decoration:none;">↗</a>`
+            : item.title.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
           <div class="item-meta">${item.date} &middot; ${item.name.replace(/</g,'&lt;').replace(/>/g,'&gt;')}${item.wikified ? '<span class="wikified-badge">Wikified ✓</span>' : ''}</div>
           ${item.excerpt ? `<div class="item-excerpt">${item.excerpt.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>` : ''}
         </div>
@@ -239,6 +272,15 @@ async function pollInbox() {
         <button class="act-btn wikify" id="wikify-${idx}"
                 onclick="wikifyItem('${item.name.replace(/'/g, "\\'")}'  , ${idx})">Wikify</button>
         <button class="act-btn delete"  onclick="deleteItem('${item.name.replace(/'/g, "\\'")}'  , ${idx})">Delete</button>
+        <button class="act-btn" onclick="editItem('${item.name.replace(/'/g, "\\'")}', ${idx})">Edit</button>
+      </div>
+
+      <div class="item-edit" id="edit-${idx}">
+        <textarea id="edit-body-${idx}" placeholder="Paste article text here…"></textarea>
+        <div class="item-edit-actions">
+          <button class="act-btn wikify" onclick="saveEdit('${item.name.replace(/'/g, "\\'")}', ${idx})">Save</button>
+          <button class="act-btn" onclick="cancelEdit(${idx})">Cancel</button>
+        </div>
       </div>
 
       <div class="item-progress" id="progress-${idx}"></div>
@@ -344,6 +386,53 @@ async function deleteItem(name, idx) {
     body: JSON.stringify({filename: name}),
   });
   document.getElementById('item-' + idx)?.remove();
+}
+
+async function editItem(name, idx) {
+  const editDiv = document.getElementById('edit-' + idx);
+  if (editDiv.classList.contains('open')) {
+    cancelEdit(idx);
+    return;
+  }
+  const textarea = document.getElementById('edit-body-' + idx);
+  textarea.value = 'Loading…';
+  editDiv.classList.add('open');
+  try {
+    const resp = await fetch('/inbox/view/' + encodeURIComponent(name));
+    const data = await resp.json();
+    textarea.value = data.content || '';
+    textarea.focus();
+  } catch(e) {
+    textarea.value = '';
+  }
+}
+
+function cancelEdit(idx) {
+  document.getElementById('edit-' + idx).classList.remove('open');
+}
+
+async function saveEdit(name, idx) {
+  const textarea = document.getElementById('edit-body-' + idx);
+  const content  = textarea.value;
+  const resp = await fetch('/inbox/edit', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({filename: name, content}),
+  });
+  const data = await resp.json();
+  if (data.ok) {
+    cancelEdit(idx);
+    // Refresh the inline reader if it was open
+    const card = document.getElementById('item-' + idx);
+    if (card.classList.contains('expanded')) {
+      loaded[idx] = false;
+      const reader = document.getElementById('reader-' + idx);
+      reader.innerHTML = '<div class="reader-loading">Loading…</div>';
+      card.classList.remove('expanded');
+      toggleItem(idx, name);
+    }
+  } else {
+    alert('Save failed: ' + (data.error || 'Unknown'));
+  }
 }
 
 async function wikifyItem(name, idx) {
