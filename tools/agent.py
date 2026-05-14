@@ -174,6 +174,14 @@ def _read_file(path: str) -> "str | list":
     if p.suffix.lower() in _IMAGE_EXTS:
         return _read_image(p)
     text = p.read_text(encoding="utf-8", errors="replace")
+    # If this inbox file is just a URL stub and we already fetched it, return the cached content
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+        stripped = text.strip()
+        if stripped.startswith("http") and "\n" not in stripped and stripped in _fetch_cache:
+            return _fetch_cache[stripped]
+    except ValueError:
+        pass
     try:
         p.resolve().relative_to(RAW_DIR.resolve())
         limit = _RAW_READ_LIMIT
@@ -286,6 +294,9 @@ def _list_dir(directory: str) -> str:
     )
 
 
+_fetch_cache: dict[str, str] = {}
+
+
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
     """If an inbox file is just a URL stub pointing to `url`, replace its body with fetched content."""
     import json as _json
@@ -334,6 +345,9 @@ def _backfill_inbox_from_fetch(url: str, content: str) -> None:
 
 
 def _fetch_url(url: str) -> str:
+    if url in _fetch_cache:
+        log.debug("fetch_url cache hit: %s", url)
+        return _fetch_cache[url]
     import urllib.parse
     from html.parser import HTMLParser
     from http.cookiejar import CookieJar
@@ -399,6 +413,7 @@ def _fetch_url(url: str) -> str:
     else:
         text = raw.decode("utf-8", errors="replace")
     text = text[:50_000]
+    _fetch_cache[url] = text
     _backfill_inbox_from_fetch(url, text)
     return text
 
