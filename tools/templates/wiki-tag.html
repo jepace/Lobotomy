@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}#{{ tag }} — Wiki{% endblock %}
+{% block head %}
+<style>
+  .tag-page { padding: 24px; max-width: 900px; margin: 0 auto; }
+  .tag-page h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .tag-page .count { font-size: 13px; color: var(--text2); margin-bottom: 20px; }
+  .page-card {
+    display: block; padding: 12px 14px; margin-bottom: 8px;
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 8px; text-decoration: none; color: var(--text);
+    transition: border-color .15s;
+  }
+  .page-card:hover { border-color: var(--accent); }
+  .page-card-title { font-size: 15px; font-weight: 600; }
+  .page-card-meta { font-size: 12px; color: var(--text2); margin-top: 2px; }
+  .page-card-summary { font-size: 13px; color: var(--text2); margin-top: 5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .type-badge { display:inline-block; padding:1px 7px; border-radius:10px;
+    font-size:11px; background:var(--bg3); color:var(--text2); margin-right:6px; }
+  .wiki-sections { display:flex; gap:6px; padding:8px 16px; overflow-x:auto;
+    -webkit-overflow-scrolling:touch; scrollbar-width:none; border-bottom:1px solid var(--border); }
+  .wiki-sections::-webkit-scrollbar { display:none; }
+  .wiki-pill { flex-shrink:0; padding:5px 12px; background:var(--bg2); border:1px solid var(--border);
+    border-radius:16px; font-size:13px; color:var(--text); text-decoration:none; white-space:nowrap; }
+  .wiki-pill.current { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .back { display:inline-block; margin-bottom:16px; font-size:13px;
+    color:var(--accent); text-decoration:none; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="page">
+  <div class="wiki-sections">
+    {% for s in sections %}
+    <a class="wiki-pill {% if current_path == s.path %}current{% endif %}"
+       href="/wiki/{{ s.path }}">{{ s.label }}</a>
+    {% endfor %}
+  </div>
+
+  <div class="tag-page">
+    <a class="back" href="/wiki/tags">‹ All tags</a>
+    <h1>#{{ tag }}</h1>
+    <div class="count">{{ pages|length }} page{{ '' if pages|length == 1 else 's' }}</div>
+
+    {% if pages %}
+      {% for p in pages %}
+      <a class="page-card" href="/wiki/{{ p.path }}">
+        <div class="page-card-title">{{ p.title }}</div>
+        <div class="page-card-meta">
+          <span class="type-badge">{{ p.type }}</span>
+          {% if p.updated %}updated {{ p.updated }}{% endif %}
+        </div>
+        {% if p.summary %}<div class="page-card-summary">{{ p.summary }}</div>{% endif %}
+      </a>
+      {% endfor %}
+    {% else %}
+      <p style="color:var(--text2)">No pages tagged with this.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

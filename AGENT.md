@@ -201,15 +201,19 @@ List these explicitly before modifying any of them.
 For each significant entity (person, organization, product, project) in the source:
 - Use `search_wiki` to check whether a page already exists. Read the page only if the snippet
   suggests it might be a different entity with a similar name.
-- If a page exists and is correct, update it with `write_file`.
+- If a page exists and is correct, update it with `write_file`. When updating, read the existing
+  page first and preserve its `sources:` frontmatter list, appending the new source if not already present.
 - If the entity is new and significant, use `create_page` to create `wiki/entities/{slug}.md`.
 - Note any contradictions with existing claims in a `## Contradictions` section.
+- Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
 ### Step 6 — Update or create concept pages
 For each significant concept, technique, framework, or term:
 - Use `search_wiki` to check whether a page already exists.
-- If a page exists and is correct, update it with `write_file`.
+- If a page exists and is correct, update it with `write_file`. Preserve existing `sources:` and
+  append the new source if not already present.
 - If no page exists and the concept warrants one, use `create_page` for `wiki/concepts/{slug}.md`.
+- Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
 ### Step 7 — Update synthesis pages
 Determine whether the new source warrants:

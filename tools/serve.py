@@ -835,6 +835,7 @@ def wiki_sections() -> list:
     ]:
         if (WIKI_DIR / name).exists():
             pages.append({"path": name, "label": label})
+    pages.append({"path": "tags", "label": "Tags"})
     for d in ["sources", "entities", "concepts", "synthesis"]:
         dpath = WIKI_DIR / d
         if dpath.is_dir():
@@ -962,6 +963,20 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
         log.error("_link_raw_source_to_wiki failed for %s: %s", raw_path.name, e)
 
 
+def _rewrite_log_target(filename: str) -> None:
+    """After archival, update wiki/log.md: replace raw/inbox/{filename} with raw/sources/{filename}."""
+    log_path = WIKI_DIR / "log.md"
+    if not log_path.exists():
+        return
+    old = f"raw/inbox/{filename}"
+    new = f"raw/sources/{filename}"
+    text = log_path.read_text(encoding="utf-8")
+    if old not in text:
+        return
+    log_path.write_text(text.replace(old, new), encoding="utf-8")
+    log.info("Updated log.md: %s -> %s", old, new)
+
+
 def _mark_inbox_wikified(filename: str) -> None:
     """Mark an inbox file as wikified in its frontmatter. Safe to call from any thread."""
     import json as _json
@@ -999,6 +1014,7 @@ def _mark_inbox_wikified(filename: str) -> None:
         if not dest.exists():
             p.rename(dest)
             log.info("Archived %s -> raw/sources/%s", filename, p.name)
+        _rewrite_log_target(filename)
         _link_raw_source_to_wiki(dest, fm.get("url", "").strip())
         result = _fix_wiki_links({})
         log.info("fix_wiki_links: %s", result)
@@ -1167,13 +1183,14 @@ def wiki_save(page_path):
 @require_login
 def wiki_lint():
     import re as _re
-    SKIP = {"index.md", "log.md", "overview.md", "reading-list.md", "tasks.md", "tasks-archive.md"}
+    SKIP_ALL   = {"log.md"}
+    SKIP_FM    = {"index.md", "overview.md", "reading-list.md", "tasks.md", "tasks-archive.md"}
     required_fields = {"title", "type", "tags", "created", "updated", "sources"}
     index_text = (WIKI_DIR / "index.md").read_text(encoding="utf-8") if (WIKI_DIR / "index.md").exists() else ""
 
     broken_links, missing_fm, not_indexed = [], [], []
     for f in sorted(WIKI_DIR.rglob("*.md")):
-        if f.name in SKIP:
+        if f.name in SKIP_ALL:
             continue
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
@@ -1181,14 +1198,15 @@ def wiki_lint():
             continue
         rel = str(f.relative_to(WIKI_DIR))
 
-        fm_match = _re.match(r"^---\s*\n(.*?)\n---", text, _re.DOTALL)
-        if fm_match:
-            fm_keys = {l.split(":", 1)[0].strip() for l in fm_match.group(1).splitlines() if ":" in l}
-            missing = required_fields - fm_keys
-            if missing:
-                missing_fm.append({"file": rel, "missing": ", ".join(sorted(missing))})
-        else:
-            missing_fm.append({"file": rel, "missing": "no frontmatter"})
+        if f.name not in SKIP_FM:
+            fm_match = _re.match(r"^---\s*\n(.*?)\n---", text, _re.DOTALL)
+            if fm_match:
+                fm_keys = {l.split(":", 1)[0].strip() for l in fm_match.group(1).splitlines() if ":" in l}
+                missing = required_fields - fm_keys
+                if missing:
+                    missing_fm.append({"file": rel, "missing": ", ".join(sorted(missing))})
+            else:
+                missing_fm.append({"file": rel, "missing": "no frontmatter"})
 
         for link_text, link_path in _re.findall(r'\[([^\]]+)\]\(([^)]+)\)', text):
             if link_path.startswith(("http", "#", "mailto")):
@@ -1197,7 +1215,7 @@ def wiki_lint():
             if not target.exists():
                 broken_links.append({"file": rel, "link": link_path, "text": link_text})
 
-        if f.parent != WIKI_DIR and rel not in index_text:
+        if f.name not in SKIP_FM and f.parent != WIKI_DIR and rel not in index_text:
             not_indexed.append(rel)
 
     return render_template("wiki-lint.html",
@@ -1206,11 +1224,76 @@ def wiki_lint():
                            not_indexed=not_indexed)
 
 
+@app.route("/wiki/tags")
+@require_login
+def wiki_tags():
+    import re as _re
+    from collections import defaultdict
+    tag_map = defaultdict(list)  # tag -> list of {title, path, type}
+    for f in sorted(WIKI_DIR.rglob("*.md")):
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        fm = _re.match(r"^---\s*\n(.*?)\n---", text, _re.DOTALL)
+        if not fm:
+            continue
+        meta = {}
+        for line in fm.group(1).splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                meta[k.strip()] = v.strip()
+        tags_raw = meta.get("tags", "")
+        tags = [t.strip().strip('"') for t in tags_raw.strip("[]").split(",") if t.strip().strip('"')]
+        title = meta.get("title", "").strip('"')
+        pg_type = meta.get("type", "").strip()
+        rel = str(f.relative_to(WIKI_DIR))
+        for tag in tags:
+            if tag and tag not in ("index", "meta"):
+                tag_map[tag].append({"title": title, "path": rel, "type": pg_type})
+    tags_sorted = sorted(tag_map.items(), key=lambda x: (-len(x[1]), x[0]))
+    return render_template("wiki-tags.html", tags=tags_sorted, sections=wiki_sections(), current_path="tags")
+
+
+@app.route("/wiki/tags/<tag>")
+@require_login
+def wiki_tag(tag):
+    import re as _re
+    pages = []
+    for f in sorted(WIKI_DIR.rglob("*.md")):
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        fm = _re.match(r"^---\s*\n(.*?)\n---", text, _re.DOTALL)
+        if not fm:
+            continue
+        meta = {}
+        for line in fm.group(1).splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                meta[k.strip()] = v.strip()
+        tags_raw = meta.get("tags", "")
+        tags = [t.strip().strip('"') for t in tags_raw.strip("[]").split(",") if t.strip().strip('"')]
+        if tag not in tags:
+            continue
+        title = meta.get("title", "").strip('"')
+        pg_type = meta.get("type", "").strip()
+        updated = meta.get("updated", "").strip()
+        rel = str(f.relative_to(WIKI_DIR))
+        # Grab first non-heading, non-empty line of body as summary
+        body = text[fm.end():]
+        summary = next((l.strip() for l in body.splitlines() if l.strip() and not l.startswith("#")), "")
+        pages.append({"title": title, "path": rel, "type": pg_type, "updated": updated, "summary": summary})
+    pages.sort(key=lambda x: x["title"].lower())
+    return render_template("wiki-tag.html", tag=tag, pages=pages, sections=wiki_sections(), current_path="tags")
+
+
 @app.route("/wiki/fix-broken-links", methods=["POST"])
 @require_login
 def wiki_fix_broken_links():
     import re as _re
-    SKIP = {"index.md", "log.md", "overview.md", "reading-list.md", "tasks.md", "tasks-archive.md"}
+    SKIP = {"log.md"}
     total_fixed = 0
     pages_fixed = 0
 

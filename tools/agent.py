@@ -278,6 +278,58 @@ def _strip_broken_wiki_links(content: str, page_path: Path) -> str:
     return re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _check, content)
 
 
+_SOURCES_SECTION_TYPES = {"entity", "concept", "synthesis"}
+
+
+def _inject_sources_section(content: str, page_path: Path) -> str:
+    """Render a ## Sources section from frontmatter and append/replace it at the bottom.
+    Only applies to entity, concept, and synthesis pages."""
+    import re
+    fm_match = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
+    if not fm_match:
+        return content
+    fm_text = fm_match.group(1)
+
+    type_m = re.search(r"^type:\s*(\S+)", fm_text, re.MULTILINE)
+    if not type_m or type_m.group(1) not in _SOURCES_SECTION_TYPES:
+        return content
+
+    src_m = re.search(r"^sources:\s*\[([^\]]*)\]", fm_text, re.MULTILINE)
+    source_paths = []
+    if src_m and src_m.group(1).strip():
+        for s in src_m.group(1).split(","):
+            s = s.strip().strip('"').strip("'")
+            if s:
+                source_paths.append(s)
+
+    # Strip existing ## Sources section (assumed to be at end of file)
+    body = content[len(fm_text):]
+    body = re.sub(r"\n*^## Sources\b.*", "", body, flags=re.DOTALL | re.MULTILINE).rstrip()
+
+    if not source_paths:
+        return fm_text + body + "\n"
+
+    # Compute path prefix relative to this page's directory
+    up_count = len(page_path.parent.relative_to(WIKI_DIR).parts)
+    prefix = "../" * up_count
+
+    lines = ["\n\n## Sources\n"]
+    for sp in source_paths:
+        src_file = WIKI_DIR / sp
+        title = sp
+        if src_file.exists():
+            src_text = src_file.read_text(encoding="utf-8", errors="replace")
+            tm = re.match(r"^---\s*\n(.*?)\n---", src_text, re.DOTALL)
+            if tm:
+                for line in tm.group(1).splitlines():
+                    if line.startswith("title:"):
+                        title = line.split(":", 1)[1].strip().strip('"')
+                        break
+        lines.append(f"- [{title}]({prefix}{sp})")
+
+    return fm_text + body + "\n".join(lines) + "\n"
+
+
 def _autolink_sources_if_entity(path: str) -> None:
     """When an entity or concept page is written, re-autolink all source pages so
     links that couldn't resolve at source-creation time are wired up now."""
@@ -303,6 +355,7 @@ def _write_file(path: str, content: str) -> str:
         return "Error: write_file refused on wiki/log.md — use prepend_log to add entries."
     p.parent.mkdir(parents=True, exist_ok=True)
     content = _strip_broken_wiki_links(content, p)
+    content = _inject_sources_section(content, p)
     p.write_text(content, encoding="utf-8")
     _autolink({"path": path})
     _autolink_sources_if_entity(path)
@@ -445,23 +498,6 @@ def _fetch_url(url: str) -> str:
     _backfill_inbox_from_fetch(url, text)
     return text
 
-
-def _move_file(src: str, dst: str) -> str:
-    s = REPO_ROOT / src
-    d = REPO_ROOT / dst
-    if not s.exists():
-        return f"Error: source not found: {src}"
-    try:
-        s.resolve().relative_to((RAW_DIR / "inbox").resolve())
-    except ValueError:
-        return f"Error: move only permitted from raw/inbox/. Got: {src}"
-    try:
-        d.resolve().relative_to(RAW_DIR.resolve())
-    except ValueError:
-        return f"Error: destination must be inside raw/. Got: {dst}"
-    d.parent.mkdir(parents=True, exist_ok=True)
-    s.rename(d)
-    return f"Moved {src} -> {dst}"
 
 
 def _prepend_log(entry: str) -> str:
@@ -802,6 +838,7 @@ def _create_page(args: dict) -> str:
         f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n---\n\n'
     )
     content = frontmatter + _strip_broken_wiki_links(body.lstrip("\n"), p)
+    content = _inject_sources_section(content, p)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     _autolink({"path": path})
@@ -893,7 +930,6 @@ TOOL_FNS = {
     "read_file":       lambda a: _read_file(a["path"]),
     "write_file":       lambda a: _write_file(a["path"], a["content"]),
     "list_dir":         lambda a: _list_dir(a["directory"]),
-    "move_file":        lambda a: _move_file(a["src"], a["dst"]),
     "fetch_url":        lambda a: _fetch_url(a["url"]),
     "prepend_log":      lambda a: _prepend_log(a["entry"]),
 
@@ -942,21 +978,6 @@ TOOL_DEFS = [
                 "type": "object",
                 "properties": {"directory": {"type": "string", "description": "Directory path relative to repo root"}},
                 "required": ["directory"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name":        "move_file",
-            "description": "Move a file from raw/inbox/ to raw/ (inbox processing workflow).",
-            "parameters":  {
-                "type": "object",
-                "properties": {
-                    "src": {"type": "string", "description": "Source path, must be inside raw/inbox/"},
-                    "dst": {"type": "string", "description": "Destination path, must be inside raw/"},
-                },
-                "required": ["src", "dst"],
             },
         },
     },
@@ -1083,7 +1104,6 @@ def system_prompt() -> str:
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
         "| prepend_log | Add entry to wiki/log.md. Never use write_file for the log. |\n"
         "| list_dir | List directory contents. |\n"
-        "| move_file | Move files within raw/ only. |\n"
         "| fetch_url | Fetch a web page for inbox processing. |\n"
         "| done | **Required** — signal task complete. Never stop without calling done(). |\n\n"
         "Exception: purely conversational replies need no tool use and no done() call."
