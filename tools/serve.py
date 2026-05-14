@@ -962,6 +962,20 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
         log.error("_link_raw_source_to_wiki failed for %s: %s", raw_path.name, e)
 
 
+def _rewrite_log_target(filename: str) -> None:
+    """After archival, update wiki/log.md: replace raw/inbox/{filename} with raw/sources/{filename}."""
+    log_path = WIKI_DIR / "log.md"
+    if not log_path.exists():
+        return
+    old = f"raw/inbox/{filename}"
+    new = f"raw/sources/{filename}"
+    text = log_path.read_text(encoding="utf-8")
+    if old not in text:
+        return
+    log_path.write_text(text.replace(old, new), encoding="utf-8")
+    log.info("Updated log.md: %s -> %s", old, new)
+
+
 def _mark_inbox_wikified(filename: str) -> None:
     """Mark an inbox file as wikified in its frontmatter. Safe to call from any thread."""
     import json as _json
@@ -999,6 +1013,7 @@ def _mark_inbox_wikified(filename: str) -> None:
         if not dest.exists():
             p.rename(dest)
             log.info("Archived %s -> raw/sources/%s", filename, p.name)
+        _rewrite_log_target(filename)
         _link_raw_source_to_wiki(dest, fm.get("url", "").strip())
         result = _fix_wiki_links({})
         log.info("fix_wiki_links: %s", result)
