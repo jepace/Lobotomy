@@ -480,7 +480,7 @@ the **top** (newest-first ordering).
 ## [2026-05-01] ingest | Some Article Title
 
 - **Operation**: ingest
-- **Target**: [raw/some-article-slug.md](../raw/some-article-slug.md)
+- **Target**: [raw/some-article-slug.txt](../raw/some-article-slug.txt)
 - **Pages created**: [Some Article Title](sources/some-article-slug.md), [Jane Smith](entities/jane-smith.md)
 - **Pages updated**: [Index](index.md), [Overview](overview.md)
 ```
@@ -507,10 +507,9 @@ When a new source contradicts an existing wiki page:
      *Status: unresolved as of YYYY-MM-DD*
    ```
 3. Note the contradiction in the new source page under "Relation to Existing Wiki".
-4. Note it in `wiki/log.md` under Notes for the ingest entry.
-5. **Do not resolve contradictions yourself** unless the user explicitly asks. Surface; do not
+4. **Do not resolve contradictions yourself** unless the user explicitly asks. Surface; do not
    adjudicate.
-6. If a later ingest resolves a contradiction, update the entry:
+5. If a later ingest resolves a contradiction, update the entry:
    `*Status: resolved YYYY-MM-DD — [reason]*`
 
 ---
