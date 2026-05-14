@@ -1206,6 +1206,39 @@ def wiki_lint():
                            not_indexed=not_indexed)
 
 
+@app.route("/wiki/fix-broken-links", methods=["POST"])
+@require_login
+def wiki_fix_broken_links():
+    import re as _re
+    SKIP = {"index.md", "log.md", "overview.md", "reading-list.md", "tasks.md", "tasks-archive.md"}
+    total_fixed = 0
+    pages_fixed = 0
+
+    def _check(m, page_path):
+        text, target_str = m.group(1), m.group(2)
+        if target_str.startswith(("http", "#", "mailto")):
+            return m.group(0)
+        resolved = (page_path.parent / target_str).resolve()
+        if resolved.exists():
+            return m.group(0)
+        return text
+
+    for f in sorted(WIKI_DIR.rglob("*.md")):
+        if f.name in SKIP:
+            continue
+        try:
+            original = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        fixed = _re.sub(r'\[([^\]]+)\]\(([^)]+)\)', lambda m: _check(m, f), original)
+        if fixed != original:
+            f.write_text(fixed, encoding="utf-8")
+            total_fixed += original.count("[") - fixed.count("[")
+            pages_fixed += 1
+
+    return redirect(url_for("wiki_lint"))
+
+
 @app.route("/raw/<path:filename>")
 @require_login
 def raw_file(filename):
