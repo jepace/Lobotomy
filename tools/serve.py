@@ -766,10 +766,22 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
 
 def list_inbox() -> list:
     inbox = RAW_DIR / "inbox"
-    if not inbox.is_dir():
-        return []
+    sources = RAW_DIR / "sources"
+    candidates = []
+    if inbox.is_dir():
+        candidates += [f for f in inbox.iterdir() if f.is_file() and not f.name.startswith(".")]
+    if sources.is_dir():
+        for f in sources.iterdir():
+            if not f.is_file() or f.name.startswith("."):
+                continue
+            try:
+                fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
+                if fm.get("wikified") and not fm.get("archived"):
+                    candidates.append(f)
+            except Exception:
+                pass
     items = []
-    for f in sorted(inbox.iterdir(), key=lambda x: -x.stat().st_mtime):
+    for f in sorted(candidates, key=lambda x: -x.stat().st_mtime):
         if not f.is_file() or f.name.startswith("."):
             continue
         try:
@@ -803,12 +815,26 @@ def list_inbox() -> list:
 
         mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
         wikified = False
+        wiki_path = ""
         try:
             raw_text = f.read_text(encoding="utf-8", errors="replace")
             fm, _ = _parse_frontmatter(raw_text)
             wikified = bool(fm.get("wikified"))
+            if fm.get("archived"):
+                continue
         except Exception:
             pass
+        if wikified:
+            # Find the wiki/sources/ page that has raw_source pointing to this file
+            raw_rel = str(f.relative_to(REPO_ROOT))
+            for wf in (WIKI_DIR / "sources").glob("*.md") if (WIKI_DIR / "sources").is_dir() else []:
+                try:
+                    wm, _ = _parse_frontmatter(wf.read_text(encoding="utf-8", errors="replace"))
+                    if wm.get("raw_source") == raw_rel:
+                        wiki_path = str(wf.relative_to(WIKI_DIR))
+                        break
+                except Exception:
+                    pass
         items.append({
             "name":        f.name,
             "title":       title,
@@ -818,6 +844,7 @@ def list_inbox() -> list:
             "source_url":  source_url,
             "ext":         f.suffix,
             "wikified":    wikified,
+            "wiki_path":   wiki_path,
         })
     return items
 
@@ -830,7 +857,6 @@ def wiki_sections() -> list:
     for name, label in [
         ("index.md",        "Index"),
         ("overview.md",     "Overview"),
-        ("reading-list.md", "Reading List"),
         ("log.md",          "Log"),
     ]:
         if (WIKI_DIR / name).exists():
@@ -915,7 +941,7 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
     if not wiki_sources.is_dir():
         return
 
-    raw_rel = f"raw/sources/{raw_path.name}"
+    raw_rel = str(raw_path.relative_to(REPO_ROOT))
     now = time.time()
     best = None
 
@@ -977,6 +1003,37 @@ def _rewrite_log_target(filename: str) -> None:
     log.info("Updated log.md: %s -> %s", old, new)
 
 
+def _update_raw_source_path(filename: str, new_rel: str) -> None:
+    """Update raw_source frontmatter in the wiki/sources/ page that references raw/inbox/{filename}."""
+    import json as _json
+    old_rel = f"raw/inbox/{filename}"
+    wiki_sources = WIKI_DIR / "sources"
+    if not wiki_sources.is_dir():
+        return
+    for wf in wiki_sources.glob("*.md"):
+        try:
+            wtext = wf.read_text(encoding="utf-8")
+            wmeta, wbody = _parse_frontmatter(wtext)
+            if wmeta.get("raw_source") != old_rel:
+                continue
+            wmeta["raw_source"] = new_rel
+            fm_lines = ["---"]
+            for k, v in wmeta.items():
+                if isinstance(v, list):
+                    fm_lines.append(f"{k}: {_json.dumps(v)}")
+                elif isinstance(v, bool):
+                    fm_lines.append(f"{k}: {'true' if v else 'false'}")
+                else:
+                    sv = str(v)
+                    fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
+            fm_lines.append("---")
+            wf.write_text("\n".join(fm_lines) + "\n" + wbody, encoding="utf-8")
+            log.info("Updated raw_source in %s: %s -> %s", wf.name, old_rel, new_rel)
+            return
+        except Exception as e:
+            log.warning("_update_raw_source_path failed for %s: %s", wf.name, e)
+
+
 def _mark_inbox_wikified(filename: str) -> None:
     """Mark an inbox file as wikified in its frontmatter. Safe to call from any thread."""
     import json as _json
@@ -1007,7 +1064,7 @@ def _mark_inbox_wikified(filename: str) -> None:
         fm_lines.append("---")
         p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
         log.info("Marked wikified: %s", filename)
-        # Archive the raw file to raw/sources/ so wiki pages can link to it
+        # Move to raw/sources/ immediately so the log link is correct
         dest_dir = RAW_DIR / "sources"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / p.name
@@ -1541,7 +1598,7 @@ def api_status():
 @app.route("/api/push", methods=["POST", "OPTIONS"])
 def api_push():
     """
-    Push an article into the Lobotomy reading list inbox.
+    Push an article into Lobotomy Reading.
 
     Auth: Authorization: Bearer <push_key>
 
@@ -2031,7 +2088,7 @@ def inbox_clip():
   <h1>Saved</h1>
   <p class="sub">{display_title[:80]}</p>
   {read_link}
-  <a class="pri" href="{inbox_url}">Reading List</a>
+  <a class="pri" href="{inbox_url}">Reading</a>
   <a class="sec" href="javascript:window.close()">Close</a>
 </div>
 <script>
@@ -2147,17 +2204,30 @@ def inbox_archive():
         src.resolve().relative_to((RAW_DIR / "inbox").resolve())
     except ValueError:
         return {"error": "Invalid path"}, 400
+    # Check raw/sources/ too — wikified files live there
+    if not src.exists():
+        src = RAW_DIR / "sources" / name
     if not src.exists():
         return {"error": "File not found"}, 404
-    dst = RAW_DIR / name
-    # Avoid overwriting existing files in raw/
-    if dst.exists():
-        stem, suffix = src.stem, src.suffix
-        i = 1
-        while dst.exists():
-            dst = RAW_DIR / f"{stem}-{i}{suffix}"
-            i += 1
-    src.rename(dst)
+    try:
+        import json as _json
+        text = src.read_text(encoding="utf-8", errors="replace")
+        fm, body = _parse_frontmatter(text)
+        fm["archived"] = True
+        fm_lines = ["---"]
+        for k, v in fm.items():
+            if isinstance(v, list):
+                fm_lines.append(f"{k}: {_json.dumps(v)}")
+            elif isinstance(v, bool):
+                fm_lines.append(f"{k}: {'true' if v else 'false'}")
+            else:
+                sv = str(v)
+                fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
+        fm_lines.append("---")
+        src.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
+    except Exception as e:
+        log.error("inbox_archive failed for %s: %s", name, e)
+        return {"error": str(e)}, 500
     return {"ok": True}
 
 
