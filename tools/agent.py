@@ -286,6 +286,53 @@ def _list_dir(directory: str) -> str:
     )
 
 
+def _backfill_inbox_from_fetch(url: str, content: str) -> None:
+    """If an inbox file is just a URL stub pointing to `url`, replace its body with fetched content."""
+    import json as _json
+    inbox = RAW_DIR / "inbox"
+    if not inbox.is_dir():
+        return
+    for f in inbox.iterdir():
+        if not f.is_file():
+            continue
+        try:
+            raw = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # Parse frontmatter and body
+        meta = {}
+        body = raw
+        if raw.startswith("---"):
+            lines = raw.split("\n")
+            end = next((i for i, l in enumerate(lines[1:], 1) if l.rstrip() == "---"), -1)
+            if end != -1:
+                for line in lines[1:end]:
+                    if ":" in line:
+                        k, _, v = line.partition(":")
+                        meta[k.strip()] = v.strip().strip('"')
+                body = "\n".join(lines[end + 1:]).strip()
+        # Match: frontmatter url field OR body is just the URL
+        file_url = meta.get("url", "").strip()
+        body_is_stub = body.strip() in ("", url)
+        if file_url != url and not body_is_stub:
+            continue
+        # Only backfill if there's no substantial body yet
+        if len(body.strip()) > len(url) + 20:
+            continue
+        # Rebuild with content as body
+        if meta:
+            fm_lines = ["---"]
+            for k, v in meta.items():
+                fm_lines.append(f"{k}: {_json.dumps(v) if (chr(34) in v or ':' in v) else v}")
+            fm_lines.append("---")
+            new_text = "\n".join(fm_lines) + "\n\n" + content
+        else:
+            new_text = content
+        f.write_text(new_text, encoding="utf-8")
+        log.debug("Backfilled fetched content into %s", f.name)
+        return
+
+
 def _fetch_url(url: str) -> str:
     import urllib.parse
     from html.parser import HTMLParser
@@ -351,7 +398,9 @@ def _fetch_url(url: str) -> str:
             )
     else:
         text = raw.decode("utf-8", errors="replace")
-    return text[:50_000]
+    text = text[:50_000]
+    _backfill_inbox_from_fetch(url, text)
+    return text
 
 
 def _move_file(src: str, dst: str) -> str:
