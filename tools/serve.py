@@ -766,10 +766,22 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
 
 def list_inbox() -> list:
     inbox = RAW_DIR / "inbox"
-    if not inbox.is_dir():
-        return []
+    sources = RAW_DIR / "sources"
+    candidates = []
+    if inbox.is_dir():
+        candidates += [f for f in inbox.iterdir() if f.is_file() and not f.name.startswith(".")]
+    if sources.is_dir():
+        for f in sources.iterdir():
+            if not f.is_file() or f.name.startswith("."):
+                continue
+            try:
+                fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
+                if fm.get("wikified") and not fm.get("archived"):
+                    candidates.append(f)
+            except Exception:
+                pass
     items = []
-    for f in sorted(inbox.iterdir(), key=lambda x: -x.stat().st_mtime):
+    for f in sorted(candidates, key=lambda x: -x.stat().st_mtime):
         if not f.is_file() or f.name.startswith("."):
             continue
         try:
@@ -808,11 +820,13 @@ def list_inbox() -> list:
             raw_text = f.read_text(encoding="utf-8", errors="replace")
             fm, _ = _parse_frontmatter(raw_text)
             wikified = bool(fm.get("wikified"))
+            if fm.get("archived"):
+                continue
         except Exception:
             pass
         if wikified:
             # Find the wiki/sources/ page that has raw_source pointing to this file
-            raw_rel = f"raw/sources/{f.name}"
+            raw_rel = str(f.relative_to(REPO_ROOT))
             for wf in (WIKI_DIR / "sources").glob("*.md") if (WIKI_DIR / "sources").is_dir() else []:
                 try:
                     wm, _ = _parse_frontmatter(wf.read_text(encoding="utf-8", errors="replace"))
@@ -1051,7 +1065,15 @@ def _mark_inbox_wikified(filename: str) -> None:
         fm_lines.append("---")
         p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
         log.info("Marked wikified: %s", filename)
-        _link_raw_source_to_wiki(p, fm.get("url", "").strip())
+        # Move to raw/sources/ immediately so the log link is correct
+        dest_dir = RAW_DIR / "sources"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / p.name
+        if not dest.exists():
+            p.rename(dest)
+            log.info("Archived %s -> raw/sources/%s", filename, p.name)
+        _rewrite_log_target(filename)
+        _link_raw_source_to_wiki(dest, fm.get("url", "").strip())
         result = _fix_wiki_links({})
         log.info("fix_wiki_links: %s", result)
         result = _rebuild_index({})
@@ -2183,28 +2205,30 @@ def inbox_archive():
         src.resolve().relative_to((RAW_DIR / "inbox").resolve())
     except ValueError:
         return {"error": "Invalid path"}, 400
+    # Check raw/sources/ too — wikified files live there
+    if not src.exists():
+        src = RAW_DIR / "sources" / name
     if not src.exists():
         return {"error": "File not found"}, 404
-    # Wikified files go to raw/sources/; others go to raw/
     try:
-        fm, _ = _parse_frontmatter(src.read_text(encoding="utf-8", errors="replace"))
-        is_wikified = bool(fm.get("wikified"))
-    except Exception:
-        is_wikified = False
-    dest_dir = RAW_DIR / "sources" if is_wikified else RAW_DIR
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dst = dest_dir / name
-    if dst.exists():
-        stem, suffix = src.stem, src.suffix
-        i = 1
-        while dst.exists():
-            dst = dest_dir / f"{stem}-{i}{suffix}"
-            i += 1
-    src.rename(dst)
-    if is_wikified:
-        _rewrite_log_target(name)
-        # Update raw_source in the matching wiki/sources/ page
-        _update_raw_source_path(name, f"raw/sources/{dst.name}")
+        import json as _json
+        text = src.read_text(encoding="utf-8", errors="replace")
+        fm, body = _parse_frontmatter(text)
+        fm["archived"] = True
+        fm_lines = ["---"]
+        for k, v in fm.items():
+            if isinstance(v, list):
+                fm_lines.append(f"{k}: {_json.dumps(v)}")
+            elif isinstance(v, bool):
+                fm_lines.append(f"{k}: {'true' if v else 'false'}")
+            else:
+                sv = str(v)
+                fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
+        fm_lines.append("---")
+        src.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
+    except Exception as e:
+        log.error("inbox_archive failed for %s: %s", name, e)
+        return {"error": str(e)}, 500
     return {"ok": True}
 
 
