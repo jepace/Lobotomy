@@ -1102,8 +1102,15 @@ def wiki_page(page_path):
     else:
         for s in meta.get("sources", []):
             s = s.strip()
-            if s.startswith("raw/") and (REPO_ROOT / s).exists():
+            if not s.startswith("raw/"):
+                continue
+            if (REPO_ROOT / s).exists():
                 raw_source_url = "/" + s
+                break
+            # File may have been archived from raw/inbox/ to raw/sources/
+            archived = "raw/sources/" + Path(s).name
+            if (REPO_ROOT / archived).exists():
+                raw_source_url = "/" + archived
                 break
     return render_template(
         "wiki.html",
