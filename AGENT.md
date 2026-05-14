@@ -100,7 +100,6 @@ url: "https://original-article-url"   # source pages only; omit on entity/concep
 - Key Entities
 - Key Concepts
 - Notable Quotes
-- Limitations & Caveats
 - Relation to Existing Wiki
 
 **Entity page** (`wiki/entities/`):
@@ -187,7 +186,6 @@ Required sections:
 - **Key Entities**: bulleted list of significant people, orgs, products, projects (each linked to its wiki page). Plain links only — no annotations like "(new)" or "(update)". Whether a page is new or existing is a workflow detail, not page content.
 - **Key Concepts**: bulleted list of important concepts and terms (each linked to its wiki page). Plain links only — no annotations like "(new)" or "(update)".
 - **Notable Quotes**: 3–5 direct quotes with section references if available
-- **Limitations & Caveats**: what this source does not cover; uncertainties it acknowledges
 - **Relation to Existing Wiki**: how it relates to, extends, supports, or contradicts existing pages
 
 ### Step 4 — Identify affected existing pages
