@@ -868,8 +868,9 @@ def chat():
 @app.route("/chat/send", methods=["POST"])
 @require_login
 def chat_send():
-    data    = request.get_json(silent=True) or {}
-    message = (data.get("message") or "").strip()
+    data       = request.get_json(silent=True) or {}
+    message    = (data.get("message") or "").strip()
+    inbox_file = (data.get("inbox_file") or "").strip()
     if not message:
         return {"error": "Empty message"}, 400
 
@@ -886,10 +887,48 @@ def chat_send():
         ]
     history.append({"role": "user", "content": message})
 
+    def on_done(messages):
+        save_history(messages)
+        if inbox_file:
+            _mark_inbox_wikified(inbox_file)
+
     log.info("Chat send: model=%s history_len=%d", model, len(history))
-    job_id = job_queue.submit(client, model, history, sys_prompt,
-                              on_done=save_history)
+    job_id = job_queue.submit(client, model, history, sys_prompt, on_done=on_done)
     return {"job_id": job_id}
+
+
+def _mark_inbox_wikified(filename: str) -> None:
+    """Mark an inbox file as wikified in its frontmatter. Safe to call from any thread."""
+    import json as _json
+    p = RAW_DIR / "inbox" / filename
+    try:
+        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+    except ValueError:
+        log.warning("_mark_inbox_wikified: invalid path %s", filename)
+        return
+    if not p.exists():
+        log.warning("_mark_inbox_wikified: file not found %s", filename)
+        return
+    try:
+        text = p.read_text(encoding="utf-8")
+        fm, body = _parse_frontmatter(text)
+        if fm.get("wikified"):
+            return  # already marked
+        fm["wikified"] = True
+        fm_lines = ["---"]
+        for k, v in fm.items():
+            if isinstance(v, list):
+                fm_lines.append(f"{k}: {_json.dumps(v)}")
+            elif isinstance(v, bool):
+                fm_lines.append(f"{k}: {'true' if v else 'false'}")
+            else:
+                sv = str(v)
+                fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
+        fm_lines.append("---")
+        p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
+        log.info("Marked wikified: %s", filename)
+    except Exception as e:
+        log.error("_mark_inbox_wikified failed for %s: %s", filename, e)
 
 
 @app.route("/chat/stream/<job_id>")
