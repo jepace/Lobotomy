@@ -483,7 +483,7 @@ async function wikifyItem(name, idx) {
         } catch(e) {}
       }
     }
-    progress.innerHTML += '<div class="prog-done">Done — <a href="/chat" style="color:inherit">view in chat</a></div>';
+    progress.innerHTML += '<div class="prog-done">Done — <a href="/wiki/sources/" style="color:inherit">view in wiki</a></div>';
     btn.textContent = 'Wikified ✓';
     // Mark wikified in file frontmatter and show badge
     fetch('/inbox/mark-wikified', {
