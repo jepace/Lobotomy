@@ -2265,7 +2265,20 @@ def inbox_mark_wikified():
     except Exception as e:
         log.error("mark-wikified failed for %s: %s", name, e)
         return {"error": str(e)}, 500
-    return {"ok": True}
+    # Find the matching wiki/sources/ page to return a direct link
+    wiki_path = ""
+    for raw_rel in (f"raw/inbox/{name}", f"raw/sources/{name}"):
+        for wf in (WIKI_DIR / "sources").glob("*.md") if (WIKI_DIR / "sources").is_dir() else []:
+            try:
+                wm, _ = _parse_frontmatter(wf.read_text(encoding="utf-8", errors="replace"))
+                if wm.get("raw_source") == raw_rel:
+                    wiki_path = str(wf.relative_to(WIKI_DIR))
+                    break
+            except Exception:
+                pass
+        if wiki_path:
+            break
+    return {"ok": True, "wiki_path": wiki_path}
 
 @app.route("/wiki/debug-sources")
 @require_login
@@ -2349,6 +2362,23 @@ def inbox_edit():
             p.write_text(existing[:m.end()] + "\n" + content, encoding="utf-8")
         else:
             p.write_text(content, encoding="utf-8")
+    elif p.suffix == ".url":
+        # User pasted article text into a URL-only item — promote to .md with frontmatter
+        existing = p.read_text(encoding="utf-8", errors="replace")
+        lines = [l.strip() for l in existing.splitlines() if l.strip()]
+        title = lines[0] if lines else p.stem
+        url_line = next((l for l in lines if l.startswith("URL:")), "")
+        url_val = url_line[4:].strip() if url_line else ""
+        today = datetime.date.today().isoformat()
+        md_name = p.stem + ".md"
+        md_path = p.parent / md_name
+        fm = f'---\ntitle: "{title}"\n'
+        if url_val:
+            fm += f'url: {url_val}\n'
+        fm += f'saved: {today}\n---\n\n'
+        md_path.write_text(fm + content, encoding="utf-8")
+        p.unlink()
+        return {"ok": True, "filename": md_name}
     else:
         p.write_text(content, encoding="utf-8")
     return {"ok": True}

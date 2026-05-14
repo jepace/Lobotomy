@@ -174,10 +174,11 @@ Read the entire file before writing anything. If it is very long (>20,000 words)
 sections sequentially before proceeding.
 
 ### Step 3 — Create a source summary page
-Call `create_page` with `path=wiki/sources/{source-slug}.md`, `type=source`, and the body below.
-(Do not write frontmatter manually — `create_page` fills in dates automatically.)
-
-Include `url:` in frontmatter if the source has an original URL (from fetch_url or inbox metadata).
+Call `create_page` with:
+- `path`: `wiki/sources/{source-slug}.md` — always a wiki/ path, never a URL
+- `type`: `source`
+- `url`: the original article URL if available (this goes into frontmatter metadata, not the path)
+- `body`: the content below (do not write frontmatter manually — `create_page` fills in dates automatically)
 
 Required sections:
 - **Summary**: 3–5 paragraphs synthesizing the source's main content and contribution
@@ -203,6 +204,7 @@ For each significant entity (person, organization, product, project) in the sour
 - If a page exists and is correct, update it with `write_file`. When updating, read the existing
   page first and preserve its `sources:` frontmatter list, appending the new source if not already present.
 - If the entity is new and significant, use `create_page` to create `wiki/entities/{slug}.md`.
+  Pass `sources: ["sources/{source-slug}.md"]` so the Sources section is populated automatically.
 - Note any contradictions with existing claims in a `## Contradictions` section.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
@@ -212,6 +214,7 @@ For each significant concept, technique, framework, or term:
 - If a page exists and is correct, update it with `write_file`. Preserve existing `sources:` and
   append the new source if not already present.
 - If no page exists and the concept warrants one, use `create_page` for `wiki/concepts/{slug}.md`.
+  Pass `sources: ["sources/{source-slug}.md"]` so the Sources section is populated automatically.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
 ### Step 7 — Update synthesis pages

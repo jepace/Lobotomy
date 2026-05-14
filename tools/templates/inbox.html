@@ -420,6 +420,11 @@ async function saveEdit(name, idx) {
   });
   const data = await resp.json();
   if (data.ok) {
+    if (data.filename && data.filename !== name) {
+      // File was renamed (e.g. .url promoted to .md) — reload to reflect new state
+      location.reload();
+      return;
+    }
     cancelEdit(idx);
     // Refresh the inline reader if it was open
     const card = document.getElementById('item-' + idx);
@@ -483,13 +488,15 @@ async function wikifyItem(name, idx) {
         } catch(e) {}
       }
     }
-    progress.innerHTML += '<div class="prog-done">Done — <a href="/wiki/sources/" style="color:inherit">view in wiki</a></div>';
     btn.textContent = 'Wikified ✓';
-    // Mark wikified in file frontmatter and show badge
-    fetch('/inbox/mark-wikified', {
+    // Mark wikified in file frontmatter; use returned wiki_path for direct link
+    const wikiResp = await fetch('/inbox/mark-wikified', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({filename: name}),
-    }).catch(() => {});
+    }).catch(() => null);
+    const wikiData = wikiResp ? await wikiResp.json().catch(() => {}) : {};
+    const wikiHref = wikiData && wikiData.wiki_path ? `/wiki/${wikiData.wiki_path}` : '/wiki/sources/';
+    progress.innerHTML += `<div class="prog-done">Done — <a href="${wikiHref}" style="color:inherit">view in wiki</a></div>`;
     const metaEl = document.querySelector(`#item-${idx} .item-meta`);
     if (metaEl && !metaEl.querySelector('.wikified-badge')) {
       const badge = document.createElement('span');
