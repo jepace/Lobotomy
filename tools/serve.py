@@ -792,16 +792,15 @@ def list_inbox() -> list:
         has_content = False
         source_url  = ""
         if f.suffix == ".md":
-            meta, _ = _parse_frontmatter(text)
-            if meta.get("url"):
+            meta, body = _parse_frontmatter(text)
+            source_url = meta.get("url", "")
+            title      = meta.get("title", f.stem)[:100]
+            if source_url:
                 has_content = True
-                source_url  = meta.get("url", "")
-                title       = meta.get("title", f.stem)[:100]
-                excerpt     = source_url
+                excerpt = source_url
             else:
-                lines   = [l.strip() for l in text.splitlines() if l.strip()]
-                title   = lines[0][:100] if lines else f.stem
-                excerpt = " ".join(lines[1:4])[:200] if len(lines) > 1 else ""
+                lines   = [l.strip() for l in body.splitlines() if l.strip() and not l.startswith("#")]
+                excerpt = " ".join(lines[:3])[:200]
         elif f.suffix == ".url":
             lines      = [l.strip() for l in text.splitlines() if l.strip()]
             title      = lines[0][:100] if lines else f.stem
