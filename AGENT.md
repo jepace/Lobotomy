@@ -351,8 +351,11 @@ you want to process but have not gotten to yet.
 3. **For each item to process**:
    - Read the file. Determine if it is a URL, article text, or notes.
    - **If URL only**: Use `fetch_url` to retrieve the page content, then run the full Ingest
-     Workflow on the fetched text. If fetch fails, note the URL and add to `wiki/reading-list.md`
-     with status **Queued**.
+     Workflow on the fetched text.
+     **If fetch fails or returns no usable content**: stop immediately, tell the user exactly
+     what went wrong, and ask them to paste the article text into the item. Do NOT call `done()`.
+     Do NOT conclude the topic is already covered because a related page exists — a different
+     source on the same topic is still a separate source that warrants its own page.
    - **If article text or notes**: Assign a slug, run the full Ingest Workflow (Section 6)
      reading the file from `raw/inbox/` in place. **Do NOT move or delete the inbox file.**
      The article stays in `raw/inbox/` permanently. The user archives it manually via the UI
