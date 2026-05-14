@@ -45,7 +45,6 @@ wiki/                  All LLM-generated content lives here.
 wiki/index.md          Master catalog. Every wiki page listed here exactly once.
 wiki/log.md            Append-only operation log. Never delete entries.
 wiki/overview.md       High-level synthesis. Updated after every ingest.
-wiki/reading-list.md   Tracks read-it-later queue from raw/inbox/ to ingested.
 wiki/tasks.md          Task manager. All tasks with priority, context, due date.
 wiki/sources/          One summary page per ingested source document.
 wiki/entities/         People, organizations, products, projects, codebases.
@@ -67,7 +66,7 @@ Every wiki page (sources, entities, concepts, synthesis, overview) uses this str
 ```markdown
 ---
 title: "Human Readable Title"
-type: source | entity | concept | synthesis | overview | tasks | reading-list
+type: source | entity | concept | synthesis | overview | tasks
 tags: [tag1, tag2]
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
@@ -85,7 +84,7 @@ url: "https://original-article-url"   # source pages only; omit on entity/concep
 | Field | Type | Rules |
 |-------|------|-------|
 | `title` | string (quoted) | Title-case, human readable |
-| `type` | enum | One of: `source`, `entity`, `concept`, `synthesis`, `overview`, `tasks`, `reading-list` |
+| `type` | enum | One of: `source`, `entity`, `concept`, `synthesis`, `overview`, `tasks` |
 | `tags` | list of strings | lowercase, hyphenated, no spaces |
 | `created` | YYYY-MM-DD | Date first created. Never change. |
 | `updated` | YYYY-MM-DD | Date of most recent edit. Update on every write. |
@@ -355,21 +354,7 @@ you want to process but have not gotten to yet.
      reading the file from `raw/inbox/` in place. **Do NOT move or delete the inbox file.**
      The article stays in `raw/inbox/` permanently. The user archives it manually via the UI
      when ready. The UI will show a "Wikified ✓" badge automatically once ingestion completes.
-4. **Update `wiki/reading-list.md`** after each item is processed.
-5. **Report** to user: items processed, items queued, any issues.
-
-### `wiki/reading-list.md` table format
-
-```markdown
-| Title | File / URL | Added | Status | Notes |
-|-------|-----------|-------|--------|-------|
-| Article Title | [raw/article-slug.md](../raw/article-slug.md) | YYYY-MM-DD | Ingested | Brief note |
-| Unread Article | [URL](https://example.com) | YYYY-MM-DD | Queued | |
-```
-
-Status progression: **Queued** → **Reading** → **Read** → **Ingested**
-
-To update an item's status, edit the Status cell in the table.
+4. **Report** to user: items processed, items queued, any issues.
 
 ---
 
@@ -469,7 +454,7 @@ The master catalog. Every wiki page appears here exactly once, under the correct
 - Entries within each section are sorted **alphabetically by display title**.
 - Insert new entries in alphabetical order — do not append to the end.
 - Update the `_Last updated: YYYY-MM-DD_` line at the top on every modification.
-- The files `wiki/overview.md`, `wiki/log.md`, `wiki/index.md`, `wiki/reading-list.md`, and
+- The files `wiki/overview.md`, `wiki/log.md`, `wiki/index.md`, and
   `wiki/tasks.md` are **not** listed in the index (they are operational files, not knowledge pages).
 
 ---

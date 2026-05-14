@@ -857,7 +857,6 @@ def wiki_sections() -> list:
     for name, label in [
         ("index.md",        "Index"),
         ("overview.md",     "Overview"),
-        ("reading-list.md", "Reading List"),
         ("log.md",          "Log"),
     ]:
         if (WIKI_DIR / name).exists():
@@ -1599,7 +1598,7 @@ def api_status():
 @app.route("/api/push", methods=["POST", "OPTIONS"])
 def api_push():
     """
-    Push an article into the Lobotomy reading list inbox.
+    Push an article into Lobotomy Reading.
 
     Auth: Authorization: Bearer <push_key>
 
@@ -2089,7 +2088,7 @@ def inbox_clip():
   <h1>Saved</h1>
   <p class="sub">{display_title[:80]}</p>
   {read_link}
-  <a class="pri" href="{inbox_url}">Reading List</a>
+  <a class="pri" href="{inbox_url}">Reading</a>
   <a class="sec" href="javascript:window.close()">Close</a>
 </div>
 <script>
