@@ -480,16 +480,17 @@ the **top** (newest-first ordering).
 ## [2026-05-01] ingest | Some Article Title
 
 - **Operation**: ingest
-- **Target**: raw/some-article-slug.md
+- **Target**: [raw/some-article-slug.md](../raw/some-article-slug.md)
 - **Pages created**: [Some Article Title](sources/some-article-slug.md), [Jane Smith](entities/jane-smith.md)
 - **Pages updated**: [Index](index.md), [Overview](overview.md)
-- **Notes**: Brief description of what was ingested and anything notable.
 ```
 
 Rules:
+- **Target** must be a markdown link to the raw source file. Path is relative to `wiki/` so prefix with `../` — e.g. `[raw/inbox/foo.txt](../raw/inbox/foo.txt)`.
 - Every entry in **Pages created** and **Pages updated** must be a markdown link — `[Title](relative/path.md)` — never plain text or a bare path.
-- Paths are relative to `wiki/` — write `sources/slug.md`, not `wiki/sources/slug.md`.
+- Paths in Pages created/updated are relative to `wiki/` — write `sources/slug.md`, not `wiki/sources/slug.md`.
 - Use the actual page title as the link text, not the filename.
+- Omit the **Notes** line entirely.
 
 ---
 
