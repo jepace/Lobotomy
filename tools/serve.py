@@ -2338,6 +2338,8 @@ def inbox_edit():
     except ValueError:
         return {"error": "Invalid path"}, 400
     if not p.exists():
+        p = RAW_DIR / "sources" / name
+    if not p.exists():
         return {"error": "File not found"}, 404
     if p.suffix == ".md":
         existing = p.read_text(encoding="utf-8", errors="replace")
