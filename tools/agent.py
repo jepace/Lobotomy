@@ -797,7 +797,7 @@ TOOL_FNS = {
     "prepend_log":      lambda a: _prepend_log(a["entry"]),
     "rebuild_index":    _rebuild_index,
     "autolink":         _autolink,
-    "fix_wiki_links":   _fix_wiki_links,
+
     "search_wiki":      _search_wiki,
     "create_page":      _create_page,
     "validate_ingest":  _validate_ingest,
@@ -951,19 +951,6 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
-            "name":        "fix_wiki_links",
-            "description": (
-                "Scan all wiki pages and repair bad relative links. Fixes: "
-                "(1) links missing ../ prefix, e.g. (entities/foo.md) inside a subdir page; "
-                "(2) legacy three-dot links (.../entities/foo.md). "
-                "Run as part of Step 11 after every ingest."
-            ),
-            "parameters":  {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name":        "search_wiki",
             "description": (
                 "Keyword search across all wiki pages. Returns matching page titles, paths, and "
@@ -1050,7 +1037,6 @@ def system_prompt() -> str:
         "| create_page | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
         "| autolink | Call once per new page after writing — links titles on that page. |\n"
-        "| fix_wiki_links | Run in Step 11 — repairs missing ../ prefixes in cross-links. |\n"
         "| rebuild_index | Call once at end of ingest — rebuilds wiki/index.md from frontmatter. |\n"
         "| prepend_log | Add entry to wiki/log.md. Never use write_file for the log. |\n"
         "| validate_ingest | Call at end of ingest — checks links, frontmatter, index coverage. |\n"

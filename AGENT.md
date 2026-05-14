@@ -234,8 +234,7 @@ overwrite and destroy existing entries. `prepend_log` inserts the entry at the t
 Follow Section 12 for the entry format.
 
 ### Step 11 — Self-check
-1. Call `fix_wiki_links()` — repairs any relative link paths missing a `../` prefix.
-2. Call `validate_ingest(source_slug)`. It checks:
+Call `validate_ingest(source_slug)`. It checks:
 - All frontmatter fields present on every page
 - No broken internal links
 - All new pages appearing in the index

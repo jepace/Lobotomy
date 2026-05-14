@@ -77,7 +77,7 @@ log = logging.getLogger("lobotomy.serve")
 from config import cfg_get, cfg_bool, cfg_int, validate_config
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
-                   stream_agent_turn, system_prompt)
+                   stream_agent_turn, system_prompt, _fix_wiki_links)
 
 BLOG_DIR = REPO_ROOT / "blog"
 from job_queue import JobQueue
@@ -934,6 +934,8 @@ def _mark_inbox_wikified(filename: str) -> None:
         if not dest.exists():
             p.rename(dest)
             log.info("Archived %s -> raw/sources/%s", filename, p.name)
+        result = _fix_wiki_links({})
+        log.info("fix_wiki_links: %s", result)
     except Exception as e:
         log.error("_mark_inbox_wikified failed for %s: %s", filename, e)
 
