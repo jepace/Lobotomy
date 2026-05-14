@@ -547,6 +547,7 @@ Do not modify any file until the user gives an explicit instruction.
 - Do not modify `AGENT.md` unless the user explicitly asks you to update the schema
 - Do not edit `wiki/index.md` manually — always use `rebuild_index`
 - Do not write wiki page frontmatter manually — always use `create_page` for new pages
+- Do not write internal wiki links manually — write bare text, cross-links are added automatically
 
 - Do not resolve contradictions without user instruction
 - Do not delete wiki pages — set `deprecated: true` in frontmatter instead, then note it in the log

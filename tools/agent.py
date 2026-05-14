@@ -264,6 +264,20 @@ def _read_pdf(p) -> "str | list":
     )
 
 
+def _strip_broken_wiki_links(content: str, page_path: Path) -> str:
+    """Replace any internal wiki link whose target doesn't exist with bare link text."""
+    import re
+    def _check(m):
+        text, target = m.group(1), m.group(2)
+        if target.startswith("http") or target.startswith("#") or target.startswith("mailto"):
+            return m.group(0)
+        resolved = (page_path.parent / target).resolve()
+        if resolved.exists():
+            return m.group(0)
+        return text  # drop the broken link, keep display text
+    return re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _check, content)
+
+
 def _write_file(path: str, content: str) -> str:
     p = REPO_ROOT / path
     try:
@@ -276,6 +290,7 @@ def _write_file(path: str, content: str) -> str:
     if p.resolve() == (WIKI_DIR / "log.md").resolve():
         return "Error: write_file refused on wiki/log.md — use prepend_log to add entries."
     p.parent.mkdir(parents=True, exist_ok=True)
+    content = _strip_broken_wiki_links(content, p)
     p.write_text(content, encoding="utf-8")
     _autolink({"path": path})
     return f"Written {len(content)} bytes to {path}"
@@ -773,7 +788,7 @@ def _create_page(args: dict) -> str:
         f'---\ntitle: "{title}"\ntype: {pg_type}\ntags: [{tag_str}]\n'
         f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n---\n\n'
     )
-    content = frontmatter + body.lstrip("\n")
+    content = frontmatter + _strip_broken_wiki_links(body.lstrip("\n"), p)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     _autolink({"path": path})
