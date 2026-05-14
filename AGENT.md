@@ -211,26 +211,21 @@ For each significant concept, technique, framework, or term:
 - If a page exists and is correct, update it with `write_file`.
 - If no page exists and the concept warrants one, use `create_page` for `wiki/concepts/{slug}.md`.
 
-### Step 7 — Re-autolink the source page
-Call `autolink` on the source page created in Step 3. Entity and concept pages now exist, so links
-that were unresolvable at Step 3 can be resolved. This is what wires up the Key Entities and Key
-Concepts sections.
-
-### Step 8 — Update synthesis pages
+### Step 7 — Update synthesis pages
 Determine whether the new source warrants:
 - A new synthesis page in `wiki/synthesis/` (a comparison, timeline, or emerging pattern)
 - Updates to an existing synthesis page
 
-### Step 9 — Update `wiki/overview.md`
+### Step 8 — Update `wiki/overview.md`
 Update to reflect the new source. The overview must always represent the current state of the wiki
 accurately. At minimum update: Current State, Domains Covered, Major Entities, Major Concepts.
 
-### Step 10 — Append to `wiki/log.md`
+### Step 9 — Append to `wiki/log.md`
 Call `prepend_log` with the new entry text. Do NOT use `write_file` for the log — it would
 overwrite and destroy existing entries. `prepend_log` inserts the entry at the top automatically.
 Follow Section 12 for the entry format.
 
-### Step 11 — Done
+### Step 10 — Done
 Call `done()`. The server runs health checks automatically (broken links, missing frontmatter,
 index coverage) — results are visible at `/wiki/lint`.
 

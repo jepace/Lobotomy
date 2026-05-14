@@ -278,6 +278,18 @@ def _strip_broken_wiki_links(content: str, page_path: Path) -> str:
     return re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _check, content)
 
 
+def _autolink_sources_if_entity(path: str) -> None:
+    """When an entity or concept page is written, re-autolink all source pages so
+    links that couldn't resolve at source-creation time are wired up now."""
+    parts = Path(path).parts
+    if len(parts) >= 2 and parts[-2] in ("entities", "concepts"):
+        sources_dir = WIKI_DIR / "sources"
+        if sources_dir.is_dir():
+            for src in sources_dir.glob("*.md"):
+                if src.name != "index.md":
+                    _autolink({"path": str(src.relative_to(REPO_ROOT))})
+
+
 def _write_file(path: str, content: str) -> str:
     p = REPO_ROOT / path
     try:
@@ -293,6 +305,7 @@ def _write_file(path: str, content: str) -> str:
     content = _strip_broken_wiki_links(content, p)
     p.write_text(content, encoding="utf-8")
     _autolink({"path": path})
+    _autolink_sources_if_entity(path)
     return f"Written {len(content)} bytes to {path}"
 
 
@@ -792,6 +805,7 @@ def _create_page(args: dict) -> str:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     _autolink({"path": path})
+    _autolink_sources_if_entity(path)
     action = "Updated" if existed else "Created"
     return f"{action} {path} ({len(content)} bytes)"
 
