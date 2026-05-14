@@ -183,7 +183,7 @@ def inject_globals():
         active = "wiki"
     elif path.startswith("/tasks"):
         active = "tasks"
-    elif path.startswith("/inbox"):
+    elif path.startswith("/inbox") or path.startswith("/reading-list"):
         active = "inbox"
     elif path.startswith("/blog"):
         active = "blog"
@@ -791,26 +791,24 @@ def list_inbox() -> list:
 
         has_content = False
         source_url  = ""
-        if f.suffix == ".md":
-            meta, body = _parse_frontmatter(text)
-            source_url = meta.get("url", "")
-            title      = meta.get("title", f.stem)[:100]
-            if source_url:
-                has_content = True
-                excerpt = source_url
-            else:
-                lines   = [l.strip() for l in body.splitlines() if l.strip() and not l.startswith("#")]
-                excerpt = " ".join(lines[:3])[:200]
-        elif f.suffix == ".url":
+        if f.suffix == ".url":
             lines      = [l.strip() for l in text.splitlines() if l.strip()]
             title      = lines[0][:100] if lines else f.stem
             url_line   = next((l for l in lines if l.startswith("URL:")), "")
             source_url = url_line[4:].strip()
             excerpt    = source_url
         else:
-            lines   = [l.strip() for l in text.splitlines() if l.strip()]
-            title   = lines[0][:100] if lines else f.stem
-            excerpt = " ".join(lines[1:4])[:200] if len(lines) > 1 else ""
+            # Strip frontmatter from all text files before extracting title/excerpt
+            meta, body = _parse_frontmatter(text)
+            source_url = meta.get("url", "")
+            title      = meta.get("title", "").strip() or f.stem
+            title      = title[:100]
+            if source_url:
+                has_content = True
+                excerpt = source_url
+            else:
+                lines   = [l.strip() for l in body.splitlines() if l.strip() and not l.startswith("#")]
+                excerpt = " ".join(lines[:3])[:200]
 
         mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
         wikified = False
@@ -1545,6 +1543,7 @@ def tasks_bulk_update():
     return {"ok": True}
 
 
+@app.route("/reading-list")
 @app.route("/inbox")
 @require_login
 def inbox():
