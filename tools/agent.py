@@ -693,19 +693,16 @@ def _autolink(args: dict) -> str:
     linked = 0
     for title, link_path in title_map:
         pattern = re.compile(r'(?<!\w)(' + re.escape(title) + r')(?!\w)', re.IGNORECASE)
-        replaced = False
         new_segments = []
+        any_replaced = False
         for seg in segments:
-            if not replaced:
-                def _rep(m, _lp=link_path):
-                    nonlocal replaced
-                    if replaced:
-                        return m.group(1)
-                    replaced = True
-                    return f"[{m.group(1)}]({_lp})"
-                seg = pattern.sub(_rep, seg)
-            new_segments.append(seg)
-        if replaced:
+            def _rep(m, _lp=link_path):
+                return f"[{m.group(1)}]({_lp})"
+            new_seg = pattern.sub(_rep, seg)
+            if new_seg != seg:
+                any_replaced = True
+            new_segments.append(new_seg)
+        if any_replaced:
             segments = new_segments
             linked += 1
 
