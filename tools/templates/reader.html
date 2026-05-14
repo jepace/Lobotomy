@@ -176,7 +176,7 @@ async function ingestArticle() {
   try {
     const sendResp = await fetch('/chat/send', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: 'Process inbox file: ' + FILENAME}),
+      body: JSON.stringify({message: 'Process inbox file: ' + FILENAME, inbox_file: FILENAME}),
     });
     if (!sendResp.ok) throw new Error('HTTP ' + sendResp.status);
     const job = await sendResp.json();
@@ -207,6 +207,10 @@ async function ingestArticle() {
     }
     progress.innerHTML += '<div class="prog-done">Done — <a href="/wiki/" style="color:inherit">view wiki</a></div>';
     btn.textContent = 'Wikified ✓';
+    fetch('/inbox/mark-wikified', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename: FILENAME}),
+    });
   } catch(e) {
     progress.innerHTML += `<div class="prog-error">Failed: ${e.message}</div>`;
     btn.disabled = false;
