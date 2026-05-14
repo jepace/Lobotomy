@@ -835,6 +835,7 @@ def wiki_sections() -> list:
     ]:
         if (WIKI_DIR / name).exists():
             pages.append({"path": name, "label": label})
+    pages.append({"path": "tags", "label": "Tags"})
     for d in ["sources", "entities", "concepts", "synthesis"]:
         dpath = WIKI_DIR / d
         if dpath.is_dir():
@@ -1221,6 +1222,71 @@ def wiki_lint():
                            broken_links=broken_links,
                            missing_fm=missing_fm,
                            not_indexed=not_indexed)
+
+
+@app.route("/wiki/tags")
+@require_login
+def wiki_tags():
+    import re as _re
+    from collections import defaultdict
+    tag_map = defaultdict(list)  # tag -> list of {title, path, type}
+    for f in sorted(WIKI_DIR.rglob("*.md")):
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        fm = _re.match(r"^---\s*\n(.*?)\n---", text, _re.DOTALL)
+        if not fm:
+            continue
+        meta = {}
+        for line in fm.group(1).splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                meta[k.strip()] = v.strip()
+        tags_raw = meta.get("tags", "")
+        tags = [t.strip().strip('"') for t in tags_raw.strip("[]").split(",") if t.strip().strip('"')]
+        title = meta.get("title", "").strip('"')
+        pg_type = meta.get("type", "").strip()
+        rel = str(f.relative_to(WIKI_DIR))
+        for tag in tags:
+            if tag and tag not in ("index", "meta"):
+                tag_map[tag].append({"title": title, "path": rel, "type": pg_type})
+    tags_sorted = sorted(tag_map.items(), key=lambda x: (-len(x[1]), x[0]))
+    return render_template("wiki-tags.html", tags=tags_sorted, sections=wiki_sections(), current_path="tags")
+
+
+@app.route("/wiki/tags/<tag>")
+@require_login
+def wiki_tag(tag):
+    import re as _re
+    pages = []
+    for f in sorted(WIKI_DIR.rglob("*.md")):
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        fm = _re.match(r"^---\s*\n(.*?)\n---", text, _re.DOTALL)
+        if not fm:
+            continue
+        meta = {}
+        for line in fm.group(1).splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                meta[k.strip()] = v.strip()
+        tags_raw = meta.get("tags", "")
+        tags = [t.strip().strip('"') for t in tags_raw.strip("[]").split(",") if t.strip().strip('"')]
+        if tag not in tags:
+            continue
+        title = meta.get("title", "").strip('"')
+        pg_type = meta.get("type", "").strip()
+        updated = meta.get("updated", "").strip()
+        rel = str(f.relative_to(WIKI_DIR))
+        # Grab first non-heading, non-empty line of body as summary
+        body = text[fm.end():]
+        summary = next((l.strip() for l in body.splitlines() if l.strip() and not l.startswith("#")), "")
+        pages.append({"title": title, "path": rel, "type": pg_type, "updated": updated, "summary": summary})
+    pages.sort(key=lambda x: x["title"].lower())
+    return render_template("wiki-tag.html", tag=tag, pages=pages, sections=wiki_sections(), current_path="tags")
 
 
 @app.route("/wiki/fix-broken-links", methods=["POST"])

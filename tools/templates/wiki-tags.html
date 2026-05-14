@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Tags — Wiki{% endblock %}
+{% block head %}
+<style>
+  .tags-page { padding: 24px; max-width: 900px; margin: 0 auto; }
+  .tags-page h1 { font-size: 22px; font-weight: 700; margin-bottom: 20px; }
+  .tag-cloud { display: flex; flex-wrap: wrap; gap: 10px; }
+  .tag-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: 20px;
+    background: var(--bg2); border: 1px solid var(--border);
+    text-decoration: none; color: var(--text); font-size: 13px;
+    transition: border-color .15s;
+  }
+  .tag-chip:hover { border-color: var(--accent); color: var(--accent); }
+  .tag-count {
+    background: var(--bg3); border-radius: 10px;
+    padding: 1px 7px; font-size: 11px; color: var(--text2);
+  }
+  .wiki-sections { display:flex; gap:6px; padding:8px 16px; overflow-x:auto;
+    -webkit-overflow-scrolling:touch; scrollbar-width:none; border-bottom:1px solid var(--border); }
+  .wiki-sections::-webkit-scrollbar { display:none; }
+  .wiki-pill { flex-shrink:0; padding:5px 12px; background:var(--bg2); border:1px solid var(--border);
+    border-radius:16px; font-size:13px; color:var(--text); text-decoration:none; white-space:nowrap; }
+  .wiki-pill.current { background:var(--accent); color:#fff; border-color:var(--accent); }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="page">
+  <div class="wiki-sections">
+    {% for s in sections %}
+    <a class="wiki-pill {% if current_path == s.path %}current{% endif %}"
+       href="/wiki/{{ s.path }}">{{ s.label }}</a>
+    {% endfor %}
+  </div>
+
+  <div class="tags-page">
+    <h1>Tags</h1>
+    {% if tags %}
+    <div class="tag-cloud">
+      {% for tag, pages in tags %}
+      <a class="tag-chip" href="/wiki/tags/{{ tag }}">
+        {{ tag }}<span class="tag-count">{{ pages|length }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p style="color:var(--text2)">No tags found.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
