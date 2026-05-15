@@ -1113,9 +1113,25 @@ def wiki_search():
     q = request.args.get("q", "").strip()
     if not q or len(q) < 2:
         return {"results": []}
-    words = [w.lower() for w in q.split() if w]
+    # Extract optional in:<subdir> scope token
+    scope = None
+    tokens = q.split()
+    filtered = []
+    for t in tokens:
+        if t.lower().startswith("in:"):
+            scope = t[3:].lower().strip("/")
+        else:
+            filtered.append(t)
+    words = [w.lower() for w in filtered if w]
+    if not words:
+        return {"results": []}
+    valid_subdirs = {"sources", "entities", "concepts", "synthesis"}
+    if scope and scope in valid_subdirs:
+        search_root = WIKI_DIR / scope
+    else:
+        search_root = WIKI_DIR
     results = []
-    for md_file in sorted(WIKI_DIR.rglob("*.md")):
+    for md_file in sorted(search_root.rglob("*.md")):
         try:
             text = md_file.read_text(encoding="utf-8", errors="replace")
         except OSError:

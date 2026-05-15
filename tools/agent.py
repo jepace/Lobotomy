@@ -756,16 +756,28 @@ def _fix_wiki_links(_args: dict) -> str:
 
 
 def _search_wiki(args: dict) -> str:
-    """Keyword search across all wiki pages. Returns matching pages with title, path, snippet."""
+    """Keyword search across all wiki pages. Returns matching pages with title, path, snippet.
+    Supports in:<subdir> scope token (e.g. 'california in:sources')."""
     import re
     query = args.get("query", "").strip()
     if not query:
         return "Error: query is required."
-    keywords = query.split()
+    scope = None
+    kw_tokens = []
+    for t in query.split():
+        if t.lower().startswith("in:"):
+            scope = t[3:].lower().strip("/")
+        else:
+            kw_tokens.append(t)
+    keywords = kw_tokens
+    if not keywords:
+        return "Error: no search keywords provided (only scope token found)."
     patterns = [re.compile(re.escape(kw), re.IGNORECASE) for kw in keywords]
+    valid_subdirs = {"sources", "entities", "concepts", "synthesis"}
+    search_root = WIKI_DIR / scope if scope and scope in valid_subdirs else WIKI_DIR
 
     results = []
-    for f in sorted(WIKI_DIR.rglob("*.md")):
+    for f in sorted(search_root.rglob("*.md")):
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -791,9 +803,10 @@ def _search_wiki(args: dict) -> str:
         results.append((score, title, rel, snippet))
 
     results.sort(key=lambda x: -x[0])
+    scope_desc = f" in {scope}/" if scope and scope in valid_subdirs else ""
     if not results:
-        return f"No wiki pages found matching: {query}"
-    lines = [f"Found {len(results)} page(s) matching '{query}':\n"]
+        return f"No wiki pages found matching: {' '.join(keywords)}{scope_desc}"
+    lines = [f"Found {len(results)} page(s) matching '{' '.join(keywords)}'{scope_desc}:\n"]
     for _, title, rel, snippet in results[:10]:
         lines.append(f"- [{title}]({rel})")
         if snippet:
