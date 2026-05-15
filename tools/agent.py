@@ -787,7 +787,12 @@ def _autolink(args: dict) -> str:
         for seg in segments:
             def _rep(m, _lp=link_path):
                 return f"[{m.group(1)}]({_lp})"
-            new_seg = pattern.sub(_rep, seg)
+            # Substitute only in non-heading lines within this segment
+            def _sub_non_headings(s, _pat=pattern, _rep=_rep):
+                def _line_sub(line):
+                    return line if re.match(r'^#{1,6}\s', line) else _pat.sub(_rep, line)
+                return "\n".join(_line_sub(l) for l in s.split("\n"))
+            new_seg = _sub_non_headings(seg)
             if new_seg != seg:
                 any_replaced = True
             new_segments.append(new_seg)
@@ -1372,6 +1377,9 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
         _round += 1
         log.debug("run_agent_turn round %d: %d messages", _round, len(messages) + 1)
         resp = _create(client, messages, system)
+        _inter_delay = cfg_int("llm", "inter_request_delay", 0)
+        if _inter_delay > 0:
+            time.sleep(_inter_delay)
         try:
             msg = resp["choices"][0]["message"]
         except (KeyError, IndexError) as e:
@@ -1480,6 +1488,9 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
             try:
                 resp = _llm_post(client["endpoint"], client["api_key"], payload)
                 _record_request()
+                _inter_delay = cfg_int("llm", "inter_request_delay", 0)
+                if _inter_delay > 0:
+                    time.sleep(_inter_delay)
                 break
             except Exception as e:
                 if not _is_retryable(e):

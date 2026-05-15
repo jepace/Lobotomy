@@ -85,7 +85,13 @@ def autolink_page(target_p: Path, title_index: list[tuple[str, Path]]) -> int:
             replaced = True
             return f"[{m.group(2)}]({p})"
 
-        new_body = combined.sub(_replacer, body)
+        new_lines = []
+        for line in body.split("\n"):
+            if re.match(r'^#{1,6}\s', line):
+                new_lines.append(line)
+            else:
+                new_lines.append(combined.sub(_replacer, line))
+        new_body = "\n".join(new_lines)
         if replaced:
             body = new_body
             linked += 1

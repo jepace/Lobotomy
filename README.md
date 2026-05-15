@@ -41,7 +41,7 @@ pip install openai resend
 Copy the example config and edit it:
 
 ```sh
-cp config.example.json config.json
+cp config.json.example config.json
 $EDITOR config.json
 ```
 
