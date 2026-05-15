@@ -340,6 +340,68 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
     return fm_text + body + "\n".join(lines) + "\n"
 
 
+def _backfill_entity_sources(entity_path: str) -> None:
+    """Scan source pages for links to this entity and add them to its sources: frontmatter."""
+    import re
+    p = REPO_ROOT / entity_path
+    if not p.exists():
+        return
+    # Relative path from wiki/ root, e.g. "entities/coinbase.md"
+    try:
+        wiki_rel = str(p.resolve().relative_to(WIKI_DIR.resolve()))
+    except ValueError:
+        return
+
+    content = p.read_text(encoding="utf-8", errors="replace")
+    fm_match = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
+    if not fm_match:
+        return
+
+    # Collect source pages that contain a markdown link pointing at this entity
+    sources_dir = WIKI_DIR / "sources"
+    if not sources_dir.is_dir():
+        return
+
+    linked_by = []
+    for src in sorted(sources_dir.glob("*.md")):
+        if src.name == "index.md":
+            continue
+        src_text = src.read_text(encoding="utf-8", errors="replace")
+        # A link from sources/ to entities/ looks like: (../entities/coinbase.md)
+        src_wiki_rel = str(src.resolve().relative_to(WIKI_DIR.resolve()))  # e.g. sources/foo.md
+        # Compute how the entity path looks relative to this source page
+        entity_p = WIKI_DIR / wiki_rel
+        try:
+            rel_link = str(entity_p.relative_to(src.parent))  # e.g. ../entities/coinbase.md
+        except ValueError:
+            rel_link = None
+        if rel_link and re.search(r'\]\(' + re.escape(rel_link) + r'\)', src_text):
+            linked_by.append(src_wiki_rel)
+
+    if not linked_by:
+        return
+
+    # Parse existing sources: frontmatter
+    fm_text = fm_match.group(1)
+    src_m = re.search(r"^sources:\s*\[([^\]]*)\]", fm_text, re.MULTILINE)
+    existing = set()
+    if src_m and src_m.group(1).strip():
+        for s in src_m.group(1).split(","):
+            s = s.strip().strip('"').strip("'")
+            if s:
+                existing.add(s)
+
+    new_sources = existing | set(linked_by)
+    if new_sources == existing:
+        return
+
+    src_str = ", ".join(f'"{s}"' for s in sorted(new_sources))
+    new_fm = re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{src_str}]", fm_text, flags=re.MULTILINE)
+    updated = new_fm + content[len(fm_text):]
+    updated = _inject_sources_section(updated, p)
+    p.write_text(updated, encoding="utf-8")
+
+
 def _autolink_sources_if_entity(path: str) -> None:
     """When an entity or concept page is written, re-autolink all source pages so
     links that couldn't resolve at source-creation time are wired up now."""
@@ -350,6 +412,7 @@ def _autolink_sources_if_entity(path: str) -> None:
             for src in sources_dir.glob("*.md"):
                 if src.name != "index.md":
                     _autolink({"path": str(src.relative_to(REPO_ROOT))})
+        _backfill_entity_sources(path)
 
 
 def _write_file(path: str, content: str) -> str:
