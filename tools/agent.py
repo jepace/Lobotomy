@@ -300,6 +300,12 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
         for s in src_m.group(1).split(","):
             s = s.strip().strip('"').strip("'")
             if s:
+                # Normalize to wiki-relative path regardless of how it was stored
+                resolved = (page_path.parent / s).resolve()
+                try:
+                    s = str(resolved.relative_to(WIKI_DIR.resolve()))
+                except ValueError:
+                    pass
                 source_paths.append(s)
 
     # Strip existing ## Sources section (assumed to be at end of file)
@@ -473,9 +479,21 @@ def _fetch_url(url: str) -> str:
             return f"Error 429 Too Many Requests — {url}\nRate limited. Try again later."
         return f"HTTP {e.code} fetching {url}: {e.reason}"
     except urllib.error.URLError as e:
-        return f"Error fetching {url}: {e}"
+        reason = str(e.reason) if hasattr(e, "reason") else str(e)
+        if "timed out" in reason.lower() or "timeout" in reason.lower():
+            msg = (
+                f"Error: fetch timed out for {url}\n"
+                "Do NOT retry fetch_url — the site is unreachable or too slow. "
+                "Stop and ask the user to paste the article text instead."
+            )
+        else:
+            msg = f"Error fetching {url}: {e}"
+        _fetch_cache[url] = msg
+        return msg
     except Exception as e:
-        return f"Error: {e}"
+        msg = f"Error: {e}"
+        _fetch_cache[url] = msg
+        return msg
 
     if "html" in ct.lower():
         import re as _re
@@ -486,11 +504,13 @@ def _fetch_url(url: str) -> str:
             log.debug("HTML parse warning for %s: %s", url, e)
         text = _re.sub(r"\s+", " ", "".join(p.chunks)).strip()
         if not text:
-            return (
+            msg = (
                 f"Fetched {url} but extracted no text.\n"
                 "The page may require JavaScript to render (e.g. a SPA or Cloudflare-protected site).\n"
                 "Save the article manually and drop it in raw/inbox/ instead."
             )
+            _fetch_cache[url] = msg
+            return msg
     else:
         text = raw.decode("utf-8", errors="replace")
     text = text[:50_000]
