@@ -910,6 +910,18 @@ def chat_send():
             {"role": "user",      "content": orientation_message()},
             {"role": "assistant", "content": "Oriented. Ready."},
         ]
+    # Pre-load inbox file so the AI skips its read_file round-trip.
+    if inbox_file:
+        inbox_path = RAW_DIR / "inbox" / Path(inbox_file).name
+        try:
+            file_content = inbox_path.read_text(encoding="utf-8", errors="replace")
+            message = (
+                f'{message}\n\n'
+                f'<file path="raw/inbox/{inbox_path.name}">\n{file_content}\n</file>'
+            )
+        except OSError:
+            pass  # file unreadable — AI will fall back to read_file normally
+
     history.append({"role": "user", "content": message})
 
     def on_done(messages):
