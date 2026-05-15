@@ -787,7 +787,12 @@ def _autolink(args: dict) -> str:
         for seg in segments:
             def _rep(m, _lp=link_path):
                 return f"[{m.group(1)}]({_lp})"
-            new_seg = pattern.sub(_rep, seg)
+            # Substitute only in non-heading lines within this segment
+            def _sub_non_headings(s, _pat=pattern, _rep=_rep):
+                def _line_sub(line):
+                    return line if re.match(r'^#{1,6}\s', line) else _pat.sub(_rep, line)
+                return "\n".join(_line_sub(l) for l in s.split("\n"))
+            new_seg = _sub_non_headings(seg)
             if new_seg != seg:
                 any_replaced = True
             new_segments.append(new_seg)
