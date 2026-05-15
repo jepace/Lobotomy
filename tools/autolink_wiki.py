@@ -42,6 +42,33 @@ def build_title_index() -> list[tuple[str, Path]]:
     return pages
 
 
+def _title_alts(title: str) -> str:
+    """
+    Return a regex alternation string matching `title` bare OR with exactly one
+    contiguous sub-span of words already wrapped in a markdown link.
+    This lets the autolinker upgrade partial links like
+      'CASA of [Monterey County](url)' → '[CASA of Monterey County](new_url)'.
+    """
+    words = title.split()
+    n = len(words)
+
+    def _esc(ws: list) -> str:
+        return r"\s+".join(re.escape(w) for w in ws)
+
+    alts = [_esc(words)]
+    for s in range(n):
+        for e in range(s + 1, n + 1):
+            if s == 0 and e == n:
+                continue
+            pre, span, post = words[:s], words[s:e], words[e:]
+            p = ""
+            if pre:  p += _esc(pre) + r"\s+"
+            p += r"\[" + _esc(span) + r"\]\([^)]*\)"
+            if post: p += r"\s+" + _esc(post)
+            alts.append(p)
+    return "(?:" + "|".join(alts) + ")"
+
+
 def autolink_page(target_p: Path, title_index: list[tuple[str, Path]]) -> int:
     up_parts = target_p.parent.relative_to(WIKI_DIR).parts
     up = "/".join([".." ] * len(up_parts))
@@ -69,9 +96,11 @@ def autolink_page(target_p: Path, title_index: list[tuple[str, Path]]) -> int:
 
     linked = 0
     for title, link_path in title_map:
+        # Group 1: existing complete link — pass through unchanged (never nest links).
+        # Group 2: title bare or with a sub-span already linked — replace with new link.
         combined = re.compile(
-            r'(\[[^\]]*\]\([^)]*\))'
-            r'|(?<!\w)(' + re.escape(title) + r')(?!\w)',
+            r"(\[[^\]]*\]\([^)]*\))"
+            r"|(?<!\w)(" + _title_alts(title) + r")(?!\w)",
             re.IGNORECASE,
         )
         replaced = False
@@ -83,7 +112,8 @@ def autolink_page(target_p: Path, title_index: list[tuple[str, Path]]) -> int:
             if replaced:
                 return m.group(2)
             replaced = True
-            return f"[{m.group(2)}]({p})"
+            display = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", m.group(2))
+            return f"[{display}]({p})"
 
         new_lines = []
         for line in body.split("\n"):

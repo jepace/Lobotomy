@@ -734,6 +734,34 @@ def _rebuild_index(args: dict) -> str:
     return f"Rebuilt wiki/index.md and subdirectory indexes — {total} pages across {len(sections)} sections."
 
 
+def _title_alts(title: str) -> str:
+    """
+    Return a regex alternation string matching `title` bare OR with exactly one
+    contiguous sub-span of words already wrapped in a markdown link.
+    This lets the autolinker upgrade partial links like
+      'CASA of [Monterey County](url)' → '[CASA of Monterey County](new_url)'.
+    """
+    import re
+    words = title.split()
+    n = len(words)
+
+    def _esc(ws: list) -> str:
+        return r"\s+".join(re.escape(w) for w in ws)
+
+    alts = [_esc(words)]  # bare match
+    for s in range(n):
+        for e in range(s + 1, n + 1):
+            if s == 0 and e == n:
+                continue  # whole title already linked — skip
+            pre, span, post = words[:s], words[s:e], words[e:]
+            p = ""
+            if pre:  p += _esc(pre) + r"\s+"
+            p += r"\[" + _esc(span) + r"\]\([^)]*\)"
+            if post: p += r"\s+" + _esc(post)
+            alts.append(p)
+    return "(?:" + "|".join(alts) + ")"
+
+
 def _autolink(args: dict) -> str:
     """Replace first bare occurrence of each other wiki page title with a markdown link."""
     import re
@@ -765,7 +793,6 @@ def _autolink(args: dict) -> str:
                     title = line.split(":", 1)[1].strip().strip('"')
                     if title:
                         rel = f.relative_to(WIKI_DIR)
-                        # Build correct relative path (../ per directory level)
                         up_parts = target_p.parent.relative_to(WIKI_DIR).parts
                         prefix = "../" * len(up_parts)
                         link_path = f"{prefix}{rel}"
@@ -781,43 +808,40 @@ def _autolink(args: dict) -> str:
     fm_match = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
     frontmatter, body = (fm_match.group(1), content[len(fm_match.group(1)):]) if fm_match else ("", content)
 
-    # Split body into alternating [non-link, link, non-link, link, ...]
-    # Substitute only in non-link segments to avoid corrupting existing link URLs.
-    _LINK_RE = re.compile(r'\[[^\]]*\]\([^)]*\)')
-    segments = _LINK_RE.split(body)
-    links    = _LINK_RE.findall(body)
-
     linked = 0
     for title, link_path in title_map:
-        pattern = re.compile(r'(?<!\w)(' + re.escape(title) + r')(?!\w)', re.IGNORECASE)
-        new_segments = []
-        any_replaced = False
-        for seg in segments:
-            def _rep(m, _lp=link_path):
-                return f"[{m.group(1)}]({_lp})"
-            # Substitute only in non-heading lines within this segment
-            def _sub_non_headings(s, _pat=pattern, _rep=_rep):
-                def _line_sub(line):
-                    return line if re.match(r'^#{1,6}\s', line) else _pat.sub(_rep, line)
-                return "\n".join(_line_sub(l) for l in s.split("\n"))
-            new_seg = _sub_non_headings(seg)
-            if new_seg != seg:
-                any_replaced = True
-            new_segments.append(new_seg)
-        if any_replaced:
-            # Reassemble and re-split so newly-inserted links are treated as
-            # protected link tokens — not bare text — in subsequent passes.
-            assembled = new_segments[0]
-            for lnk, seg in zip(links, new_segments[1:]):
-                assembled += lnk + seg
-            segments = _LINK_RE.split(assembled)
-            links    = _LINK_RE.findall(assembled)
+        # Group 1: an existing complete link — pass through unchanged (never nest links inside).
+        # Group 2: the title bare or with a sub-span already linked — replace with new link.
+        combined = re.compile(
+            r"(\[[^\]]*\]\([^)]*\))"
+            r"|(?<!\w)(" + _title_alts(title) + r")(?!\w)",
+            re.IGNORECASE,
+        )
+        replaced = False
+
+        def _replacer(m, _lp=link_path):
+            nonlocal replaced
+            if m.group(1):           # existing complete link — keep as-is
+                return m.group(1)
+            if replaced:             # only link first occurrence
+                return m.group(2)
+            replaced = True
+            # Strip any inner link syntax (e.g. [Monterey County](url) → Monterey County)
+            display = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", m.group(2))
+            return f"[{display}]({_lp})"
+
+        new_lines = []
+        for line in body.split("\n"):
+            if re.match(r"^#{1,6}\s", line):
+                new_lines.append(line)
+            else:
+                new_lines.append(combined.sub(_replacer, line))
+        new_body = "\n".join(new_lines)
+        if replaced:
+            body = new_body
             linked += 1
 
-    # Reassemble: interleave segments and preserved links
-    result = segments[0]
-    for lnk, seg in zip(links, segments[1:]):
-        result += lnk + seg
+    result = body
 
     target_p.write_text(frontmatter + result, encoding="utf-8")
     return f"Autolinked {linked} title(s) in {target_str}."
