@@ -781,7 +781,18 @@ def list_inbox() -> list:
             except Exception:
                 pass
     items = []
-    for f in sorted(candidates, key=lambda x: -x.stat().st_mtime):
+    def _inbox_sort_key(f):
+        try:
+            fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
+            v = fm.get("added") or fm.get("saved") or ""
+            if v:
+                return str(v)
+        except Exception:
+            pass
+        import datetime as _dt
+        return _dt.datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+
+    for f in sorted(candidates, key=_inbox_sort_key, reverse=True):
         if not f.is_file() or f.name.startswith("."):
             continue
         try:
@@ -1735,10 +1746,12 @@ def api_push():
 
     # Write file with YAML frontmatter
     today = datetime.date.today().isoformat()
+    now   = datetime.datetime.now().isoformat(timespec="seconds")
     fm    = ["---", f'title: "{title}"']
     if url:
         fm.append(f"url: {url}")
     fm.append(f"saved: {today}")
+    fm.append(f"added: {now}")
     fm.append(f"source: {source}")
     if author:
         fm.append(f"author: {author}")
