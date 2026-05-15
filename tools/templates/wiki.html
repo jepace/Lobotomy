@@ -108,7 +108,7 @@
   </div>
 
   <div class="wiki-search-wrap">
-    <input id="wiki-search" class="wiki-search-input" type="search" placeholder="Search wiki…" autocomplete="off" spellcheck="false">
+    <input id="wiki-search" class="wiki-search-input" type="search" placeholder="Search wiki… (in:sources  tag:energy)" autocomplete="off" spellcheck="false">
     <div id="wiki-search-results" class="wiki-search-results"></div>
   </div>
 
@@ -130,7 +130,7 @@ function setChatPrompt(text) {
 
   function highlight(text, q) {
     if (!q) return text;
-    const words = q.trim().split(/\s+/).filter(Boolean);
+    const words = q.trim().split(/\s+/).filter(w => w && !w.toLowerCase().startsWith('in:') && !w.toLowerCase().startsWith('tag:'));
     let out = text;
     words.forEach(w => {
       out = out.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'gi'),

@@ -3,8 +3,16 @@
 {% block head %}
 <style>
   .tags-page { padding: 24px; max-width: 900px; margin: 0 auto; }
-  .tags-page h1 { font-size: 22px; font-weight: 700; margin-bottom: 20px; }
+  .tags-page h1 { font-size: 22px; font-weight: 700; margin-bottom: 12px; }
+  .tag-filter {
+    width: 100%; box-sizing: border-box; padding: 7px 12px; margin-bottom: 18px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg2); color: var(--text); font-size: 14px;
+    outline: none;
+  }
+  .tag-filter:focus { border-color: var(--accent); }
   .tag-cloud { display: flex; flex-wrap: wrap; gap: 10px; }
+  .tag-chip.hidden { display: none; }
   .tag-chip {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 6px 14px; border-radius: 20px;
@@ -38,16 +46,37 @@
   <div class="tags-page">
     <h1>Tags</h1>
     {% if tags %}
-    <div class="tag-cloud">
+    <input id="tag-filter" class="tag-filter" type="search" placeholder="Filter tags…" autocomplete="off" spellcheck="false">
+    <div class="tag-cloud" id="tag-cloud">
       {% for tag, pages in tags %}
-      <a class="tag-chip" href="/wiki/tags/{{ tag }}">
+      <a class="tag-chip" href="/wiki/tags/{{ tag }}" data-tag="{{ tag }}">
         {{ tag }}<span class="tag-count">{{ pages|length }}</span>
       </a>
       {% endfor %}
     </div>
+    <p id="tag-no-results" style="display:none;color:var(--text2);margin-top:12px">No tags match.</p>
     {% else %}
     <p style="color:var(--text2)">No tags found.</p>
     {% endif %}
   </div>
 </div>
+<script>
+(function() {
+  const inp = document.getElementById('tag-filter');
+  if (!inp) return;
+  const chips = document.querySelectorAll('#tag-cloud .tag-chip');
+  const noResults = document.getElementById('tag-no-results');
+  inp.addEventListener('input', () => {
+    const q = inp.value.trim().toLowerCase();
+    let visible = 0;
+    chips.forEach(chip => {
+      const match = !q || chip.dataset.tag.toLowerCase().includes(q);
+      chip.classList.toggle('hidden', !match);
+      if (match) visible++;
+    });
+    noResults.style.display = visible === 0 ? '' : 'none';
+  });
+  inp.focus();
+})();
+</script>
 {% endblock %}

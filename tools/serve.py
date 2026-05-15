@@ -910,6 +910,18 @@ def chat_send():
             {"role": "user",      "content": orientation_message()},
             {"role": "assistant", "content": "Oriented. Ready."},
         ]
+    # Pre-load inbox file so the AI skips its read_file round-trip.
+    if inbox_file:
+        inbox_path = RAW_DIR / "inbox" / Path(inbox_file).name
+        try:
+            file_content = inbox_path.read_text(encoding="utf-8", errors="replace")
+            message = (
+                f'{message}\n\n'
+                f'<file path="raw/inbox/{inbox_path.name}">\n{file_content}\n</file>'
+            )
+        except OSError:
+            pass  # file unreadable — AI will fall back to read_file normally
+
     history.append({"role": "user", "content": message})
 
     def on_done(messages):
@@ -1113,15 +1125,40 @@ def wiki_search():
     q = request.args.get("q", "").strip()
     if not q or len(q) < 2:
         return {"results": []}
-    words = [w.lower() for w in q.split() if w]
+    # Parse filter tokens: in:<subdir> and tag:<name>
+    scope = None
+    required_tag = None
+    filtered = []
+    for t in q.split():
+        tl = t.lower()
+        if tl.startswith("in:"):
+            scope = tl[3:].strip("/")
+        elif tl.startswith("tag:"):
+            required_tag = tl[4:]
+        else:
+            filtered.append(t)
+    words = [w.lower() for w in filtered if w]
+    if not words and not required_tag:
+        return {"results": []}
+    valid_subdirs = {"sources", "entities", "concepts", "synthesis"}
+    search_root = WIKI_DIR / scope if scope and scope in valid_subdirs else WIKI_DIR
     results = []
-    for md_file in sorted(WIKI_DIR.rglob("*.md")):
+    for md_file in sorted(search_root.rglob("*.md")):
         try:
             text = md_file.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        # tag: filter — check frontmatter tags field
+        if required_tag:
+            fm_m = re.match(r'^---\s*\n(.*?)\n---', text, re.DOTALL)
+            if not fm_m:
+                continue
+            tags_line = next((l for l in fm_m.group(1).splitlines() if l.startswith("tags:")), "")
+            page_tags = [t.strip().strip('"').lower() for t in tags_line.split(":", 1)[-1].strip().strip("[]").split(",") if t.strip().strip('"')]
+            if required_tag not in page_tags:
+                continue
         text_lower = text.lower()
-        if not all(w in text_lower for w in words):
+        if words and not all(w in text_lower for w in words):
             continue
         # Extract title from frontmatter or filename
         title = md_file.stem.replace("-", " ").title()
@@ -1135,7 +1172,7 @@ def wiki_search():
         for line in text.splitlines():
             if line.startswith("---") or re.match(r'^[a-z]+:', line):
                 continue
-            if any(w in line.lower() for w in words):
+            if words and any(w in line.lower() for w in words):
                 excerpt = line.strip()[:120]
                 break
         rel = str(md_file.relative_to(WIKI_DIR))
@@ -2337,6 +2374,8 @@ def inbox_edit():
         p.resolve().relative_to((RAW_DIR / "inbox").resolve())
     except ValueError:
         return {"error": "Invalid path"}, 400
+    if not p.exists():
+        p = RAW_DIR / "sources" / name
     if not p.exists():
         return {"error": "File not found"}, 404
     if p.suffix == ".md":

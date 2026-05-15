@@ -617,9 +617,10 @@ def _rebuild_index(args: dict) -> str:
             continue
         sub_index = d / "index.md"
         existing_sub = sub_index.read_text(encoding="utf-8") if sub_index.exists() else ""
-        # Split at the first --- separator after the closing frontmatter ---.
-        fm_end_sub = existing_sub.find("\n---", existing_sub.find("---") + 3)
-        divider_sub = existing_sub.find("\n---\n", fm_end_sub + 4) if fm_end_sub != -1 else -1
+        # Find the auto-generated block boundary: "\n---\n\n## <Heading>"
+        # This pattern is unique to the divider _rebuild_index writes, so it won't
+        # be confused with YAML frontmatter delimiters or any other "---" in the prose.
+        divider_sub = existing_sub.find(f"\n---\n\n## {heading}")
         if divider_sub != -1:
             prose_sub = existing_sub[:divider_sub].rstrip()
         elif existing_sub.strip():
@@ -704,7 +705,13 @@ def _autolink(args: dict) -> str:
                 any_replaced = True
             new_segments.append(new_seg)
         if any_replaced:
-            segments = new_segments
+            # Reassemble and re-split so newly-inserted links are treated as
+            # protected link tokens — not bare text — in subsequent passes.
+            assembled = new_segments[0]
+            for lnk, seg in zip(links, new_segments[1:]):
+                assembled += lnk + seg
+            segments = _LINK_RE.split(assembled)
+            links    = _LINK_RE.findall(assembled)
             linked += 1
 
     # Reassemble: interleave segments and preserved links
@@ -755,25 +762,49 @@ def _fix_wiki_links(_args: dict) -> str:
 
 
 def _search_wiki(args: dict) -> str:
-    """Keyword search across all wiki pages. Returns matching pages with title, path, snippet."""
+    """Keyword search across all wiki pages. Returns matching pages with title, path, snippet.
+    Supports in:<subdir> scope token (e.g. 'california in:sources')."""
     import re
     query = args.get("query", "").strip()
     if not query:
         return "Error: query is required."
-    keywords = query.split()
+    scope = None
+    required_tag = None
+    kw_tokens = []
+    for t in query.split():
+        tl = t.lower()
+        if tl.startswith("in:"):
+            scope = tl[3:].strip("/")
+        elif tl.startswith("tag:"):
+            required_tag = tl[4:]
+        else:
+            kw_tokens.append(t)
+    keywords = kw_tokens
+    if not keywords and not required_tag:
+        return "Error: no search keywords provided (only filter tokens found)."
     patterns = [re.compile(re.escape(kw), re.IGNORECASE) for kw in keywords]
+    valid_subdirs = {"sources", "entities", "concepts", "synthesis"}
+    search_root = WIKI_DIR / scope if scope and scope in valid_subdirs else WIKI_DIR
 
     results = []
-    for f in sorted(WIKI_DIR.rglob("*.md")):
+    for f in sorted(search_root.rglob("*.md")):
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        score = sum(len(p.findall(text)) for p in patterns)
+        fm = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+        # tag: filter
+        if required_tag:
+            if not fm:
+                continue
+            tags_line = next((l for l in fm.group(1).splitlines() if l.startswith("tags:")), "")
+            page_tags = [t.strip().strip('"').lower() for t in tags_line.split(":", 1)[-1].strip().strip("[]").split(",") if t.strip().strip('"')]
+            if required_tag not in page_tags:
+                continue
+        score = sum(len(p.findall(text)) for p in patterns) if patterns else 1
         if not score:
             continue
         # Extract title from frontmatter
-        fm = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
         title = f.stem
         if fm:
             for line in fm.group(1).splitlines():
@@ -783,16 +814,17 @@ def _search_wiki(args: dict) -> str:
         # Find first matching line for snippet
         snippet = ""
         for line in text.splitlines():
-            if any(p.search(line) for p in patterns):
+            if patterns and any(p.search(line) for p in patterns):
                 snippet = line.strip()[:120]
                 break
         rel = str(f.relative_to(WIKI_DIR))
         results.append((score, title, rel, snippet))
 
     results.sort(key=lambda x: -x[0])
+    scope_desc = f" in {scope}/" if scope and scope in valid_subdirs else ""
     if not results:
-        return f"No wiki pages found matching: {query}"
-    lines = [f"Found {len(results)} page(s) matching '{query}':\n"]
+        return f"No wiki pages found matching: {' '.join(keywords)}{scope_desc}"
+    lines = [f"Found {len(results)} page(s) matching '{' '.join(keywords)}'{scope_desc}:\n"]
     for _, title, rel, snippet in results[:10]:
         lines.append(f"- [{title}]({rel})")
         if snippet:

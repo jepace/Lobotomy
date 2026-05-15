@@ -1,0 +1,89 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What This Is
+
+Lobotomy is a personal knowledge-base server where LLMs synthesize knowledge at ingest time and write it permanently into a wiki — not retrieved at query time. Three layers: immutable raw sources (`raw/`), LLM-generated wiki pages (`wiki/`), and an operating schema (`AGENT.md`).
+
+## Running the Server
+
+```sh
+pip install -r requirements.txt      # flask, markdown; add openai and resend as needed
+cp config.example.json config.json   # then fill in llm.provider, llm.api_key, admin creds
+python3 tools/serve.py               # web UI at http://127.0.0.1:8080
+```
+
+Alternative CLI (no Flask needed):
+```sh
+python3 tools/wiki.py                      # interactive REPL
+python3 tools/wiki.py "ingest raw/file.md" # one-shot command
+```
+
+Utility CLIs (no LLM needed):
+```sh
+python3 tools/search.py "keyword"          # full-text search across wiki
+python3 tools/tasks.py --due-today         # filter tasks.md
+python3 tools/autolink_wiki.py [--dry-run] # one-shot cross-linker
+python3 tools/repair_links.py              # fix broken relative paths
+sh tools/lint.sh                           # shell-based broken-link checker
+```
+
+## Architecture
+
+### Core modules
+
+**`tools/agent.py`** — the heart of the system. Contains all AI tool implementations (`_read_file`, `_write_file`, `_create_page`, `_autolink`, `_search_wiki`, `_fetch_url`, `_prepend_log`, `_done`, `_rebuild_index`, etc.) plus the agentic loop (`stream_agent_turn`, `run_agent_turn`) and LLM provider abstraction. Both `serve.py` and `wiki.py` import from here.
+
+**`tools/serve.py`** — Flask web server. Routes for: `/chat` (streaming AI), `/wiki/*` (rendered markdown), `/tasks` (task manager UI), `/inbox` (read-it-later), `/blog`, auth, and settings. Imports `agent.py` for AI functionality and `job_queue.py` for background jobs.
+
+**`tools/wiki.py`** — CLI wrapper around the same agent tools. An interactive REPL or one-shot runner; no Flask dependency.
+
+**`tools/config.py`** — reads `config.json`. Use `cfg_get(section, key, default)` throughout. Config is never hardcoded.
+
+**`tools/job_queue.py`** — background job queue used by `serve.py` for async inbox processing.
+
+### The autolinker (common bug surface)
+
+Two autolinker entry points exist — keep them in sync conceptually:
+
+- **`tools/agent.py:_autolink()`** — called automatically after every `create_page` or `write_file`. Splits body on existing links (`_LINK_RE.split`), substitutes bare title occurrences only in non-link segments, then reassembles. After each substitution it re-splits so newly inserted links are protected from subsequent passes.
+- **`tools/autolink_wiki.py`** — standalone one-shot script for batch re-linking the whole wiki. Uses a similar but independently maintained regex approach.
+
+The critical invariant: **never match inside existing markdown links**. The split/reassemble pattern in `agent.py:_autolink()` is what enforces this. If you see nested links like `[[text](path)](path)`, the autolinker processed a newly-inserted link as bare text on a subsequent pass.
+
+### Wiki page lifecycle
+
+1. `create_page` → writes frontmatter + body, calls `_autolink`, calls `_inject_sources_section`
+2. `_autolink` → cross-links bare title occurrences to other wiki pages
+3. `_inject_sources_section` → renders a `## Sources` section from `sources:` frontmatter
+4. `_autolink_sources_if_entity` → if the written page is an entity, also re-autolinks all source pages that mention it
+5. `done()` → server runs lint checks; results visible at `/wiki/lint`
+
+### `system_prompt()` and `AGENT.md`
+
+`agent.py:system_prompt()` reads `AGENT.md` as the LLM's operating schema and appends a tool quick-reference table. The LLM operating instructions (ingest workflow, query workflow, page format, naming conventions, etc.) all live in `AGENT.md`, not here.
+
+## Key Conventions
+
+- **`raw/` is immutable** — code in `_write_file` blocks writes outside `wiki/`.
+- **`wiki/log.md` is append-only** — always use `prepend_log`, never `write_file` on the log.
+- **No `[[wikilink]]` syntax** — standard relative markdown links only.
+- **`create_page` over `write_file`** for new wiki pages — it auto-fills `created`/`updated` dates.
+- Internal wiki links use paths relative to the page's location: `../entities/foo.md` from `wiki/sources/`.
+- File names: `lowercase-hyphenated-slugs.md`. Source slugs encode `{author-or-org}-{year}-{short-title}`.
+- The `## Sources` section in entity/concept pages is auto-generated from frontmatter — never write it manually.
+
+## Config Structure
+
+`config.json` (gitignored, copy from `config.example.json`):
+```json
+{
+  "admin":  { "email": "...", "password": "..." },
+  "server": { "host": "127.0.0.1", "port": 8080, "https": false, "base_url": "..." },
+  "llm":    { "provider": "gemini|openai|openrouter|ollama|groq", "api_key": "...", "model": "..." },
+  "email":  { "resend_api_key": "...", "from_address": "..." }
+}
+```
+
+LLM providers use OpenAI-compatible APIs. The `agent.py:PROVIDERS` dict maps provider names to base URLs and default models. Provider config can also override `api_base` and `model` per-provider inside `config.json`.
