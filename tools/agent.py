@@ -431,12 +431,15 @@ def _write_file(path: str, content: str) -> str:
         )
     if p.resolve() == (WIKI_DIR / "log.md").resolve():
         return "Error: write_file refused on wiki/log.md — use prepend_log to add entries."
+    if p.resolve() == (WIKI_DIR / "index.md").resolve():
+        return "Error: write_file refused on wiki/index.md — it is auto-generated; use rebuild_index if needed."
     p.parent.mkdir(parents=True, exist_ok=True)
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
     p.write_text(content, encoding="utf-8")
     _autolink({"path": path})
     _autolink_sources_if_entity(path)
+    _rebuild_index({})
     return f"Written {len(content)} bytes to {path}"
 
 
@@ -970,6 +973,7 @@ def _create_page(args: dict) -> str:
     p.write_text(content, encoding="utf-8")
     _autolink({"path": path})
     _autolink_sources_if_entity(path)
+    _rebuild_index({})
     action = "Updated" if existed else "Created"
     return f"{action} {path} ({len(content)} bytes)"
 
