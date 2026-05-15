@@ -9,7 +9,7 @@ Requirements:
   -- or on FreeBSD --
   pkg install py311-flask py311-markdown && pip install openai resend
 
-Configuration: copy config.example.json to config.json and edit it.
+Configuration: copy config.json.example to config.json and edit it.
 
 Usage:
   python3 tools/serve.py

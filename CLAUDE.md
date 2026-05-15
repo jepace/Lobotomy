@@ -10,7 +10,7 @@ Lobotomy is a personal knowledge-base server where LLMs synthesize knowledge at 
 
 ```sh
 pip install -r requirements.txt      # flask, markdown; add openai and resend as needed
-cp config.example.json config.json   # then fill in llm.provider, llm.api_key, admin creds
+cp config.json.example config.json   # then fill in llm.provider, llm.api_key, admin creds
 python3 tools/serve.py               # web UI at http://127.0.0.1:8080
 ```
 
@@ -76,7 +76,7 @@ The critical invariant: **never match inside existing markdown links**. The spli
 
 ## Config Structure
 
-`config.json` (gitignored, copy from `config.example.json`):
+`config.json` (gitignored, copy from `config.json.example`):
 ```json
 {
   "admin":  { "email": "...", "password": "..." },
