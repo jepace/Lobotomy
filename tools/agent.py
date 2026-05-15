@@ -323,15 +323,19 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
     for sp in source_paths:
         src_file = WIKI_DIR / sp
         title = sp
+        suffix = ""
         if src_file.exists():
             src_text = src_file.read_text(encoding="utf-8", errors="replace")
             tm = re.match(r"^---\s*\n(.*?)\n---", src_text, re.DOTALL)
             if tm:
+                url = None
                 for line in tm.group(1).splitlines():
                     if line.startswith("title:"):
                         title = line.split(":", 1)[1].strip().strip('"')
-                        break
-        lines.append(f"- [{title}]({prefix}{sp})")
+                    elif line.startswith("url:"):
+                        url = line.split(":", 1)[1].strip().strip('"').strip("'")
+                suffix = f" ([original]({url}))" if url else ""
+        lines.append(f"- [{title}]({prefix}{sp}){suffix}")
 
     return fm_text + body + "\n".join(lines) + "\n"
 
