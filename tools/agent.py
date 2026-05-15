@@ -763,15 +763,19 @@ def _search_wiki(args: dict) -> str:
     if not query:
         return "Error: query is required."
     scope = None
+    required_tag = None
     kw_tokens = []
     for t in query.split():
-        if t.lower().startswith("in:"):
-            scope = t[3:].lower().strip("/")
+        tl = t.lower()
+        if tl.startswith("in:"):
+            scope = tl[3:].strip("/")
+        elif tl.startswith("tag:"):
+            required_tag = tl[4:]
         else:
             kw_tokens.append(t)
     keywords = kw_tokens
-    if not keywords:
-        return "Error: no search keywords provided (only scope token found)."
+    if not keywords and not required_tag:
+        return "Error: no search keywords provided (only filter tokens found)."
     patterns = [re.compile(re.escape(kw), re.IGNORECASE) for kw in keywords]
     valid_subdirs = {"sources", "entities", "concepts", "synthesis"}
     search_root = WIKI_DIR / scope if scope and scope in valid_subdirs else WIKI_DIR
@@ -782,11 +786,19 @@ def _search_wiki(args: dict) -> str:
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        score = sum(len(p.findall(text)) for p in patterns)
+        fm = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+        # tag: filter
+        if required_tag:
+            if not fm:
+                continue
+            tags_line = next((l for l in fm.group(1).splitlines() if l.startswith("tags:")), "")
+            page_tags = [t.strip().strip('"').lower() for t in tags_line.split(":", 1)[-1].strip().strip("[]").split(",") if t.strip().strip('"')]
+            if required_tag not in page_tags:
+                continue
+        score = sum(len(p.findall(text)) for p in patterns) if patterns else 1
         if not score:
             continue
         # Extract title from frontmatter
-        fm = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
         title = f.stem
         if fm:
             for line in fm.group(1).splitlines():
@@ -796,7 +808,7 @@ def _search_wiki(args: dict) -> str:
         # Find first matching line for snippet
         snippet = ""
         for line in text.splitlines():
-            if any(p.search(line) for p in patterns):
+            if patterns and any(p.search(line) for p in patterns):
                 snippet = line.strip()[:120]
                 break
         rel = str(f.relative_to(WIKI_DIR))

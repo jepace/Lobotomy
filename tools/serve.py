@@ -1113,31 +1113,40 @@ def wiki_search():
     q = request.args.get("q", "").strip()
     if not q or len(q) < 2:
         return {"results": []}
-    # Extract optional in:<subdir> scope token
+    # Parse filter tokens: in:<subdir> and tag:<name>
     scope = None
-    tokens = q.split()
+    required_tag = None
     filtered = []
-    for t in tokens:
-        if t.lower().startswith("in:"):
-            scope = t[3:].lower().strip("/")
+    for t in q.split():
+        tl = t.lower()
+        if tl.startswith("in:"):
+            scope = tl[3:].strip("/")
+        elif tl.startswith("tag:"):
+            required_tag = tl[4:]
         else:
             filtered.append(t)
     words = [w.lower() for w in filtered if w]
-    if not words:
+    if not words and not required_tag:
         return {"results": []}
     valid_subdirs = {"sources", "entities", "concepts", "synthesis"}
-    if scope and scope in valid_subdirs:
-        search_root = WIKI_DIR / scope
-    else:
-        search_root = WIKI_DIR
+    search_root = WIKI_DIR / scope if scope and scope in valid_subdirs else WIKI_DIR
     results = []
     for md_file in sorted(search_root.rglob("*.md")):
         try:
             text = md_file.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        # tag: filter — check frontmatter tags field
+        if required_tag:
+            fm_m = re.match(r'^---\s*\n(.*?)\n---', text, re.DOTALL)
+            if not fm_m:
+                continue
+            tags_line = next((l for l in fm_m.group(1).splitlines() if l.startswith("tags:")), "")
+            page_tags = [t.strip().strip('"').lower() for t in tags_line.split(":", 1)[-1].strip().strip("[]").split(",") if t.strip().strip('"')]
+            if required_tag not in page_tags:
+                continue
         text_lower = text.lower()
-        if not all(w in text_lower for w in words):
+        if words and not all(w in text_lower for w in words):
             continue
         # Extract title from frontmatter or filename
         title = md_file.stem.replace("-", " ").title()
@@ -1151,7 +1160,7 @@ def wiki_search():
         for line in text.splitlines():
             if line.startswith("---") or re.match(r'^[a-z]+:', line):
                 continue
-            if any(w in line.lower() for w in words):
+            if words and any(w in line.lower() for w in words):
                 excerpt = line.strip()[:120]
                 break
         rel = str(md_file.relative_to(WIKI_DIR))
