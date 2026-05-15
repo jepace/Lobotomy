@@ -18,7 +18,8 @@
     "max_retries": 6,
     "retry_base_delay": 5,
     "retry_poll_interval": 300,
-    "max_rpm": 15
+    "max_rpm": 15,
+    "inter_request_delay": 5
   },
   "email": {
     "resend_api_key": "",

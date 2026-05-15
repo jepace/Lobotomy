@@ -1372,6 +1372,9 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
         _round += 1
         log.debug("run_agent_turn round %d: %d messages", _round, len(messages) + 1)
         resp = _create(client, messages, system)
+        _inter_delay = cfg_int("llm", "inter_request_delay", 0)
+        if _inter_delay > 0:
+            time.sleep(_inter_delay)
         try:
             msg = resp["choices"][0]["message"]
         except (KeyError, IndexError) as e:
@@ -1480,6 +1483,9 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
             try:
                 resp = _llm_post(client["endpoint"], client["api_key"], payload)
                 _record_request()
+                _inter_delay = cfg_int("llm", "inter_request_delay", 0)
+                if _inter_delay > 0:
+                    time.sleep(_inter_delay)
                 break
             except Exception as e:
                 if not _is_retryable(e):
