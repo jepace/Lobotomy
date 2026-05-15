@@ -617,9 +617,10 @@ def _rebuild_index(args: dict) -> str:
             continue
         sub_index = d / "index.md"
         existing_sub = sub_index.read_text(encoding="utf-8") if sub_index.exists() else ""
-        # Split at the first --- separator after the closing frontmatter ---.
-        fm_end_sub = existing_sub.find("\n---", existing_sub.find("---") + 3)
-        divider_sub = existing_sub.find("\n---\n", fm_end_sub + 4) if fm_end_sub != -1 else -1
+        # Find the auto-generated block boundary: "\n---\n\n## <Heading>"
+        # This pattern is unique to the divider _rebuild_index writes, so it won't
+        # be confused with YAML frontmatter delimiters or any other "---" in the prose.
+        divider_sub = existing_sub.find(f"\n---\n\n## {heading}")
         if divider_sub != -1:
             prose_sub = existing_sub[:divider_sub].rstrip()
         elif existing_sub.strip():
