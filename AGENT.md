@@ -198,8 +198,9 @@ List these explicitly before modifying any of them.
 
 ### Step 5 — Update or create entity pages
 For each significant entity (person, organization, product, project) in the source:
-- Use `search_wiki` to check whether a page already exists. Read the page only if the snippet
-  suggests it might be a different entity with a similar name.
+- **Always call `search_wiki` before calling `create_page`.** Do not create a page until you have
+  confirmed no existing page covers this entity. Search by the entity's full name and any common
+  abbreviations or alternate names.
 - If a page exists and is correct, update it with `write_file`. When updating, read the existing
   page first and preserve its `sources:` frontmatter list, appending the new source if not already present.
 - If the entity is new and significant, use `create_page` to create `wiki/entities/{slug}.md`.
@@ -209,7 +210,9 @@ For each significant entity (person, organization, product, project) in the sour
 
 ### Step 6 — Update or create concept pages
 For each significant concept, technique, framework, or term:
-- Use `search_wiki` to check whether a page already exists.
+- **Always call `search_wiki` before calling `create_page`.** Do not create a page until you have
+  confirmed no existing page covers this concept. Search by the concept's full name and any common
+  abbreviations or alternate names.
 - If a page exists and is correct, update it with `write_file`. Preserve existing `sources:` and
   append the new source if not already present.
 - If no page exists and the concept warrants one, use `create_page` for `wiki/concepts/{slug}.md`.

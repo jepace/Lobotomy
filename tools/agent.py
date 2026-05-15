@@ -300,13 +300,18 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
         for s in src_m.group(1).split(","):
             s = s.strip().strip('"').strip("'")
             if s:
-                # Normalize to wiki-relative path regardless of how it was stored
-                resolved = (page_path.parent / s).resolve()
-                try:
-                    s = str(resolved.relative_to(WIKI_DIR.resolve()))
-                except ValueError:
-                    pass
-                source_paths.append(s)
+                # Paths are wiki-root-relative per AGENT.md convention.
+                # Fall back to page-relative resolution for legacy entries.
+                wiki_root_candidate = WIKI_DIR / s
+                if wiki_root_candidate.exists():
+                    source_paths.append(s)
+                else:
+                    resolved = (page_path.parent / s).resolve()
+                    try:
+                        s = str(resolved.relative_to(WIKI_DIR.resolve()))
+                    except ValueError:
+                        pass
+                    source_paths.append(s)
 
     # Strip existing ## Sources section (assumed to be at end of file)
     body = content[len(fm_text):]
