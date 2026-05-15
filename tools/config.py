@@ -12,36 +12,48 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _CONFIG_FILE = REPO_ROOT / "config.json"
 
+_c: dict = {}
+_mtime: float = 0.0
 
-def _load() -> dict:
-    if _CONFIG_FILE.exists():
+
+def _reload_if_changed() -> None:
+    global _c, _mtime
+    try:
+        mtime = _CONFIG_FILE.stat().st_mtime
+    except FileNotFoundError:
+        return
+    if mtime != _mtime:
         try:
-            return json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+            _c = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+            _mtime = mtime
         except Exception as e:
             print(f"[wiki] Warning: could not parse config.json: {e}")
-    return {}
 
 
-_c = _load()
+_reload_if_changed()
 
 
 def cfg_get(section: str, key: str, default: str = "") -> str:
+    _reload_if_changed()
     v = _c.get(section, {}).get(key)
     return str(v) if v is not None else default
 
 
 def cfg_int(section: str, key: str, default: int = 0) -> int:
+    _reload_if_changed()
     v = _c.get(section, {}).get(key)
     return int(v) if v is not None else default
 
 
 def cfg_bool(section: str, key: str, default: bool = False) -> bool:
+    _reload_if_changed()
     v = _c.get(section, {}).get(key)
     return bool(v) if v is not None else default
 
 
 def cfg_provider(provider: str) -> dict:
     """Return per-provider config block from llm.providers.{provider}, or {}."""
+    _reload_if_changed()
     return _c.get("llm", {}).get("providers", {}).get(provider, {})
 
 
