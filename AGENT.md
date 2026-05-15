@@ -246,8 +246,8 @@ index coverage) — results are visible at `/wiki/lint`.
 ### Step 1 — Read `wiki/overview.md`
 Get a high-level orientation. Note what domains and entities the wiki covers.
 
-### Step 2 — Read `wiki/index.md`
-Scan all sections. Identify every page relevant to the question. List them explicitly.
+### Step 2 — Search the wiki
+Call `search_wiki` with key terms from the question. Identify every page relevant to the question. List them explicitly.
 
 ### Step 3 — Read relevant pages
 Read every page identified. Follow links one level deep if relevant cross-references are found.
@@ -368,27 +368,7 @@ you want to process but have not gotten to yet.
 
 ## 10. `wiki/index.md` Protocol
 
-The master catalog. Every wiki page appears here exactly once, under the correct section.
-
-**Entry format**:
-```markdown
-- [Page Title](relative/path/to/page.md) — One-sentence description. *(updated: YYYY-MM-DD)*
-```
-
-**Section headers** (in this order):
-```markdown
-## Sources
-## Entities
-## Concepts
-## Synthesis
-```
-
-**Rules**:
-- Entries within each section are sorted **alphabetically by display title**.
-- Insert new entries in alphabetical order — do not append to the end.
-- Update the `_Last updated: YYYY-MM-DD_` line at the top on every modification.
-- The files `wiki/overview.md`, `wiki/log.md`, `wiki/index.md`, and
-  `wiki/overview.md`, `wiki/log.md`, and `wiki/index.md` are **not** listed in the index (they are operational files, not knowledge pages).
+The master catalog. It is **auto-generated** — every call to `create_page` or `write_file` rebuilds it automatically. Do not read or edit it directly.
 
 ---
 
@@ -404,7 +384,7 @@ the **top** (newest-first ordering).
 - **Operation**: ingest
 - **Target**: [raw/some-article-slug.txt](../raw/some-article-slug.txt)
 - **Pages created**: [Some Article Title](sources/some-article-slug.md), [Jane Smith](entities/jane-smith.md)
-- **Pages updated**: [Index](index.md), [Overview](overview.md)
+- **Pages updated**: [Overview](overview.md)
 ```
 
 Rules:
@@ -467,7 +447,7 @@ Do not modify any file until the user gives an explicit instruction.
 - Do not modify, move, or delete anything in `raw/` — it is immutable
 - Do not move or delete files from `raw/inbox/` — articles stay there permanently; the user archives manually
 - Do not modify `AGENT.md` unless the user explicitly asks you to update the schema
-- Do not edit `wiki/index.md` manually — always use `rebuild_index`
+- Do not read or edit `wiki/index.md` — it is auto-generated on every page write
 - Do not write wiki page frontmatter manually — always use `create_page` for new pages
 - Do not write internal wiki links manually — write bare text, cross-links are added automatically
 
@@ -478,6 +458,5 @@ Do not modify any file until the user gives an explicit instruction.
 - Do not use `[[wikilink]]` syntax — use standard relative markdown links
 - Do not write workflow annotations like "(new)" or "(update)" in page content — these are planning notes only
 - Do not link to a page without first confirming the linked file exists and is about the correct subject
-- Do not break alphabetical ordering in `wiki/index.md` — use rebuild_index instead of editing manually
 - Do not modify existing `wiki/log.md` entries — only prepend new ones at the top
 - Do not save important information only in chat — write it to a wiki page so it persists
