@@ -705,7 +705,13 @@ def _autolink(args: dict) -> str:
                 any_replaced = True
             new_segments.append(new_seg)
         if any_replaced:
-            segments = new_segments
+            # Reassemble and re-split so newly-inserted links are treated as
+            # protected link tokens — not bare text — in subsequent passes.
+            assembled = new_segments[0]
+            for lnk, seg in zip(links, new_segments[1:]):
+                assembled += lnk + seg
+            segments = _LINK_RE.split(assembled)
+            links    = _LINK_RE.findall(assembled)
             linked += 1
 
     # Reassemble: interleave segments and preserved links
