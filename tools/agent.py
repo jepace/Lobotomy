@@ -1217,7 +1217,7 @@ TOOL_DEFS = [
                 "properties": {
                     "query": {
                         "type":        "string",
-                        "description": "One or more keywords to search for (space-separated, OR logic)",
+                        "description": "One or more keywords to search for (space-separated, AND logic — all keywords must appear in the page).",
                     },
                 },
                 "required": ["query"],
