@@ -23,7 +23,7 @@ Three layers:
 |-------|----------|---------------|
 | Raw sources | `raw/` | You (the human) — immutable |
 | Wiki pages | `wiki/` | The LLM |
-| This schema | `AGENT.md` | Defined once, evolved carefully |
+| This schema | `LOBOTOMY.md` | Defined once, evolved carefully |
 
 Key invariants:
 - **Raw sources are immutable.** The LLM reads `raw/` but never modifies or deletes anything there.
@@ -176,7 +176,6 @@ sections sequentially before proceeding.
 Call `create_page` with:
 - `path`: `wiki/sources/{source-slug}.md` — always a wiki/ path, never a URL
 - `type`: `source`
-- `url`: the original article URL if available (this goes into frontmatter metadata, not the path)
 - `body`: the content below (do not write frontmatter manually — `create_page` fills in dates automatically)
 
 Required sections:
@@ -436,7 +435,7 @@ When a new source contradicts an existing wiki page:
 
 If you are a fresh LLM session with no context beyond this file and the wiki directory:
 
-1. Read this file (`AGENT.md`) completely — you have done so
+1. Read this file (`LOBOTOMY.md`) completely — you have done so
 2. Read `wiki/index.md` — understand what knowledge currently exists
 3. Read the top 10 entries of `wiki/log.md` — understand recent operations
 4. Read `wiki/overview.md` — understand the current synthesis
@@ -451,7 +450,7 @@ Do not modify any file until the user gives an explicit instruction.
 - Do not call `list_dir` to verify a file exists before reading it — call `read_file` directly
 - Do not modify, move, or delete anything in `raw/` — it is immutable
 - Do not move or delete files from `raw/inbox/` — articles stay there permanently; the user archives manually
-- Do not modify `AGENT.md` unless the user explicitly asks you to update the schema
+- Do not modify `LOBOTOMY.md` unless the user explicitly asks you to update the schema
 - Do not read or edit `wiki/index.md` — it is auto-generated on every page write
 - Do not write wiki page frontmatter manually — always use `create_page` for new pages
 - Do not write internal wiki links manually — write bare text, cross-links are added automatically
