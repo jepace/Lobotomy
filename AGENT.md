@@ -188,8 +188,9 @@ Required sections:
 - **Wiki Context**: how it relates to, extends, supports, or contradicts existing pages
 
 ### Step 4 — Identify affected existing pages
-Call `search_wiki` for each significant entity and concept found in the source. This is faster
-than reading `wiki/index.md` and then reading individual pages. List every existing page that:
+Call `search_wiki` for each significant entity and concept found in the source. Search uses AND
+logic — all keywords must appear — so search the full name ("Colorado River Compact") rather than
+splitting into individual words. List every existing page that:
 - Is mentioned in the new source
 - Overlaps with entities or concepts in the source
 - Could receive new citations or updated claims
