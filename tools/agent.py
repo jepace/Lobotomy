@@ -1845,6 +1845,8 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                                      "name": rname, "content": "Skipped — done() called in same batch."})
                 if summary:
                     yield json.dumps({"type": "text", "content": summary}) + "\n"
+                # Stamp ingested flag into messages so on_done() callbacks can check it.
+                messages.append({"role": "system", "content": f"__ingested__:{ingested_flag}"})
                 yield json.dumps({"type": "done", "ingested": ingested_flag == "1"}) + "\n"
                 return
 

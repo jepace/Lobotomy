@@ -950,6 +950,8 @@ def chat_send():
             )
             if ingested:
                 _mark_inbox_wikified(inbox_file)
+            else:
+                log.warning("on_done: inbox_file=%s but no __ingested__:1 in messages — not marking wikified", inbox_file)
 
     log.info("Chat send: model=%s history_len=%d", model, len(history))
     job_id = job_queue.submit(client, model, history, sys_prompt, on_done=on_done)
