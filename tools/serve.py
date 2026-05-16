@@ -79,7 +79,7 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, system_prompt,
                    _fix_wiki_links, _rebuild_index, _validate_ingest,
-                   heal_index_if_stale)
+                   heal_index_if_stale, _atomic_write)
 
 BLOG_DIR = REPO_ROOT / "blog"
 from job_queue import JobQueue
@@ -958,18 +958,19 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
     raw_source: into its frontmatter so wiki_page() can link to it directly.
 
     Matching strategy (in order):
-      1. wiki/sources/ page whose url: frontmatter matches inbox_url
-      2. wiki/sources/ page modified most recently (within the last 5 min)
+      1. wiki/sources/ page whose raw_source: already matches — already done, return early
+      2. wiki/sources/ page whose url: frontmatter matches inbox_url (exact)
+      3. wiki/sources/ page whose slug matches the raw filename stem exactly
+         e.g. raw/inbox/wirecutter-2026-shredders.html → sources/wirecutter-2026-shredders.md
     """
     import json as _json
-    import time
 
     wiki_sources = WIKI_DIR / "sources"
     if not wiki_sources.is_dir():
         return
 
     raw_rel = str(raw_path.relative_to(REPO_ROOT))
-    now = time.time()
+    raw_stem = raw_path.stem  # filename without extension
     best = None
 
     for wf in wiki_sources.glob("*.md"):
@@ -987,10 +988,9 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
         if inbox_url and wmeta.get("url", "").strip() == inbox_url:
             best = wf
             break
-        age = now - wf.stat().st_mtime
-        if age < 300:   # modified in last 5 minutes
-            if best is None or wf.stat().st_mtime > best.stat().st_mtime:
-                best = wf
+        if wf.stem == raw_stem:
+            best = wf
+            break
 
     if best is None:
         log.warning("_link_raw_source_to_wiki: no wiki/sources/ page found for %s", raw_path.name)
@@ -1010,7 +1010,7 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
                 sv = str(v)
                 fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
         fm_lines.append("---")
-        best.write_text("\n".join(fm_lines) + "\n" + wbody, encoding="utf-8")
+        _atomic_write(best, "\n".join(fm_lines) + "\n" + wbody)
         log.info("Stamped raw_source=%s into %s", raw_rel, best.name)
     except Exception as e:
         log.error("_link_raw_source_to_wiki failed for %s: %s", raw_path.name, e)
