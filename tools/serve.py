@@ -952,7 +952,7 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
       1. wiki/sources/ page whose raw_source: already matches — already done, return early
       2. wiki/sources/ page whose url: frontmatter matches inbox_url (exact)
       3. wiki/sources/ page whose slug matches the raw filename stem exactly
-         e.g. raw/inbox/wirecutter-2026-shredders.html → sources/wirecutter-2026-shredders.md
+         e.g. raw/wirecutter-2026-shredders.html → sources/wirecutter-2026-shredders.md
     """
     import json as _json
 
@@ -1028,57 +1028,41 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
         log.error("_link_raw_source_to_wiki failed for %s: %s", raw_path.name, e)
 
 
-def _rewrite_log_target(filename: str) -> None:
-    """After archival, update wiki/log.md: replace raw/inbox/{filename} with raw/sources/{filename}."""
-    log_path = WIKI_DIR / "log.md"
-    if not log_path.exists():
-        return
-    old = f"raw/inbox/{filename}"
-    new = f"raw/sources/{filename}"
-    text = log_path.read_text(encoding="utf-8")
-    if old not in text:
-        return
-    log_path.write_text(text.replace(old, new), encoding="utf-8")
-    log.info("Updated log.md: %s -> %s", old, new)
-
-
-def _update_raw_source_path(filename: str, new_rel: str) -> None:
-    """Update raw_source frontmatter in the wiki/sources/ page that references raw/inbox/{filename}."""
+def _rebuild_raw_index() -> None:
+    """Regenerate raw/index.md listing all raw files with their state."""
     import json as _json
-    old_rel = f"raw/inbox/{filename}"
-    wiki_sources = WIKI_DIR / "sources"
-    if not wiki_sources.is_dir():
-        return
-    for wf in wiki_sources.glob("*.md"):
+    today = datetime.date.today().isoformat()
+    rows = []
+    for f in sorted(RAW_DIR.iterdir()):
+        if not f.is_file() or f.name.startswith(".") or f.name == "index.md":
+            continue
         try:
-            wtext = wf.read_text(encoding="utf-8")
-            wmeta, wbody = _parse_frontmatter(wtext)
-            if wmeta.get("raw_source") != old_rel:
-                continue
-            wmeta["raw_source"] = new_rel
-            fm_lines = ["---"]
-            for k, v in wmeta.items():
-                if isinstance(v, list):
-                    fm_lines.append(f"{k}: {_json.dumps(v)}")
-                elif isinstance(v, bool):
-                    fm_lines.append(f"{k}: {'true' if v else 'false'}")
-                else:
-                    sv = str(v)
-                    fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
-            fm_lines.append("---")
-            wf.write_text("\n".join(fm_lines) + "\n" + wbody, encoding="utf-8")
-            log.info("Updated raw_source in %s: %s -> %s", wf.name, old_rel, new_rel)
-            return
-        except Exception as e:
-            log.warning("_update_raw_source_path failed for %s: %s", wf.name, e)
+            fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            fm = {}
+        title = fm.get("title", f.stem)
+        added = str(fm.get("added") or fm.get("saved") or "")
+        wikified = fm.get("wikified", False)
+        wiki_page = fm.get("wiki_page", "")
+        wiki_cell = f"[source](../wiki/{wiki_page})" if wiki_page else ""
+        wik_cell = "✓" if wikified else ""
+        rows.append(f"| [{f.name}]({f.name}) | {title} | {added} | {wik_cell} | {wiki_cell} |")
+    header = (
+        f"---\ntitle: \"Raw Sources\"\nupdated: {today}\n---\n\n"
+        "# Raw Sources\n\n"
+        "| File | Title | Added | Wikified | Wiki Page |\n"
+        "|------|-------|-------|----------|-----------|\n"
+    )
+    content = header + "\n".join(rows) + "\n"
+    _atomic_write(RAW_DIR / "index.md", content)
 
 
 def _mark_inbox_wikified(filename: str) -> None:
-    """Mark an inbox file as wikified in its frontmatter. Safe to call from any thread."""
+    """Mark a raw file as wikified in its frontmatter. Safe to call from any thread."""
     import json as _json
-    p = RAW_DIR / "inbox" / filename
+    p = RAW_DIR / filename
     try:
-        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+        p.resolve().relative_to(RAW_DIR.resolve())
     except ValueError:
         log.warning("_mark_inbox_wikified: invalid path %s", filename)
         return
@@ -1091,6 +1075,7 @@ def _mark_inbox_wikified(filename: str) -> None:
         if fm.get("wikified"):
             return  # already marked
         fm["wikified"] = True
+        fm["wikified_date"] = datetime.date.today().isoformat()
         fm_lines = ["---"]
         for k, v in fm.items():
             if isinstance(v, list):
@@ -1103,15 +1088,8 @@ def _mark_inbox_wikified(filename: str) -> None:
         fm_lines.append("---")
         p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
         log.info("Marked wikified: %s", filename)
-        # Move to raw/sources/ immediately so the log link is correct
-        dest_dir = RAW_DIR / "sources"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / p.name
-        if not dest.exists():
-            p.rename(dest)
-            log.info("Archived %s -> raw/sources/%s", filename, p.name)
-        _rewrite_log_target(filename)
-        _link_raw_source_to_wiki(dest, fm.get("url", "").strip())
+        _link_raw_source_to_wiki(p, fm.get("url", "").strip())
+        _rebuild_raw_index()
         result = _fix_wiki_links({})
         log.info("fix_wiki_links: %s", result)
         result = _rebuild_index({})
@@ -1708,11 +1686,12 @@ def api_push():
         return {"error": "title is required when url is not provided",
                 "code": "MISSING_FIELDS"}, 400
 
-    # Deduplication: if the same URL already exists in inbox, return it
-    inbox_dir = RAW_DIR / "inbox"
-    inbox_dir.mkdir(parents=True, exist_ok=True)
+    # Deduplication: if the same URL already exists in raw/, return it
+    inbox_dir = RAW_DIR
     if url:
         for existing in inbox_dir.glob("*.md"):
+            if existing.name == "index.md":
+                continue
             try:
                 meta, _ = _parse_frontmatter(
                     existing.read_text(encoding="utf-8", errors="replace"))
@@ -1763,6 +1742,7 @@ def api_push():
         fm.append(f"url: {url}")
     fm.append(f"saved: {today}")
     fm.append(f"added: {now}")
+    fm.append(f"wikified: false")
     fm.append(f"source: {source}")
     if author:
         fm.append(f"author: {author}")
@@ -1965,11 +1945,12 @@ def api_inbound_email():
         content = text_body
 
     # Deduplication on URL
-    inbox_dir = RAW_DIR / "inbox"
-    inbox_dir.mkdir(parents=True, exist_ok=True)
+    inbox_dir = RAW_DIR
     if url:
-        log.debug("Checking for duplicate URL in inbox")
+        log.debug("Checking for duplicate URL in raw/")
         for existing in inbox_dir.glob("*.md"):
+            if existing.name == "index.md":
+                continue
             try:
                 meta, _ = _parse_frontmatter(
                     existing.read_text(encoding="utf-8", errors="replace"))
@@ -1994,6 +1975,8 @@ def api_inbound_email():
     if url:
         fm.append(f"url: {url}")
     fm.append(f"saved: {today}")
+    fm.append(f"added: {today}")
+    fm.append(f"wikified: false")
     fm.append(f"source: email")
     if from_addr:
         fm.append(f"author: {from_addr}")
@@ -2029,10 +2012,11 @@ def api_inbox_list():
     source = request.args.get("source", "").strip()
 
     items = []
-    inbox_dir = RAW_DIR / "inbox"
+    inbox_dir = RAW_DIR
     if inbox_dir.is_dir():
-        candidates = sorted(inbox_dir.glob("*.md"),
-                            key=lambda f: -f.stat().st_mtime)
+        candidates = sorted(
+            [f for f in inbox_dir.glob("*.md") if f.name != "index.md"],
+            key=lambda f: -f.stat().st_mtime)
         for f in candidates:
             try:
                 meta, _ = _parse_frontmatter(
@@ -2067,21 +2051,20 @@ def api_inbox_delete(filename):
 
     Auth: Authorization: Bearer <push_key>
 
-    Only items still in raw/inbox/ can be deleted this way. Items that have
-    already been archived or ingested into the wiki are not affected.
+    Only non-archived items in raw/ can be deleted this way.
     """
     ok, err = _api_auth()
     if not ok:
         return err
 
-    p = RAW_DIR / "inbox" / filename
+    p = RAW_DIR / filename
     try:
-        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+        p.resolve().relative_to(RAW_DIR.resolve())
     except ValueError:
         return {"error": "Invalid filename", "code": "INVALID_PATH"}, 400
 
     if not p.exists():
-        return {"error": "Item not found in inbox", "code": "NOT_FOUND"}, 404
+        return {"error": "Item not found", "code": "NOT_FOUND"}, 404
 
     p.unlink()
     return {"ok": True, "deleted": filename}
@@ -2104,16 +2087,15 @@ def inbox_clip():
     display_title = title or url
     slug_src = title if title else url.split("//")[-1].split("?")[0]
     slug = re.sub(r"[^a-z0-9]+", "-", slug_src.lower())[:60].strip("-") or "clipping"
-    (RAW_DIR / "inbox").mkdir(parents=True, exist_ok=True)
 
     def _unique(base_name):
-        dest = RAW_DIR / "inbox" / base_name
+        dest = RAW_DIR / base_name
         if not dest.exists():
             return base_name, dest
         stem, ext = base_name.rsplit(".", 1)
         import time as _t
         name = f"{stem}-{int(_t.time())}.{ext}"
-        return name, RAW_DIR / "inbox" / name
+        return name, RAW_DIR / name
 
     # Try to fetch full article content
     text, fetch_err = _clip_fetch(url)
@@ -2123,7 +2105,7 @@ def inbox_clip():
         base_name, dest = _unique(f"{slug}.md")
         today = datetime.date.today().isoformat()
         md_content = (
-            f'---\ntitle: "{display_title}"\nurl: {url}\nsaved: {today}\n---\n\n'
+            f'---\ntitle: "{display_title}"\nurl: {url}\nsaved: {today}\nadded: {today}\nwikified: false\n---\n\n'
             f'{text}'
         )
         dest.write_text(md_content, encoding="utf-8")
@@ -2166,9 +2148,9 @@ setTimeout(()=>window.close(),2000)
 @app.route("/inbox/read/<path:filename>")
 @require_login
 def inbox_read(filename):
-    p = RAW_DIR / "inbox" / filename
+    p = RAW_DIR / filename
     try:
-        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+        p.resolve().relative_to(RAW_DIR.resolve())
     except ValueError:
         abort(404)
     if not p.exists():
@@ -2196,7 +2178,7 @@ def inbox_add():
     if not name:
         slug = re.sub(r"[^a-z0-9]+", "-", content[:60].lower()).strip("-")
         name = f"{slug}.txt"
-    dest = RAW_DIR / "inbox" / name
+    dest = RAW_DIR / name
     dest.write_text(content, encoding="utf-8")
     return {"ok": True, "filename": name}
 
@@ -2208,9 +2190,9 @@ def inbox_delete():
     name = (data.get("filename") or "").strip()
     if not name:
         return {"error": "No filename"}, 400
-    p = RAW_DIR / "inbox" / name
+    p = RAW_DIR / name
     try:
-        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+        p.resolve().relative_to(RAW_DIR.resolve())
     except ValueError:
         return {"error": "Invalid path"}, 400
     if p.exists():
@@ -2221,9 +2203,9 @@ def inbox_delete():
 @app.route("/inbox/view/<path:filename>")
 @require_login
 def inbox_view(filename):
-    p = RAW_DIR / "inbox" / filename
+    p = RAW_DIR / filename
     try:
-        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+        p.resolve().relative_to(RAW_DIR.resolve())
     except ValueError:
         abort(404)
     if not p.exists():
@@ -2265,14 +2247,11 @@ def inbox_archive():
     name = (data.get("filename") or "").strip()
     if not name:
         return {"error": "No filename"}, 400
-    src = RAW_DIR / "inbox" / name
+    src = RAW_DIR / name
     try:
-        src.resolve().relative_to((RAW_DIR / "inbox").resolve())
+        src.resolve().relative_to(RAW_DIR.resolve())
     except ValueError:
         return {"error": "Invalid path"}, 400
-    # Check raw/sources/ too — wikified files live there
-    if not src.exists():
-        src = RAW_DIR / "sources" / name
     if not src.exists():
         return {"error": "File not found"}, 404
     try:
@@ -2291,6 +2270,7 @@ def inbox_archive():
                 fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
         fm_lines.append("---")
         src.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
+        _rebuild_raw_index()
     except Exception as e:
         log.error("inbox_archive failed for %s: %s", name, e)
         return {"error": str(e)}, 500
@@ -2304,26 +2284,24 @@ def inbox_mark_wikified():
     name = (data.get("filename") or "").strip()
     if not name:
         return {"error": "No filename"}, 400
-    # Accept file from either inbox or sources (it may have been moved already)
-    p_inbox   = RAW_DIR / "inbox"   / name
-    p_sources = RAW_DIR / "sources" / name
-    if p_inbox.exists():
-        try:
-            p_inbox.resolve().relative_to((RAW_DIR / "inbox").resolve())
-        except ValueError:
-            return {"error": "Invalid path"}, 400
-        _mark_inbox_wikified(name)
-    elif p_sources.exists():
-        try:
-            p_sources.resolve().relative_to((RAW_DIR / "sources").resolve())
-        except ValueError:
-            return {"error": "Invalid path"}, 400
-        # File already moved — just find the wiki_path
-    else:
+    p = RAW_DIR / name
+    try:
+        p.resolve().relative_to(RAW_DIR.resolve())
+    except ValueError:
+        return {"error": "Invalid path"}, 400
+    if not p.exists():
         return {"error": "File not found"}, 404
+    _mark_inbox_wikified(name)
     # Find the matching wiki/sources/ page to return a direct link
+    # First check if wiki_page was stamped directly into the raw file's frontmatter
     wiki_path = ""
-    for raw_rel in (f"raw/inbox/{name}", f"raw/sources/{name}"):
+    try:
+        fm, _ = _parse_frontmatter(p.read_text(encoding="utf-8", errors="replace"))
+        wiki_path = fm.get("wiki_page", "")
+    except Exception:
+        pass
+    if not wiki_path:
+        raw_rel = f"raw/{name}"
         for wf in (WIKI_DIR / "sources").glob("*.md") if (WIKI_DIR / "sources").is_dir() else []:
             try:
                 wm, _ = _parse_frontmatter(wf.read_text(encoding="utf-8", errors="replace"))
@@ -2332,26 +2310,26 @@ def inbox_mark_wikified():
                     break
             except Exception:
                 pass
-        if wiki_path:
-            break
     return {"ok": True, "wiki_path": wiki_path}
 
 @app.route("/wiki/debug-sources")
 @require_login
 def debug_sources():
-    """Debug endpoint: shows raw/sources/ state and how wiki/sources/ pages would match."""
-    raw_sources_dir = RAW_DIR / "sources"
+    """Debug endpoint: shows raw/ state and how wiki/sources/ pages would match."""
+    raw_sources_dir = RAW_DIR
     wiki_sources_dir = WIKI_DIR / "sources"
 
     raw_files = []
     if raw_sources_dir.is_dir():
         for f in sorted(raw_sources_dir.iterdir()):
-            if f.is_file():
+            if f.is_file() and not f.name.startswith(".") and f.name != "index.md":
                 try:
                     meta, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
-                    raw_files.append({"name": f.name, "stem": f.stem, "url": meta.get("url", "")})
+                    raw_files.append({"name": f.name, "stem": f.stem, "url": meta.get("url", ""),
+                                      "wikified": bool(meta.get("wikified"))})
                 except Exception as e:
-                    raw_files.append({"name": f.name, "stem": f.stem, "url": f"[error: {e}]"})
+                    raw_files.append({"name": f.name, "stem": f.stem, "url": f"[error: {e}]",
+                                      "wikified": False})
 
     wiki_pages = []
     if wiki_sources_dir.is_dir():
@@ -2374,20 +2352,20 @@ def debug_sources():
                 wiki_pages.append({"name": f.name, "url": "", "matched_raw": f"[error: {e}]"})
 
     return {
-        "raw_sources_dir_exists": raw_sources_dir.is_dir(),
-        "raw_sources_dir_path": str(raw_sources_dir),
+        "raw_dir_exists": raw_sources_dir.is_dir(),
+        "raw_dir_path": str(raw_sources_dir),
         "raw_files": raw_files,
         "wiki_sources_dir_exists": wiki_sources_dir.is_dir(),
         "wiki_pages": wiki_pages,
     }
 
 
-@app.route("/raw/sources/<path:filename>")
+@app.route("/raw/<path:filename>")
 @require_login
 def raw_source_file(filename):
-    p = RAW_DIR / "sources" / filename
+    p = RAW_DIR / filename
     try:
-        p.resolve().relative_to((RAW_DIR / "sources").resolve())
+        p.resolve().relative_to(RAW_DIR.resolve())
     except ValueError:
         abort(404)
     if not p.exists():
@@ -2403,13 +2381,11 @@ def inbox_edit():
     content = (data.get("content")  or "").strip()
     if not name:
         return {"error": "No filename"}, 400
-    p = RAW_DIR / "inbox" / name
+    p = RAW_DIR / name
     try:
-        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+        p.resolve().relative_to(RAW_DIR.resolve())
     except ValueError:
         return {"error": "Invalid path"}, 400
-    if not p.exists():
-        p = RAW_DIR / "sources" / name
     if not p.exists():
         return {"error": "File not found"}, 404
     if p.suffix == ".md":
@@ -2656,9 +2632,37 @@ _threading.Thread(target=_daily_email_loop, daemon=True, name="daily-email").sta
 job_queue = JobQueue(WIKI_DIR / ".jobs")
 
 
+def _migrate_raw_subdirs() -> None:
+    """One-time migration: move files from raw/inbox/ and raw/sources/ into raw/."""
+    for subdir_name in ("inbox", "sources"):
+        subdir = RAW_DIR / subdir_name
+        if not subdir.is_dir():
+            continue
+        moved = 0
+        for f in list(subdir.iterdir()):
+            if not f.is_file():
+                continue
+            dest = RAW_DIR / f.name
+            if dest.exists():
+                import time as _t
+                dest = RAW_DIR / f"{f.stem}-migrated-{int(_t.time())}{f.suffix}"
+            f.rename(dest)
+            moved += 1
+            log.info("Migration: moved %s/%s -> raw/%s", subdir_name, f.name, dest.name)
+        if moved > 0:
+            log.info("Migration: moved %d files from raw/%s/ to raw/", moved, subdir_name)
+        try:
+            subdir.rmdir()
+            log.info("Migration: removed empty raw/%s/", subdir_name)
+        except OSError:
+            log.warning("Migration: raw/%s/ not empty after migration, leaving it", subdir_name)
+
+
 if __name__ == "__main__":
     host = cfg_get("server", "host", "127.0.0.1")
     port = cfg_int("server", "port", default=8080)
+
+    _migrate_raw_subdirs()
 
     issues = validate_config()
     for level, msg in issues:
