@@ -180,7 +180,8 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
     try:
         p.resolve().relative_to((RAW_DIR / "inbox").resolve())
         stripped = text.strip()
-        global _last_inbox_url
+        global _last_inbox_url, _last_inbox_path
+        _last_inbox_path = str(p.resolve().relative_to(REPO_ROOT.resolve()))
         if stripped.startswith("http") and "\n" not in stripped:
             _last_inbox_url = stripped
             with _fetch_cache_lock:
@@ -309,7 +310,30 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
     fm_text = fm_match.group(1)
 
     type_m = re.search(r"^type:\s*(\S+)", fm_text, re.MULTILINE)
-    if not type_m or type_m.group(1) not in _SOURCES_SECTION_TYPES:
+    if not type_m:
+        return content
+    pg_type = type_m.group(1)
+
+    # Source pages get a simple ## Sources with URL and raw file link
+    if pg_type == "source":
+        body = content[len(fm_text):]
+        body = re.sub(r"\n*^## Sources\b.*", "", body, flags=re.DOTALL | re.MULTILINE).rstrip()
+        url_m = re.search(r'^url:\s*["\']?([^"\'\n]+)["\']?', fm_text, re.MULTILINE)
+        raw_m = re.search(r'^raw_source:\s*["\']?([^"\'\n]+)["\']?', fm_text, re.MULTILINE)
+        lines = []
+        if url_m or raw_m:
+            lines.append("\n\n## Sources\n")
+            if url_m:
+                u = url_m.group(1).strip()
+                lines.append(f"- **URL**: [{u}]({u})")
+            if raw_m:
+                raw_rel = raw_m.group(1).strip()
+                up_count = len(page_path.parent.relative_to(WIKI_DIR).parts)
+                prefix = "../" * up_count
+                lines.append(f"- **Raw**: [{raw_rel}]({prefix}{raw_rel})")
+        return fm_text + body + ("\n".join(lines) + "\n" if lines else "\n")
+
+    if pg_type not in _SOURCES_SECTION_TYPES:
         return content
 
     src_m = re.search(r"^sources:\s*\[([^\]]*)\]", fm_text, re.MULTILINE)
@@ -492,6 +516,7 @@ def _list_dir(directory: str) -> str:
 _fetch_cache: dict[str, str] = {}
 _fetch_cache_lock = threading.Lock()
 _last_inbox_url: str = ""
+_last_inbox_path: str = ""
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -1044,8 +1069,9 @@ def _create_page(args: dict) -> str:
 
     today = datetime.date.today().isoformat()
     existed = p.exists()
+    raw_source = ""
     if existed:
-        # Preserve original created date and url
+        # Preserve original created date, url, and raw_source
         old = p.read_text(encoding="utf-8", errors="replace")
         m = re.search(r"created:\s*(\d{4}-\d{2}-\d{2})", old)
         created = m.group(1) if m else today
@@ -1053,15 +1079,22 @@ def _create_page(args: dict) -> str:
             mu = re.search(r'^url:\s*["\']?([^"\'\n]+)["\']?', old, re.MULTILINE)
             if mu:
                 url = mu.group(1).strip()
+        mr = re.search(r'^raw_source:\s*["\']?([^"\'\n]+)["\']?', old, re.MULTILINE)
+        if mr:
+            raw_source = mr.group(1).strip()
     else:
         created = today
+
+    if pg_type == "source" and not raw_source:
+        raw_source = _last_inbox_path
 
     tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]))
     src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]))
     url_line = f'url: "{url}"\n' if url else ""
+    raw_source_line = f'raw_source: "{raw_source}"\n' if raw_source else ""
     frontmatter = (
         f'---\ntitle: "{title}"\ntype: {pg_type}\ntags: [{tag_str}]\n'
-        f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n{url_line}---\n\n'
+        f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n{url_line}{raw_source_line}---\n\n'
     )
     content = frontmatter + _strip_broken_wiki_links(body.lstrip("\n"), p)
     content = _inject_sources_section(content, p)

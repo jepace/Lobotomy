@@ -80,6 +80,7 @@ url: "https://original-article-url"   # source pages only; omit on entity/concep
 | `updated` | YYYY-MM-DD | Date of most recent edit. Update on every write. |
 | `sources` | list of strings | Relative paths from `wiki/` to supporting source pages |
 | `url` | string (quoted) | Original article URL. Source pages only. Set automatically — do not supply. |
+| `raw_source` | string (quoted) | Repo-relative path to the raw inbox file. Source pages only. Set automatically — do not supply. |
 
 ### Standard heading structures per page type
 
