@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Lobotomy is a personal knowledge-base server where LLMs synthesize knowledge at ingest time and write it permanently into a wiki — not retrieved at query time. Three layers: immutable raw sources (`raw/`), LLM-generated wiki pages (`wiki/`), and an operating schema (`AGENT.md`).
+Lobotomy is a personal knowledge-base server where LLMs synthesize knowledge at ingest time and write it permanently into a wiki — not retrieved at query time. Three layers: immutable raw sources (`raw/`), LLM-generated wiki pages (`wiki/`), and an operating schema (`LOBOTOMY.md`).
 
 ## Running the Server
 
@@ -56,9 +56,9 @@ The critical invariant: **never match inside existing markdown links**. Group 1 
 4. `_autolink_sources_if_entity` → if the written page is an entity, also re-autolinks all source pages that mention it
 5. `done()` → server runs lint checks; results visible at `/wiki/lint`
 
-### `system_prompt()` and `AGENT.md`
+### `system_prompt()` and `LOBOTOMY.md`
 
-`agent.py:system_prompt()` reads `AGENT.md` as the LLM's operating schema and appends a tool quick-reference table. The LLM operating instructions (ingest workflow, query workflow, page format, naming conventions, etc.) all live in `AGENT.md`, not here.
+`agent.py:system_prompt()` reads `LOBOTOMY.md` as the LLM's operating schema and appends a tool quick-reference table. The LLM operating instructions (ingest workflow, query workflow, page format, naming conventions, etc.) all live in `LOBOTOMY.md`, not here.
 
 ## Key Conventions
 

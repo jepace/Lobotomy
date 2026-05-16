@@ -1328,7 +1328,7 @@ TOOL_DEFS = [
 # ---------------------------------------------------------------------------
 
 def system_prompt() -> str:
-    schema_path = REPO_ROOT / "AGENT.md"
+    schema_path = REPO_ROOT / "LOBOTOMY.md"
     if not schema_path.exists():
         schema_path = REPO_ROOT / "CLAUDE.md"  # fallback during transition
     base = schema_path.read_text(encoding="utf-8")
