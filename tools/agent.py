@@ -182,6 +182,7 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
         stripped = text.strip()
         global _last_inbox_url, _last_inbox_path
         _last_inbox_path = str(p.resolve().relative_to(REPO_ROOT.resolve()))
+        _last_inbox_url = ""  # always reset so stale URL from prior ingest isn't inherited
         if stripped.startswith("http") and "\n" not in stripped:
             _last_inbox_url = stripped
             with _fetch_cache_lock:

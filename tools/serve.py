@@ -928,6 +928,7 @@ def chat_send():
             import agent as _agent
             stripped = file_content.strip()
             _agent._last_inbox_path = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
+            _agent._last_inbox_url = ""  # always reset so stale URL from prior ingest isn't inherited
             if stripped.startswith("http") and "\n" not in stripped:
                 _agent._last_inbox_url = stripped
             else:
