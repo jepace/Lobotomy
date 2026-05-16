@@ -78,7 +78,8 @@ from config import cfg_get, cfg_bool, cfg_int, validate_config
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, system_prompt,
-                   _fix_wiki_links, _rebuild_index, _validate_ingest)
+                   _fix_wiki_links, _rebuild_index, _validate_ingest,
+                   heal_index_if_stale)
 
 BLOG_DIR = REPO_ROOT / "blog"
 from job_queue import JobQueue
@@ -2648,6 +2649,8 @@ if __name__ == "__main__":
     if errors:
         print("\nFix these errors and restart.")
         sys.exit(1)
+
+    heal_index_if_stale()
 
     if not user_exists():
         print(f"[INFO] No account found. Visit http://{host}:{port}/setup to create one.")

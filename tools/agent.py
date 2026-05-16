@@ -4,7 +4,9 @@
 import collections
 import json
 import logging
+import os
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -404,7 +406,7 @@ def _backfill_entity_sources(entity_path: str) -> None:
     new_fm = re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{src_str}]", fm_text, flags=re.MULTILINE)
     updated = new_fm + content[len(fm_text):]
     updated = _inject_sources_section(updated, p)
-    p.write_text(updated, encoding="utf-8")
+    _atomic_write(p, updated)
 
 
 def _autolink_sources_if_entity(path: str) -> None:
@@ -420,6 +422,22 @@ def _autolink_sources_if_entity(path: str) -> None:
         _backfill_entity_sources(path)
 
 
+def _atomic_write(p: Path, content: str) -> None:
+    """Write content to p atomically: write to a sibling .tmp file, then rename."""
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_path, p)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def _write_file(path: str, content: str) -> str:
     p = REPO_ROOT / path
     try:
@@ -433,10 +451,9 @@ def _write_file(path: str, content: str) -> str:
         return "Error: write_file refused on wiki/log.md — use prepend_log to add entries."
     if p.resolve() == (WIKI_DIR / "index.md").resolve():
         return "Error: write_file refused on wiki/index.md — it is auto-generated; use rebuild_index if needed."
-    p.parent.mkdir(parents=True, exist_ok=True)
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
-    p.write_text(content, encoding="utf-8")
+    _atomic_write(p, content)
     _autolink({"path": path})
     _autolink_sources_if_entity(path)
     _rebuild_index({})
@@ -501,7 +518,7 @@ def _backfill_inbox_from_fetch(url: str, content: str) -> None:
             new_text = "\n".join(fm_lines) + "\n\n" + content
         else:
             new_text = content
-        f.write_text(new_text, encoding="utf-8")
+        _atomic_write(f, new_text)
         log.debug("Backfilled fetched content into %s", f.name)
         return
 
@@ -607,7 +624,7 @@ def _prepend_log(entry: str) -> str:
     fm_open = text.find("---")
     fm_close = text.find("\n---", fm_open + 3)
     if fm_close == -1:
-        log_path.write_text(text.rstrip() + "\n\n" + entry.strip() + "\n", encoding="utf-8")
+        _atomic_write(log_path, text.rstrip() + "\n\n" + entry.strip() + "\n")
         return "Log entry prepended to wiki/log.md (no frontmatter close found)"
 
     # Find the --- divider that separates the prose intro from the entries.
@@ -618,15 +635,13 @@ def _prepend_log(entry: str) -> str:
         insert_at = fm_close + 4  # character after the closing ---\n
         before = text[:insert_at]
         after  = text[insert_at:]
-        log_path.write_text(before + "\n" + entry.strip() + "\n\n" + after.lstrip("\n"),
-                            encoding="utf-8")
+        _atomic_write(log_path, before + "\n" + entry.strip() + "\n\n" + after.lstrip("\n"))
         return "Log entry prepended to wiki/log.md (inserted after frontmatter)"
 
     # Insert new entry immediately after the divider.
     before = text[:divider + 5]   # up to and including \n---\n
     after  = text[divider + 5:]   # existing entries
-    log_path.write_text(before + "\n" + entry.strip() + "\n\n" + after.lstrip("\n"),
-                        encoding="utf-8")
+    _atomic_write(log_path, before + "\n" + entry.strip() + "\n\n" + after.lstrip("\n"))
     return "Log entry prepended to wiki/log.md"
 
 
@@ -702,7 +717,7 @@ def _rebuild_index(args: dict) -> str:
     cut = existing.find("\n## ")
     prose = (existing[:cut].rstrip() if cut != -1 else existing.rstrip())
     prose = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose)
-    index_path.write_text(prose + "\n\n---\n\n" + "\n\n---\n\n".join(blocks) + "\n", encoding="utf-8")
+    _atomic_write(index_path, prose + "\n\n---\n\n" + "\n\n---\n\n".join(blocks) + "\n")
 
     # Also write per-subdirectory index files
     section_blocks = dict(zip([s for _, s in sections], blocks))
@@ -725,13 +740,33 @@ def _rebuild_index(args: dict) -> str:
         prose_sub = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose_sub)
         # Rewrite entries with relative paths (no subdir/ prefix needed from inside the subdir)
         block_local = section_blocks[subdir].replace(f"({subdir}/", "(")
-        sub_index.write_text(prose_sub + "\n\n---\n\n" + block_local + "\n", encoding="utf-8")
+        _atomic_write(sub_index, prose_sub + "\n\n---\n\n" + block_local + "\n")
 
     total = sum(
         sum(1 for f in (WIKI_DIR / s).glob("*.md") if f.name != "index.md")
         for _, s in sections if (WIKI_DIR / s).is_dir()
     )
     return f"Rebuilt wiki/index.md and subdirectory indexes — {total} pages across {len(sections)} sections."
+
+
+def heal_index_if_stale() -> None:
+    """Rebuild wiki/index.md if any wiki page is newer than it — call at startup."""
+    index_path = WIKI_DIR / "index.md"
+    index_mtime = index_path.stat().st_mtime if index_path.exists() else 0.0
+    stale = False
+    for subdir in ("sources", "entities", "concepts", "synthesis"):
+        d = WIKI_DIR / subdir
+        if not d.is_dir():
+            continue
+        for f in d.glob("*.md"):
+            if f.name != "index.md" and f.stat().st_mtime > index_mtime:
+                stale = True
+                break
+        if stale:
+            break
+    if stale:
+        log.info("wiki/index.md is stale — rebuilding on startup")
+        _rebuild_index({})
 
 
 def _title_alts(title: str) -> str:
@@ -843,7 +878,7 @@ def _autolink(args: dict) -> str:
 
     result = body
 
-    target_p.write_text(frontmatter + result, encoding="utf-8")
+    _atomic_write(target_p, frontmatter + result)
     return f"Autolinked {linked} title(s) in {target_str}."
 
 
@@ -876,7 +911,7 @@ def _fix_wiki_links(_args: dict) -> str:
             text, n = bad_link_re.subn(_fix, text)
 
             if n and text != original:
-                page.write_text(text, encoding="utf-8")
+                _atomic_write(page, text)
                 total_fixed += n
                 pages_fixed += 1
 
@@ -1000,7 +1035,7 @@ def _create_page(args: dict) -> str:
     content = frontmatter + _strip_broken_wiki_links(body.lstrip("\n"), p)
     content = _inject_sources_section(content, p)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content, encoding="utf-8")
+    _atomic_write(p, content)
     _autolink({"path": path})
     _autolink_sources_if_entity(path)
     _rebuild_index({})
