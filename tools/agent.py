@@ -1020,6 +1020,7 @@ def _create_page(args: dict) -> str:
     tags    = args.get("tags", [])
     body    = args.get("body", "")
     sources = args.get("sources", [])
+    url     = args.get("url", "")
 
     if not path or not title or not pg_type:
         return "Error: path, title, and type are required."
@@ -1033,18 +1034,23 @@ def _create_page(args: dict) -> str:
     today = datetime.date.today().isoformat()
     existed = p.exists()
     if existed:
-        # Preserve original created date
+        # Preserve original created date and url
         old = p.read_text(encoding="utf-8", errors="replace")
         m = re.search(r"created:\s*(\d{4}-\d{2}-\d{2})", old)
         created = m.group(1) if m else today
+        if not url:
+            mu = re.search(r'^url:\s*["\']?([^"\'\n]+)["\']?', old, re.MULTILINE)
+            if mu:
+                url = mu.group(1).strip()
     else:
         created = today
 
     tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]))
     src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]))
+    url_line = f'url: "{url}"\n' if url else ""
     frontmatter = (
         f'---\ntitle: "{title}"\ntype: {pg_type}\ntags: [{tag_str}]\n'
-        f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n---\n\n'
+        f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n{url_line}---\n\n'
     )
     content = frontmatter + _strip_broken_wiki_links(body.lstrip("\n"), p)
     content = _inject_sources_section(content, p)
@@ -1298,6 +1304,7 @@ TOOL_DEFS = [
                     "tags":    {"type": "array",  "items": {"type": "string"}, "description": "List of lowercase hyphenated tags"},
                     "body":    {"type": "string", "description": "Full page body content (no frontmatter — that is added automatically)"},
                     "sources": {"type": "array",  "items": {"type": "string"}, "description": "List of source page paths relative to wiki/, e.g. [\"sources/my-article.md\"]"},
+                    "url":     {"type": "string", "description": "Original article URL. Source pages only — omit for entity/concept/synthesis pages."},
                 },
                 "required": ["path", "title", "type", "body"],
             },
