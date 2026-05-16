@@ -806,12 +806,12 @@ def list_inbox() -> list:
             source_url = meta.get("url", "")
             title      = meta.get("title", "").strip() or f.stem
             title      = title[:100]
-            if source_url:
-                has_content = True
-                excerpt = source_url
-            else:
-                lines   = [l.strip() for l in body.splitlines() if l.strip() and not l.startswith("#")]
+            lines      = [l.strip() for l in body.splitlines() if l.strip() and not l.startswith("#")]
+            has_content = bool(lines)
+            if lines:
                 excerpt = " ".join(lines[:3])[:200]
+            elif source_url:
+                excerpt = source_url
 
         mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
         wikified = False
