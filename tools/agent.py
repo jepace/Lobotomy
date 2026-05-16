@@ -180,8 +180,10 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
     try:
         p.resolve().relative_to((RAW_DIR / "inbox").resolve())
         stripped = text.strip()
-        if stripped.startswith("http") and "\n" not in stripped and stripped in _fetch_cache:
-            return _fetch_cache[stripped]
+        if stripped.startswith("http") and "\n" not in stripped:
+            with _fetch_cache_lock:
+                if stripped in _fetch_cache:
+                    return _fetch_cache[stripped]
     except ValueError:
         pass
     try:
@@ -480,6 +482,7 @@ def _list_dir(directory: str) -> str:
 
 
 _fetch_cache: dict[str, str] = {}
+_fetch_cache_lock = threading.Lock()
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -530,9 +533,10 @@ def _backfill_inbox_from_fetch(url: str, content: str) -> None:
 
 
 def _fetch_url(url: str) -> str:
-    if url in _fetch_cache:
-        log.debug("fetch_url cache hit: %s", url)
-        return _fetch_cache[url]
+    with _fetch_cache_lock:
+        if url in _fetch_cache:
+            log.debug("fetch_url cache hit: %s", url)
+            return _fetch_cache[url]
     import urllib.parse
     from html.parser import HTMLParser
     from http.cookiejar import CookieJar
@@ -586,11 +590,13 @@ def _fetch_url(url: str) -> str:
             )
         else:
             msg = f"Error fetching {url}: {e}"
-        _fetch_cache[url] = msg
+        with _fetch_cache_lock:
+            _fetch_cache[url] = msg
         return msg
     except Exception as e:
         msg = f"Error: {e}"
-        _fetch_cache[url] = msg
+        with _fetch_cache_lock:
+            _fetch_cache[url] = msg
         return msg
 
     if "html" in ct.lower():
@@ -607,12 +613,14 @@ def _fetch_url(url: str) -> str:
                 "The page may require JavaScript to render (e.g. a SPA or Cloudflare-protected site).\n"
                 "Save the article manually and drop it in raw/inbox/ instead."
             )
-            _fetch_cache[url] = msg
+            with _fetch_cache_lock:
+                _fetch_cache[url] = msg
             return msg
     else:
         text = raw.decode("utf-8", errors="replace")
     text = text[:50_000]
-    _fetch_cache[url] = text
+    with _fetch_cache_lock:
+        _fetch_cache[url] = text
     _backfill_inbox_from_fetch(url, text)
     return text
 
@@ -1496,7 +1504,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
         if not tool_calls:
             break
 
-        for tc in tool_calls:
+        for i, tc in enumerate(tool_calls):
             fn_name = (tc.get("function") or {}).get("name") or ""
             fn = TOOL_FNS.get(fn_name)
             try:
@@ -1512,6 +1520,15 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                 payload = result[len(_DONE_SENTINEL):]
                 ingested_flag, _, summary = payload.partition("|")
                 log.info("Agent called done() in round %d (ingested=%s): %s", _round, ingested_flag, summary[:120])
+                # Append placeholder responses for any unexecuted tool calls in this batch
+                # so the message history stays consistent (every tool_call must have a response).
+                remaining = tool_calls[i + 1:]
+                if remaining:
+                    log.warning("done() called mid-batch with %d unexecuted tool call(s) — adding placeholders", len(remaining))
+                for rtc in remaining:
+                    rname = (rtc.get("function") or {}).get("name") or "unknown_tool"
+                    messages.append({"role": "tool", "tool_call_id": rtc.get("id", ""),
+                                     "name": rname, "content": "Skipped — done() called in same batch."})
                 if summary:
                     messages.append({"role": "assistant", "content": summary})
                 messages.append({"role": "system", "content": f"__ingested__:{ingested_flag}"})
@@ -1717,7 +1734,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
 
         _had_tool_calls = True
         _tools_since_last_continuation += len(tool_calls)
-        for tc in tool_calls:
+        for i, tc in enumerate(tool_calls):
             fn_name = (tc.get("function") or {}).get("name") or ""
             fn = TOOL_FNS.get(fn_name)
             try:
@@ -1737,6 +1754,14 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                 payload = result[len(_DONE_SENTINEL):]
                 ingested_flag, _, summary = payload.partition("|")
                 log.info("Agent called done() in round %d (ingested=%s): %s", _round, ingested_flag, summary[:120])
+                # Append placeholder responses for any unexecuted tool calls in this batch.
+                remaining = tool_calls[i + 1:]
+                if remaining:
+                    log.warning("done() called mid-batch with %d unexecuted tool call(s) — adding placeholders", len(remaining))
+                for rtc in remaining:
+                    rname = (rtc.get("function") or {}).get("name") or "unknown_tool"
+                    messages.append({"role": "tool", "tool_call_id": rtc.get("id", ""),
+                                     "name": rname, "content": "Skipped — done() called in same batch."})
                 if summary:
                     yield json.dumps({"type": "text", "content": summary}) + "\n"
                 yield json.dumps({"type": "done", "ingested": ingested_flag == "1"}) + "\n"
