@@ -765,7 +765,7 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
         return text, None
 
 
-def list_inbox() -> list:
+def list_inbox(show_archived: bool = False) -> list:
     candidates = []
     if RAW_DIR.is_dir():
         candidates += [
@@ -806,12 +806,12 @@ def list_inbox() -> list:
             source_url = meta.get("url", "")
             title      = meta.get("title", "").strip() or f.stem
             title      = title[:100]
-            if source_url:
-                has_content = True
-                excerpt = source_url
-            else:
-                lines   = [l.strip() for l in body.splitlines() if l.strip() and not l.startswith("#")]
+            lines      = [l.strip() for l in body.splitlines() if l.strip() and not l.startswith("#")]
+            has_content = bool(lines)
+            if lines:
                 excerpt = " ".join(lines[:3])[:200]
+            elif source_url:
+                excerpt = source_url
 
         mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
         wikified = False
@@ -820,7 +820,8 @@ def list_inbox() -> list:
             raw_text = f.read_text(encoding="utf-8", errors="replace")
             fm, _ = _parse_frontmatter(raw_text)
             wikified = bool(fm.get("wikified"))
-            if fm.get("archived"):
+            archived = bool(fm.get("archived"))
+            if archived and not show_archived:
                 continue
         except Exception:
             pass
@@ -845,6 +846,7 @@ def list_inbox() -> list:
             "ext":         f.suffix,
             "wikified":    wikified,
             "wiki_path":   wiki_path,
+            "archived":    archived,
         })
     return items
 
@@ -922,6 +924,20 @@ def chat_send():
                 f'{message}\n\n'
                 f'<file path="raw/{inbox_path.name}">\n{file_content}\n</file>'
             )
+            # Prime the globals that _create_page uses for url: and raw_source: fallbacks.
+            # Without this, the LLM skips read_file (content already injected) so the
+            # globals never get set and frontmatter ends up missing both fields.
+            import agent as _agent
+            stripped = file_content.strip()
+            _agent._last_inbox_path = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
+            _agent._last_inbox_url = ""  # always reset so stale URL from prior ingest isn't inherited
+            if stripped.startswith("http") and "\n" not in stripped:
+                _agent._last_inbox_url = stripped
+            else:
+                import re as _re
+                _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', file_content, _re.MULTILINE)
+                if _m:
+                    _agent._last_inbox_url = _m.group(1).strip()
         except OSError:
             pass  # file unreadable — AI will fall back to read_file normally
 
@@ -937,6 +953,8 @@ def chat_send():
             )
             if ingested:
                 _mark_inbox_wikified(inbox_file)
+            else:
+                log.warning("on_done: inbox_file=%s but no __ingested__:1 in messages — not marking wikified", inbox_file)
 
     log.info("Chat send: model=%s history_len=%d", model, len(history))
     job_id = job_queue.submit(client, model, history, sys_prompt, on_done=on_done)
@@ -1576,9 +1594,11 @@ def tasks_bulk_update():
 @app.route("/inbox")
 @require_login
 def inbox():
-    push_key = cfg_get("api", "push_key", "")
-    base_url = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
-    return render_template("inbox.html", items=list_inbox(),
+    push_key    = cfg_get("api", "push_key", "")
+    base_url    = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
+    show_archived = request.args.get("archived") == "1"
+    return render_template("inbox.html", items=list_inbox(show_archived=show_archived),
+                           show_archived=show_archived,
                            push_key=push_key, base_url=base_url)
 
 
@@ -2144,15 +2164,17 @@ def inbox_read(filename):
         abort(404)
     if not p.exists():
         abort(404)
+    import markdown as _md
     text = p.read_text(encoding="utf-8", errors="replace")
     meta, body = _parse_frontmatter(text)
+    body_html = _md.markdown(body, extensions=["extra", "nl2br"])
     return render_template(
         "reader.html",
-        title   = meta.get("title", p.stem),
-        url     = meta.get("url", ""),
-        saved   = meta.get("saved", ""),
-        body    = body,
-        filename= filename,
+        title     = meta.get("title", p.stem),
+        url       = meta.get("url", ""),
+        saved     = meta.get("saved", ""),
+        body_html = body_html,
+        filename  = filename,
     )
 
 
@@ -2164,6 +2186,30 @@ def inbox_add():
     name    = (data.get("filename") or "").strip()
     if not content:
         return {"error": "Empty content"}, 400
+    # If the content is just a bare URL, fetch the page now so the reader has content
+    is_url = content.startswith("http") and "\n" not in content and " " not in content.strip()
+    if is_url:
+        url = content
+        fetched, _ = _clip_fetch(url)
+        body = fetched or ""
+        title = ""
+        if body:
+            for line in body.splitlines():
+                line = line.strip().lstrip("#").strip()
+                if line and not line.startswith("<"):
+                    title = line[:120]
+                    break
+        if not title:
+            title = url.rstrip("/").split("/")[-1].split("?")[0].replace("-", " ").replace("_", " ") or url
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "article"
+        base_name = name or f"{slug}.md"
+        dest = RAW_DIR / base_name
+        today = datetime.date.today().isoformat()
+        now   = datetime.datetime.now().isoformat(timespec="seconds")
+        fm    = ["---", f'title: "{title}"', f"url: {url}", f"saved: {today}",
+                 f"added: {now}", "wikified: false", "source: manual", "---", ""]
+        _atomic_write(dest, "\n".join(fm) + body)
+        return {"ok": True, "filename": dest.name, "fetch_failed": not body}
     if not name:
         slug = re.sub(r"[^a-z0-9]+", "-", content[:60].lower()).strip("-")
         name = f"{slug}.txt"
@@ -2206,9 +2252,12 @@ def inbox_view(filename):
         url = url_line[4:].strip()
         return {"content": content, "url": url}
     # Strip YAML frontmatter before returning to the inline reader
+    import markdown as _md
     meta, body = _parse_frontmatter(content)
     source_url = meta.get("url", "") or None
-    return {"content": body.strip(), "url": source_url}
+    body = body.strip()
+    html = _md.markdown(body, extensions=["extra", "nl2br"]) if body else ""
+    return {"content": body, "html": html, "url": source_url}
 
 
 @app.route("/inbox/debug-fetch")
@@ -2262,6 +2311,43 @@ def inbox_archive():
         _rebuild_index({})
     except Exception as e:
         log.error("inbox_archive failed for %s: %s", name, e)
+        return {"error": str(e)}, 500
+    return {"ok": True}
+
+
+@app.route("/inbox/unarchive", methods=["POST"])
+@require_login
+def inbox_unarchive():
+    import json as _json
+    data = request.get_json(silent=True) or {}
+    name = (data.get("filename") or "").strip()
+    if not name:
+        return {"error": "No filename"}, 400
+    p = RAW_DIR / name
+    try:
+        p.resolve().relative_to(RAW_DIR.resolve())
+    except ValueError:
+        return {"error": "Invalid path"}, 400
+    if not p.exists():
+        return {"error": "File not found"}, 404
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+        fm, body = _parse_frontmatter(text)
+        fm.pop("archived", None)
+        fm_lines = ["---"]
+        for k, v in fm.items():
+            if isinstance(v, list):
+                fm_lines.append(f"{k}: {_json.dumps(v)}")
+            elif isinstance(v, bool):
+                fm_lines.append(f"{k}: {'true' if v else 'false'}")
+            else:
+                sv = str(v)
+                fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
+        fm_lines.append("---")
+        p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
+        _rebuild_index({})
+    except Exception as e:
+        log.error("inbox_unarchive failed for %s: %s", name, e)
         return {"error": str(e)}, 500
     return {"ok": True}
 

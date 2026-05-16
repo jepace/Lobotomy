@@ -94,6 +94,12 @@
   .reader-loading { color: var(--text2); font-size: 13px; padding: 20px 0; text-align: center; }
 
   .empty-state { text-align: center; padding: 50px 20px; color: var(--text2); }
+  .archived-item { opacity: .6; }
+  .item-reader-html { padding: 4px 0; font-size: 14px; line-height: 1.65; color: var(--text); }
+  .item-reader-html p  { margin-bottom: .8em; }
+  .item-reader-html h1,.item-reader-html h2,.item-reader-html h3 { font-size:1.05em;font-weight:700;margin:.8em 0 .3em; }
+  .item-reader-html ul,.item-reader-html ol { padding-left:1.3em; margin-bottom:.6em; }
+  .item-reader-html a  { color: var(--accent); }
 
   /* Inline edit panel */
   .item-edit {
@@ -115,10 +121,20 @@
 <div class="page">
   <div class="page-topbar">
     <h1>Reading List</h1>
-    <div style="display:flex; gap:8px; align-items:center;">
-      <span class="text-sm text2">{{ items|length }} saved</span>
-      {% if items %}<button class="btn btn-ghost btn-sm" id="wikify-all-btn" onclick="wikifyAll()">Wikify All</button>{% endif %}
-      <button class="btn btn-primary btn-sm" onclick="toggleSave()">+ Save</button>
+    <div style="display:flex; gap:8px; align-items:center; flex:1; min-width:0; margin-left:12px;">
+      <input id="search-input" type="search" placeholder="Search…"
+             oninput="filterItems(this.value)"
+             style="flex:1; min-width:0; max-width:220px; padding:5px 9px; border-radius:8px;
+                    border:1px solid var(--border); background:var(--bg); color:var(--text);
+                    font-size:13px; outline:none;">
+    </div>
+    <div style="display:flex; gap:8px; align-items:center; flex-shrink:0;">
+      <span class="text-sm text2">{{ items|length }} {% if show_archived %}archived{% else %}saved{% endif %}</span>
+      <a class="btn btn-ghost btn-sm" href="/inbox?archived={{ '0' if show_archived else '1' }}">
+        {{ 'Hide archived' if show_archived else 'Archived' }}
+      </a>
+      {% if items and not show_archived %}<button class="btn btn-ghost btn-sm" id="wikify-all-btn" onclick="wikifyAll()">Wikify All</button>{% endif %}
+      {% if not show_archived %}<button class="btn btn-primary btn-sm" onclick="toggleSave()">+ Save</button>{% endif %}
     </div>
   </div>
 
@@ -138,7 +154,8 @@
 
   {% if items %}
     {% for item in items %}
-    <div class="reading-item" id="item-{{ loop.index }}">
+    <div class="reading-item{% if item.archived %} archived-item{% endif %}" id="item-{{ loop.index }}"
+         data-search="{{ (item.title ~ ' ' ~ item.excerpt) | lower | e }}">
       <div class="item-header" onclick="toggleItem({{ loop.index }}, '{{ item.name | e }}')">
         <div class="item-body">
           <div class="item-title">
@@ -162,11 +179,15 @@
         {% elif item.source_url %}
           <a class="act-btn open" href="{{ item.source_url }}" target="_blank" rel="noopener">Open ↗</a>
         {% endif %}
-        <button class="act-btn archive" onclick="archiveItem('{{ item.name | e }}', {{ loop.index }})">Archive</button>
-        <button class="act-btn wikify" id="wikify-{{ loop.index }}"
-                onclick="wikifyItem('{{ item.name | e }}', {{ loop.index }})">Wikify</button>
-        <button class="act-btn delete"  onclick="deleteItem('{{ item.name | e }}', {{ loop.index }})">Delete</button>
-        <button class="act-btn" onclick="editItem('{{ item.name | e }}', {{ loop.index }})">Edit</button>
+        {% if item.archived %}
+          <button class="act-btn archive" onclick="unarchiveItem('{{ item.name | e }}', {{ loop.index }})">Unarchive</button>
+        {% else %}
+          <button class="act-btn archive" onclick="archiveItem('{{ item.name | e }}', {{ loop.index }})">Archive</button>
+          <button class="act-btn wikify" id="wikify-{{ loop.index }}"
+                  onclick="wikifyItem('{{ item.name | e }}', {{ loop.index }})">Wikify</button>
+          <button class="act-btn" onclick="editItem('{{ item.name | e }}', {{ loop.index }})">Edit</button>
+        {% endif %}
+        <button class="act-btn delete" onclick="deleteItem('{{ item.name | e }}', {{ loop.index }})">Delete</button>
       </div>
 
       <div class="item-edit" id="edit-{{ loop.index }}">
@@ -349,8 +370,7 @@ async function toggleItem(idx, name) {
       const resp = await fetch('/inbox/view/' + encodeURIComponent(name));
       const data = await resp.json();
       reader.innerHTML = '';
-      if (data.url) {
-        // .url file — show link to open the article
+      if (data.url && !data.html) {
         reader.innerHTML =
           `<div style="padding:4px 0 8px">` +
           `<a href="${data.url}" target="_blank" rel="noopener" ` +
@@ -359,16 +379,42 @@ async function toggleItem(idx, name) {
           `<a href="${data.url}" target="_blank" rel="noopener" ` +
           `style="display:inline-block;padding:8px 14px;background:var(--accent);color:#fff;` +
           `border-radius:8px;font-size:13px;font-weight:700;text-decoration:none;">Open article ↗</a>`;
+      } else if (data.html) {
+        const div = document.createElement('div');
+        div.className = 'item-reader-html';
+        div.innerHTML = data.html;
+        reader.appendChild(div);
       } else {
         const pre = document.createElement('pre');
         pre.className = 'reader-content';
-        pre.textContent = data.content;
+        pre.textContent = data.content || '';
         reader.appendChild(pre);
       }
       loaded[idx] = true;
     } catch(e) {
       reader.innerHTML = '<div class="reader-loading">Could not load.</div>';
     }
+  }
+}
+
+function filterItems(q) {
+  const term = q.trim().toLowerCase();
+  document.querySelectorAll('.reading-item').forEach(el => {
+    const text = (el.dataset.search || '');
+    el.style.display = (!term || text.includes(term)) ? '' : 'none';
+  });
+}
+
+async function unarchiveItem(name, idx) {
+  const resp = await fetch('/inbox/unarchive', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({filename: name}),
+  });
+  const data = await resp.json();
+  if (data.ok) {
+    document.getElementById('item-' + idx)?.remove();
+  } else {
+    alert('Unarchive failed: ' + (data.error || 'Unknown'));
   }
 }
 
