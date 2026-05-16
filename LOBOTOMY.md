@@ -33,7 +33,7 @@ Key invariants:
 
 ```
 raw/                   Immutable source documents. Never modify anything here.
-raw/inbox/             Drop articles, URLs, or notes here for later processing.
+raw/index.md           Auto-generated index of all raw sources and their state.
 raw/assets/            Binary attachments (images, PDFs) referenced by raw sources.
 
 wiki/                  All LLM-generated content lives here.
@@ -80,6 +80,7 @@ url: "https://original-article-url"   # source pages only; omit on entity/concep
 | `updated` | YYYY-MM-DD | Date of most recent edit. Update on every write. |
 | `sources` | list of strings | Relative paths from `wiki/` to supporting source pages |
 | `url` | string (quoted) | Original article URL. Source pages only. Set automatically — do not supply. |
+| `raw_source` | string (quoted) | Repo-relative path to the raw inbox file. Source pages only. Set automatically — do not supply. |
 
 ### Standard heading structures per page type
 
@@ -149,12 +150,12 @@ External URLs appear **only** in two places:
 
 **Trigger**: User says "ingest", "add this source", or points at a file in `raw/`.
 
-Files in `raw/inbox/` can be ingested in place — do **not** move them.
+All raw files live permanently in `raw/`. State (wikified, archived) is tracked in frontmatter — files never move.
 
 Execute all steps in order. Do not skip any step.
 
 ### Step 1 — Verify source location
-The file must be in `raw/` or `raw/inbox/`. If the user gives pasted text, ask them to save it
+The file must be in `raw/`. If the user gives pasted text, ask them to save it
 to `raw/` first as a `.txt` or `.md` file.
 
 ### Step 2 — Read the source completely
@@ -234,7 +235,7 @@ index coverage) — results are visible at `/wiki/lint`.
 
 ## 7. Inbox Workflow (Read-It-Later)
 
-**Trigger**: User drops a file into `raw/inbox/` and says "process inbox", or points at a
+**Trigger**: User drops a file into `raw/` and says "process inbox", or points at a
 specific inbox file.
 
 This is the Pocket-replacement workflow. The inbox is a holding area for articles, URLs, and notes
@@ -247,7 +248,7 @@ you want to process but have not gotten to yet.
 
 ### Process inbox — step by step
 
-1. **List inbox contents**: Read all files in `raw/inbox/`. Present the list to the user.
+1. **List inbox contents**: Read all files in `raw/`. Present the list to the user.
 2. **Triage**: Ask which items to process now (or process all if user said "process inbox").
 3. **For each item to process**:
    - Read the file. Determine if it is a URL, article text, or notes.
@@ -258,8 +259,8 @@ you want to process but have not gotten to yet.
      Do NOT conclude the topic is already covered because a related page exists — a different
      source on the same topic is still a separate source that warrants its own page.
    - **If article text or notes**: Assign a slug, run the full Ingest Workflow (Section 6)
-     reading the file from `raw/inbox/` in place. **Do NOT move or delete the inbox file.**
-     The article stays in `raw/inbox/` permanently. The UI will show a "Wikified ✓" badge
+     reading the file from `raw/` in place. **Do NOT move or delete the inbox file.**
+     The article stays in `raw/` permanently. The UI will show a "Wikified ✓" badge
      automatically once ingestion completes.
 4. **Report** to user: items processed, items queued, any issues.
 
@@ -281,7 +282,7 @@ the **top** (newest-first ordering).
 ```
 
 Rules:
-- **Target** must be a markdown link to the raw source file. Path is relative to `wiki/` so prefix with `../` — e.g. `[raw/inbox/foo.txt](../raw/inbox/foo.txt)`.
+- **Target** must be a markdown link to the raw source file. Path is relative to `wiki/` so prefix with `../` — e.g. `[raw/foo.txt](../raw/foo.txt)`.
 - Every entry in **Pages created** and **Pages updated** must be a markdown link — `[Title](relative/path.md)` — never plain text or a bare path.
 - Paths in Pages created/updated are relative to `wiki/` — write `sources/slug.md`, not `wiki/sources/slug.md`.
 - Use the actual page title as the link text, not the filename.
