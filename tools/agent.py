@@ -925,7 +925,13 @@ def _search_wiki(args: dict) -> str:
             page_tags = [t.strip().strip('"').lower() for t in tags_line.split(":", 1)[-1].strip().strip("[]").split(",") if t.strip().strip('"')]
             if required_tag not in page_tags:
                 continue
-        score = sum(len(p.findall(text)) for p in patterns) if patterns else 1
+        # Strip link URLs from text before scoring so path tokens don't create false matches.
+        # E.g. "[foo](entities/colorado-river.md)" should not match a search for "Colorado".
+        searchable = re.sub(r'\]\([^)]*\)', ']()', text)
+        # AND logic: every keyword must appear at least once.
+        if patterns and not all(p.search(searchable) for p in patterns):
+            continue
+        score = sum(len(p.findall(searchable)) for p in patterns) if patterns else 1
         if not score:
             continue
         # Extract title from frontmatter
