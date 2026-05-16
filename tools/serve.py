@@ -1416,6 +1416,23 @@ def wiki_fix_broken_links():
     return redirect(url_for("wiki_lint"))
 
 
+@app.route("/raw/")
+@app.route("/raw")
+@require_login
+def raw_index():
+    from flask import redirect
+    index = RAW_DIR / "index.md"
+    if not index.exists():
+        _rebuild_raw_index()
+    return render_template("wiki.html",
+               title="Raw Sources",
+               content=render_md(index),
+               current_path="",
+               sections=wiki_sections(),
+               source_url=None,
+               raw_source_url=None)
+
+
 @app.route("/raw/<path:filename>")
 @require_login
 def raw_file(filename):
