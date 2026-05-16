@@ -228,6 +228,10 @@ Determine whether the new source warrants:
 Update to reflect the new source. The overview must always represent the current state of the wiki
 accurately. At minimum update: Current State, Domains Covered, Major Entities, Major Concepts.
 
+**Prose style**: Write in short, focused paragraphs — one idea per paragraph, 2–4 sentences each.
+Never write a single long paragraph that runs multiple ideas together. Use flowing prose, not bullet
+lists, for the narrative sections. Aim for something readable at a glance, not a wall of text.
+
 ### Step 9 — Append to `wiki/log.md`
 Call `prepend_log` with the new entry text. Do NOT use `write_file` for the log — it would
 overwrite and destroy existing entries. `prepend_log` inserts the entry at the top automatically.
