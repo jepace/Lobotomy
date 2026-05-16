@@ -766,21 +766,12 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
 
 
 def list_inbox() -> list:
-    inbox = RAW_DIR / "inbox"
-    sources = RAW_DIR / "sources"
     candidates = []
-    if inbox.is_dir():
-        candidates += [f for f in inbox.iterdir() if f.is_file() and not f.name.startswith(".")]
-    if sources.is_dir():
-        for f in sources.iterdir():
-            if not f.is_file() or f.name.startswith("."):
-                continue
-            try:
-                fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
-                if fm.get("wikified") and not fm.get("archived"):
-                    candidates.append(f)
-            except Exception:
-                pass
+    if RAW_DIR.is_dir():
+        candidates += [
+            f for f in RAW_DIR.iterdir()
+            if f.is_file() and not f.name.startswith(".") and f.name != "index.md"
+        ]
     items = []
     def _inbox_sort_key(f):
         try:
@@ -924,12 +915,12 @@ def chat_send():
         ]
     # Pre-load inbox file so the AI skips its read_file round-trip.
     if inbox_file:
-        inbox_path = RAW_DIR / "inbox" / Path(inbox_file).name
+        inbox_path = RAW_DIR / Path(inbox_file).name
         try:
             file_content = inbox_path.read_text(encoding="utf-8", errors="replace")
             message = (
                 f'{message}\n\n'
-                f'<file path="raw/inbox/{inbox_path.name}">\n{file_content}\n</file>'
+                f'<file path="raw/{inbox_path.name}">\n{file_content}\n</file>'
             )
         except OSError:
             pass  # file unreadable — AI will fall back to read_file normally
@@ -1012,6 +1003,27 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
         fm_lines.append("---")
         _atomic_write(best, "\n".join(fm_lines) + "\n" + wbody)
         log.info("Stamped raw_source=%s into %s", raw_rel, best.name)
+
+        # Also stamp wiki_page back onto the raw file's frontmatter
+        wiki_page_rel = str(best.relative_to(WIKI_DIR))
+        try:
+            raw_text = raw_path.read_text(encoding="utf-8")
+            raw_fm, raw_body = _parse_frontmatter(raw_text)
+            raw_fm["wiki_page"] = wiki_page_rel
+            raw_fm_lines = ["---"]
+            for k, v in raw_fm.items():
+                if isinstance(v, list):
+                    raw_fm_lines.append(f"{k}: {_json.dumps(v)}")
+                elif isinstance(v, bool):
+                    raw_fm_lines.append(f"{k}: {'true' if v else 'false'}")
+                else:
+                    sv = str(v)
+                    raw_fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
+            raw_fm_lines.append("---")
+            raw_path.write_text("\n".join(raw_fm_lines) + "\n" + raw_body, encoding="utf-8")
+            log.info("Stamped wiki_page=%s into %s", wiki_page_rel, raw_path.name)
+        except Exception as e2:
+            log.warning("Failed to stamp wiki_page into raw file %s: %s", raw_path.name, e2)
     except Exception as e:
         log.error("_link_raw_source_to_wiki failed for %s: %s", raw_path.name, e)
 
@@ -1231,11 +1243,6 @@ def wiki_page(page_path):
                 continue
             if (REPO_ROOT / s).exists():
                 raw_source_url = "/" + s
-                break
-            # File may have been archived from raw/inbox/ to raw/sources/
-            archived = "raw/sources/" + Path(s).name
-            if (REPO_ROOT / archived).exists():
-                raw_source_url = "/" + archived
                 break
     return render_template(
         "wiki.html",

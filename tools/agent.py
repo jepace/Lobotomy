@@ -176,9 +176,9 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
     if p.suffix.lower() in _IMAGE_EXTS:
         return _read_image(p)
     text = p.read_text(encoding="utf-8", errors="replace")
-    # If this inbox file is just a URL stub and we already fetched it, return the cached content
+    # If this raw file is just a URL stub and we already fetched it, return the cached content
     try:
-        p.resolve().relative_to((RAW_DIR / "inbox").resolve())
+        p.resolve().relative_to(RAW_DIR.resolve())
         stripped = text.strip()
         global _last_inbox_url, _last_inbox_path
         _last_inbox_path = str(p.resolve().relative_to(REPO_ROOT.resolve()))
@@ -188,7 +188,7 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
                 if stripped in _fetch_cache:
                     return _fetch_cache[stripped]
         else:
-            # Inbox item with frontmatter — extract url: field
+            # Raw item with frontmatter — extract url: field
             import re as _re
             _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', text, _re.MULTILINE)
             if _m:
@@ -520,13 +520,13 @@ _last_inbox_path: str = ""
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
-    """If an inbox file is just a URL stub pointing to `url`, replace its body with fetched content."""
+    """If a raw file is just a URL stub pointing to `url`, replace its body with fetched content."""
     import json as _json
-    inbox = RAW_DIR / "inbox"
+    inbox = RAW_DIR
     if not inbox.is_dir():
         return
     for f in inbox.iterdir():
-        if not f.is_file():
+        if not f.is_file() or f.name == "index.md" or f.name.startswith("."):
             continue
         try:
             raw = f.read_text(encoding="utf-8", errors="replace")
@@ -609,7 +609,7 @@ def _fetch_url(url: str) -> str:
             return (
                 f"Error 403 Forbidden — {url}\n"
                 "The site is blocking automated access. "
-                "Save the article as a .txt/.html file and drop it in raw/inbox/ instead."
+                "Save the article as a .txt/.html file and drop it in raw/ instead."
             )
         if e.code == 429:
             return f"Error 429 Too Many Requests — {url}\nRate limited. Try again later."
@@ -645,7 +645,7 @@ def _fetch_url(url: str) -> str:
             msg = (
                 f"Fetched {url} but extracted no text.\n"
                 "The page may require JavaScript to render (e.g. a SPA or Cloudflare-protected site).\n"
-                "Save the article manually and drop it in raw/inbox/ instead."
+                "Save the article manually and drop it in raw/ instead."
             )
             with _fetch_cache_lock:
                 _fetch_cache[url] = msg
