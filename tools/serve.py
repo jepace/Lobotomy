@@ -2297,14 +2297,23 @@ def inbox_mark_wikified():
     name = (data.get("filename") or "").strip()
     if not name:
         return {"error": "No filename"}, 400
-    # Validate path
-    try:
-        (RAW_DIR / "inbox" / name).resolve().relative_to((RAW_DIR / "inbox").resolve())
-    except ValueError:
-        return {"error": "Invalid path"}, 400
-    # Run the full mark-wikified pipeline (idempotent); this stamps raw_source
-    # into the matching wiki/sources/ page so the lookup below finds it.
-    _mark_inbox_wikified(name)
+    # Accept file from either inbox or sources (it may have been moved already)
+    p_inbox   = RAW_DIR / "inbox"   / name
+    p_sources = RAW_DIR / "sources" / name
+    if p_inbox.exists():
+        try:
+            p_inbox.resolve().relative_to((RAW_DIR / "inbox").resolve())
+        except ValueError:
+            return {"error": "Invalid path"}, 400
+        _mark_inbox_wikified(name)
+    elif p_sources.exists():
+        try:
+            p_sources.resolve().relative_to((RAW_DIR / "sources").resolve())
+        except ValueError:
+            return {"error": "Invalid path"}, 400
+        # File already moved — just find the wiki_path
+    else:
+        return {"error": "File not found"}, 404
     # Find the matching wiki/sources/ page to return a direct link
     wiki_path = ""
     for raw_rel in (f"raw/inbox/{name}", f"raw/sources/{name}"):

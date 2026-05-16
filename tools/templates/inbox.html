@@ -509,6 +509,14 @@ async function wikifyItem(name, idx) {
       badge.className = 'wikified-badge';
       badge.textContent = 'Wikified ✓';
       metaEl.appendChild(badge);
+      if (wikiData && wikiData.wiki_path) {
+        const link = document.createElement('a');
+        link.href = '/wiki/' + wikiData.wiki_path;
+        link.onclick = e => e.stopPropagation();
+        link.style = 'font-size:11px;color:var(--accent);text-decoration:none;margin-left:4px;';
+        link.textContent = 'Wiki ↗';
+        metaEl.appendChild(link);
+      }
     }
   } catch(e) {
     progress.innerHTML += `<div class="prog-error">Failed: ${e.message}</div>`;
