@@ -483,6 +483,7 @@ def _list_dir(directory: str) -> str:
 
 _fetch_cache: dict[str, str] = {}
 _fetch_cache_lock = threading.Lock()
+_last_fetched_url: str = ""
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -621,6 +622,8 @@ def _fetch_url(url: str) -> str:
     text = text[:50_000]
     with _fetch_cache_lock:
         _fetch_cache[url] = text
+    global _last_fetched_url
+    _last_fetched_url = url
     _backfill_inbox_from_fetch(url, text)
     return text
 
@@ -1021,6 +1024,8 @@ def _create_page(args: dict) -> str:
     body    = args.get("body", "")
     sources = args.get("sources", [])
     url     = args.get("url", "")
+    if not url and pg_type == "source":
+        url = _last_fetched_url
 
     if not path or not title or not pg_type:
         return "Error: path, title, and type are required."
