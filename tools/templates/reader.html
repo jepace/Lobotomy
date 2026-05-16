@@ -131,12 +131,8 @@
     {% if url %} &middot; <a href="{{ url }}" target="_blank" rel="noopener">Original article ↗</a>{% endif %}
   </div>
 
-  <div class="article-body plain" id="body">
-{%- set paras = body.split('\n\n') -%}
-{% for para in paras -%}
-{%- if para.strip() %}<p>{{ para.strip() | e }}</p>
-{% endif -%}
-{% endfor %}
+  <div class="article-body" id="body">
+    {{ body_html | safe }}
   </div>
 </div>
 
