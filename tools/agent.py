@@ -164,7 +164,7 @@ _RAW_READ_LIMIT  = 60_000  # chars for raw source files
 _WIKI_READ_LIMIT = 20_000  # chars for wiki pages — generous but prevents context blowout
 
 
-def _read_file(path: str) -> "str | list":
+def _read_file(path: str, offset: int = 0) -> "str | list":
     """Return a string, or a list of content blocks for image/image-only PDF."""
     p = REPO_ROOT / path
     if not p.exists():
@@ -193,8 +193,14 @@ def _read_file(path: str) -> "str | list":
             limit = _WIKI_READ_LIMIT
         except ValueError:
             limit = _RAW_READ_LIMIT
+    total = len(text)
+    if offset:
+        text = text[offset:]
     if len(text) > limit:
-        text = text[:limit] + f"\n\n[TRUNCATED — {len(text)} total chars, showing first {limit}]"
+        remaining = total - offset - limit
+        text = text[:limit] + f"\n\n[TRUNCATED — showing chars {offset}–{offset+limit} of {total} total. Call read_file with offset={offset+limit} to continue.]"
+    elif offset:
+        text = text + f"\n\n[END OF FILE — read chars {offset}–{total} of {total} total.]"
     return text
 
 
@@ -1123,7 +1129,7 @@ def _validate_ingest(args: dict) -> str:
 
 
 TOOL_FNS = {
-    "read_file":       lambda a: _read_file(a["path"]),
+    "read_file":       lambda a: _read_file(a["path"], int(a.get("offset", 0))),
     "write_file":       lambda a: _write_file(a["path"], a["content"]),
     "list_dir":         lambda a: _list_dir(a["directory"]),
     "fetch_url":        lambda a: _fetch_url(a["url"]),
@@ -1142,10 +1148,17 @@ TOOL_DEFS = [
         "type": "function",
         "function": {
             "name":        "read_file",
-            "description": "Read any file in the repository (wiki pages, raw sources, CLAUDE.md, etc.).",
+            "description": (
+                "Read any file in the repository (wiki pages, raw sources, CLAUDE.md, etc.). "
+                "Large files are truncated; the truncation message tells you the total size and "
+                "the next offset to use. Call again with offset=N to read subsequent pages."
+            ),
             "parameters":  {
                 "type": "object",
-                "properties": {"path": {"type": "string", "description": "Path relative to repo root"}},
+                "properties": {
+                    "path":   {"type": "string",  "description": "Path relative to repo root"},
+                    "offset": {"type": "integer", "description": "Character offset to start reading from (default 0)"},
+                },
                 "required": ["path"],
             },
         },
