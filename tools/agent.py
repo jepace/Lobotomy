@@ -180,10 +180,18 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
     try:
         p.resolve().relative_to((RAW_DIR / "inbox").resolve())
         stripped = text.strip()
+        global _last_inbox_url
         if stripped.startswith("http") and "\n" not in stripped:
+            _last_inbox_url = stripped
             with _fetch_cache_lock:
                 if stripped in _fetch_cache:
                     return _fetch_cache[stripped]
+        else:
+            # Inbox item with frontmatter — extract url: field
+            import re as _re
+            _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', text, _re.MULTILINE)
+            if _m:
+                _last_inbox_url = _m.group(1).strip()
     except ValueError:
         pass
     try:
@@ -483,7 +491,7 @@ def _list_dir(directory: str) -> str:
 
 _fetch_cache: dict[str, str] = {}
 _fetch_cache_lock = threading.Lock()
-_last_fetched_url: str = ""
+_last_inbox_url: str = ""
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -622,8 +630,6 @@ def _fetch_url(url: str) -> str:
     text = text[:50_000]
     with _fetch_cache_lock:
         _fetch_cache[url] = text
-    global _last_fetched_url
-    _last_fetched_url = url
     _backfill_inbox_from_fetch(url, text)
     return text
 
@@ -1025,7 +1031,7 @@ def _create_page(args: dict) -> str:
     sources = args.get("sources", [])
     url     = args.get("url", "")
     if not url and pg_type == "source":
-        url = _last_fetched_url
+        url = _last_inbox_url
 
     if not path or not title or not pg_type:
         return "Error: path, title, and type are required."
