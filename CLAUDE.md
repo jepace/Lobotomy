@@ -62,7 +62,7 @@ The critical invariant: **never match inside existing markdown links**. Group 1 
 
 ## Key Conventions
 
-- **`raw/` is immutable** — code in `_write_file` blocks writes outside `wiki/`.
+- **`raw/` is immutable for the LLM** — code in `_write_file` blocks the LLM from writing outside `wiki/`. However, `serve.py` itself does move files within `raw/`: inbox items are renamed from `raw/inbox/` to `raw/sources/` when the user archives them (`serve.py:_mark_inbox_wikified`, `inbox_archive`). Don't assume files stay in `raw/inbox/` permanently.
 - **`wiki/log.md` is append-only** — always use `prepend_log`, never `write_file` on the log.
 - **No `[[wikilink]]` syntax** — standard relative markdown links only.
 - **`create_page` over `write_file`** for new wiki pages — it auto-fills `created`/`updated` dates.
