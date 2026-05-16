@@ -4,12 +4,6 @@ Read this file completely before doing anything else. It is the authoritative gu
 operation in this wiki. If you are an LLM session that has just been pointed at this repository,
 this file tells you everything you need to know to operate correctly.
 
-## Git Branch Policy
-
-Always push to **main**. Do not use feature branches unless the user explicitly requests one.
-
----
-
 ## 1. What This Wiki Is
 
 This is a **personal knowledge base maintained by LLMs**. It is not a RAG system. Sources are not
@@ -51,10 +45,6 @@ wiki/entities/         People, organizations, products, projects, codebases.
 wiki/concepts/         Ideas, techniques, frameworks, algorithms, terms.
 wiki/synthesis/        Cross-source analyses, comparisons, timelines, open questions.
 
-tools/                 Helper scripts. Do not modify unless explicitly asked.
-tools/search.py        Keyword search across wiki pages.
-tools/tasks.py         Task filter/query CLI.
-tools/agent.py         LLM agent core — tool implementations, agentic loops.
 ```
 
 ---
@@ -107,7 +97,7 @@ url: "https://original-article-url"   # source pages only; omit on entity/concep
 - Key Works / Products
 - Claims & Positions
 - Contradictions *(if any)*
-- Sources
+- Sources *(auto-generated — do not write)*
 
 **Concept page** (`wiki/concepts/`):
 - Definition
@@ -116,14 +106,14 @@ url: "https://original-article-url"   # source pages only; omit on entity/concep
 - Applications
 - Variants & Related Concepts
 - Contradictions / Debates *(if any)*
-- Sources
+- Sources *(auto-generated — do not write)*
 
 **Synthesis page** (`wiki/synthesis/`):
 - Question / Thesis
 - Evidence For
 - Evidence Against
 - Open Questions
-- Sources
+- Sources *(auto-generated — do not write)*
 
 ---
 
@@ -145,7 +135,7 @@ Use **standard relative markdown links** for all internal links. Do not use `[[w
 
 - From inside `wiki/sources/`: `[Yann LeCun](../entities/yann-lecun.md)`
 - From inside `wiki/entities/`: `[Attention Mechanism](../concepts/attention-mechanism.md)`
-- From `wiki/index.md` or `wiki/overview.md`: `[Attention Mechanism](concepts/attention-mechanism.md)`
+- From `wiki/overview.md`: `[Attention Mechanism](concepts/attention-mechanism.md)`
 
 When you mention an entity or concept that has (or should have) its own page, always link it with a relative wiki link — never with an external URL. Entity links always point to `wiki/entities/*.md`, never to `https://...`.
 
@@ -234,7 +224,7 @@ lists, for the narrative sections. Aim for something readable at a glance, not a
 ### Step 9 — Append to `wiki/log.md`
 Call `prepend_log` with the new entry text. Do NOT use `write_file` for the log — it would
 overwrite and destroy existing entries. `prepend_log` inserts the entry at the top automatically.
-Follow Section 10 for the entry format.
+Follow Section 8 for the entry format.
 
 ### Step 10 — Done
 Call `done()`. The server runs health checks automatically (broken links, missing frontmatter,
@@ -337,7 +327,7 @@ If you are a fresh LLM session with no context beyond this file and the wiki dir
 1. Read this file (`LOBOTOMY.md`) completely — you have done so
 2. Read `wiki/log.md` — understand recent operations
 3. Read `wiki/overview.md` — understand the current synthesis
-4. Ask the user what operation to perform: ingest / query / lint / process inbox
+4. Ask the user what operation to perform: ingest or process inbox
 
 Do not modify any file until the user gives an explicit instruction.
 
