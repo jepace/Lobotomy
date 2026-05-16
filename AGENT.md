@@ -146,11 +146,11 @@ Use **standard relative markdown links** for all internal links. Do not use `[[w
 - From inside `wiki/entities/`: `[Attention Mechanism](../concepts/attention-mechanism.md)`
 - From `wiki/index.md` or `wiki/overview.md`: `[Attention Mechanism](concepts/attention-mechanism.md)`
 
-When you mention an entity or concept that has (or should have) its own page, always link it.
-After creating or updating a page, ask: "What other pages should link to this one?" and add
-inbound links from those pages too (bidirectional linking strengthens the graph).
+When you mention an entity or concept that has (or should have) its own page, always link it with a relative wiki link — never with an external URL. Entity links always point to `wiki/entities/*.md`, never to `https://...`.
 
-For external URLs use standard markdown: `[Title](https://example.com)`.
+External URLs appear **only** in two places:
+1. The `url:` frontmatter field on source pages (the original article URL).
+2. The auto-generated `## Sources` section (rendered from that frontmatter). Never write external links into page body text.
 
 ---
 
@@ -456,6 +456,8 @@ Do not modify any file until the user gives an explicit instruction.
 - Do not ingest sources from outside `raw/`
 - Do not invent sources — only cite documents actually present in `raw/`
 - Do not use `[[wikilink]]` syntax — use standard relative markdown links
+- Do not link entities or people to external URLs in page body text — always create a `wiki/entities/*.md` page and link to that instead
+- Do not put external URLs in page body text at all — they belong only in `url:` frontmatter on source pages
 - Do not write workflow annotations like "(new)" or "(update)" in page content — these are planning notes only
 - Do not link to a page without first confirming the linked file exists and is about the correct subject
 - Do not modify existing `wiki/log.md` entries — only prepend new ones at the top
