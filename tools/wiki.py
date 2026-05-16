@@ -33,9 +33,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from agent import (PROVIDERS, get_client_and_model, orientation_message,
                    run_agent_turn, system_prompt, TOOL_FNS)
+from config import validate_config
 
 
 def main():
+    issues = validate_config()
+    for level, msg in issues:
+        print(f"[{'ERROR' if level == 'error' else 'WARNING'}] {msg}")
+    errors = [m for l, m in issues if l == "error"]
+    if errors:
+        print("\nFix these errors and restart.")
+        sys.exit(1)
+
     client, model, error = get_client_and_model()
     if error:
         print(f"Error: {error}")
