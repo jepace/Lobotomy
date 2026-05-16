@@ -1602,7 +1602,10 @@ def tasks_bulk_update():
 @app.route("/inbox")
 @require_login
 def inbox():
-    return render_template("inbox.html", items=list_inbox())
+    push_key = cfg_get("api", "push_key", "")
+    base_url = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
+    return render_template("inbox.html", items=list_inbox(),
+                           push_key=push_key, base_url=base_url)
 
 
 @app.route("/inbox/list")
@@ -1760,16 +1763,17 @@ def api_push():
         fm.append(f"tags: {json.dumps(tags)}")
     fm += ["---", ""]
 
-    dest.write_text("\n".join(fm) + (content or ""), encoding="utf-8")
+    _atomic_write(dest, "\n".join(fm) + (content or ""))
 
     return {
-        "ok":        True,
-        "duplicate": False,
-        "id":        dest.stem,
-        "filename":  base_name,
-        "title":     title,
-        "url":       url or None,
-        "saved":     today,
+        "ok":          True,
+        "duplicate":   False,
+        "id":          dest.stem,
+        "filename":    base_name,
+        "title":       title,
+        "url":         url or None,
+        "saved":       today,
+        "fetch_failed": bool(url and not content),
     }, 201, {"Access-Control-Allow-Origin": "*"}
 
 

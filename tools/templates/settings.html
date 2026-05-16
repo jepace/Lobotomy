@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'bookmarklet_macro.html' import bookmarklet_js %}
 {% block title %}Settings — Lobotomy{% endblock %}
 
 {% block head %}
@@ -387,13 +388,84 @@ function showMsg(el, text, cls) {
 }
 
 // ── Bookmarklet ────────────────────────────────────────────
+function _buildBookmarklet(base, key) {
+  // Written as a readable function then minified into the javascript: URI.
+  // Behaviour:
+  //   1. Show a small "Saving…" toast immediately so the user knows it worked.
+  //   2. POST to /api/push with url + title.
+  //   3. Update the toast: "Already saved ✓", "Saved: <title> ✓", or an error.
+  //   4. If fetch failed server-side, note that content will be fetched later.
+  //   5. Fade out after 3 s (errors stay until dismissed by clicking).
+  function _bm(base, key) {
+    var STYLE = 'position:fixed;top:16px;right:16px;max-width:320px;background:#1c1c1e;' +
+                'color:#f2f2f7;border-radius:12px;padding:14px 18px;z-index:2147483647;' +
+                'font:600 14px -apple-system,BlinkMacSystemFont,sans-serif;' +
+                'box-shadow:0 4px 24px rgba(0,0,0,.7);cursor:pointer;transition:opacity .3s;';
+    var el = document.createElement('div');
+    el.setAttribute('style', STYLE);
+    el.textContent = 'Saving…';
+    el.title = 'Click to dismiss';
+    el.onclick = function() { el.remove(); };
+    document.body.appendChild(el);
+
+    function show(msg, isError) {
+      el.textContent = msg;
+      if (isError) {
+        el.style.background = '#4a1010';
+      } else {
+        setTimeout(function() {
+          el.style.opacity = '0';
+          setTimeout(function() { el.remove(); }, 300);
+        }, 3000);
+      }
+    }
+
+    fetch(base + '/api/push', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: location.href, title: document.title, source: 'bookmarklet' })
+    })
+    .then(function(r) {
+      if (!r.ok) {
+        return r.json().catch(function() { return {}; }).then(function(d) {
+          throw new Error(d.error || ('Server error ' + r.status));
+        });
+      }
+      return r.json();
+    })
+    .then(function(d) {
+      if (d.duplicate) {
+        show('Already in Reading List ✓');
+      } else if (d.fetch_failed) {
+        show('Saved (content will be fetched on wikify) ✓');
+      } else {
+        show('Saved: ' + (d.title || 'Article') + ' ✓');
+      }
+    })
+    .catch(function(e) {
+      var msg = e && e.message ? e.message : String(e);
+      if (msg === 'Failed to fetch') msg = 'Could not reach Lobotomy — is it running?';
+      show('⚠ ' + msg, true);
+    });
+  }
+  // Minify: strip comments, collapse whitespace, build javascript: URI.
+  // We pass base and key as JSON literals so they survive the URI.
+  var src = _bm.toString()
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  var code = '(' + src + ')(' + JSON.stringify(base) + ',' + JSON.stringify(key) + ');void 0';
+  return 'javascript:' + code;
+}
 {% if push_key %}
 (function() {
-  const base = '{{ base_url }}';
-  const key  = '{{ push_key }}';
-  const js = `javascript:(function(){fetch('${base}/api/push',{method:'POST',headers:{'Authorization':'Bearer ${key}','Content-Type':'application/json'},body:JSON.stringify({url:location.href,title:document.title,source:'bookmarklet'})}).then(r=>r.json()).then(d=>{var el=document.createElement('div');el.style.cssText='position:fixed;top:16px;right:16px;background:#1c1c1e;color:#f2f2f7;border-radius:12px;padding:14px 18px;z-index:2147483647;font:600 14px -apple-system,sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.6)';el.textContent=d.duplicate?'Already saved ✓':'Saved: '+(d.title||'Article')+' ✓';document.body.appendChild(el);setTimeout(function(){el.style.opacity='0';el.style.transition='opacity .3s';setTimeout(function(){el.remove()},300)},2000)}).catch(function(e){alert('Lobotomy: '+e)})})();`;
+  var base = {{ base_url | tojson }};
+  var key  = {{ push_key | tojson }};
+  var js = _buildBookmarklet(base, key);
   document.getElementById('bm-link').href = js;
   document.getElementById('bm-code').textContent = js;
+  var scEl = document.getElementById('shortcut-url');
+  if (scEl) scEl.textContent = base + '/api/push';
 })();
 {% endif %}
 </script>
