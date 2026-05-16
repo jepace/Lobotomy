@@ -94,8 +94,6 @@
   <div class="wiki-topbar">
     <a href="/wiki/" style="color:var(--accent); text-decoration:none; font-size:22px; line-height:1;">‹</a>
     <h1>{{ title }}</h1>
-    {% if source_url %}<a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;" href="{{ source_url }}" target="_blank" rel="noopener">Source ↗</a>{% endif %}
-    {% if raw_source_url %}<a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;" href="{{ raw_source_url }}" target="_blank">Raw ↗</a>{% endif %}
     <a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;" href="/wiki/{{ current_path }}/edit">Edit</a>
     <a class="chat-about" href="/chat" onclick="setChatPrompt('Tell me about {{ title }}')">Ask AI</a>
   </div>
@@ -105,6 +103,7 @@
     <a class="wiki-pill {% if current_path == s.path or current_path.startswith(s.path) %}current{% endif %}"
        href="/wiki/{{ s.path }}">{{ s.label }}</a>
     {% endfor %}
+    <a class="wiki-pill" href="/raw/" style="margin-left:auto">Raw</a>
   </div>
 
   <div class="wiki-search-wrap">

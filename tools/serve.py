@@ -1028,34 +1028,6 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
         log.error("_link_raw_source_to_wiki failed for %s: %s", raw_path.name, e)
 
 
-def _rebuild_raw_index() -> None:
-    """Regenerate raw/index.md listing all raw files with their state."""
-    import json as _json
-    today = datetime.date.today().isoformat()
-    rows = []
-    for f in sorted(RAW_DIR.iterdir()):
-        if not f.is_file() or f.name.startswith(".") or f.name == "index.md":
-            continue
-        try:
-            fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
-        except Exception:
-            fm = {}
-        title = fm.get("title", f.stem)
-        added = str(fm.get("added") or fm.get("saved") or "")
-        wikified = fm.get("wikified", False)
-        wiki_page = fm.get("wiki_page", "")
-        wiki_cell = f"[source](../wiki/{wiki_page})" if wiki_page else ""
-        wik_cell = "✓" if wikified else ""
-        rows.append(f"| [{f.name}]({f.name}) | {title} | {added} | {wik_cell} | {wiki_cell} |")
-    header = (
-        f"---\ntitle: \"Raw Sources\"\nupdated: {today}\n---\n\n"
-        "# Raw Sources\n\n"
-        "| File | Title | Added | Wikified | Wiki Page |\n"
-        "|------|-------|-------|----------|-----------|\n"
-    )
-    content = header + "\n".join(rows) + "\n"
-    _atomic_write(RAW_DIR / "index.md", content)
-
 
 def _mark_inbox_wikified(filename: str) -> None:
     """Mark a raw file as wikified in its frontmatter. Safe to call from any thread."""
@@ -1089,7 +1061,7 @@ def _mark_inbox_wikified(filename: str) -> None:
         p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
         log.info("Marked wikified: %s", filename)
         _link_raw_source_to_wiki(p, fm.get("url", "").strip())
-        _rebuild_raw_index()
+        _rebuild_index({})
         result = _fix_wiki_links({})
         log.info("fix_wiki_links: %s", result)
         result = _rebuild_index({})
@@ -1414,6 +1386,23 @@ def wiki_fix_broken_links():
             pages_fixed += 1
 
     return redirect(url_for("wiki_lint"))
+
+
+@app.route("/raw/")
+@app.route("/raw")
+@require_login
+def raw_index():
+    from flask import redirect
+    index = RAW_DIR / "index.md"
+    if not index.exists():
+        _rebuild_index({})
+    return render_template("wiki.html",
+               title="Raw Sources",
+               content=render_md(index),
+               current_path="",
+               sections=wiki_sections(),
+               source_url=None,
+               raw_source_url=None)
 
 
 @app.route("/raw/<path:filename>")
@@ -2270,7 +2259,7 @@ def inbox_archive():
                 fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
         fm_lines.append("---")
         src.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
-        _rebuild_raw_index()
+        _rebuild_index({})
     except Exception as e:
         log.error("inbox_archive failed for %s: %s", name, e)
         return {"error": str(e)}, 500

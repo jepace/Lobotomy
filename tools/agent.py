@@ -702,7 +702,7 @@ def _done(args: dict) -> str:
 
 
 def _rebuild_index(args: dict) -> str:
-    """Rebuild wiki/index.md from frontmatter of all pages in sources/, entities/, concepts/, synthesis/."""
+    """Rebuild wiki/index.md, subdirectory indexes, and raw/index.md."""
     import re
 
     def parse_title_updated(text: str) -> tuple[str, str]:
@@ -767,7 +767,7 @@ def _rebuild_index(args: dict) -> str:
     prose = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose)
     _atomic_write(index_path, prose + "\n\n---\n\n" + "\n\n---\n\n".join(blocks) + "\n")
 
-    # Also write per-subdirectory index files
+    # Per-subdirectory wiki index files
     section_blocks = dict(zip([s for _, s in sections], blocks))
     for heading, subdir in sections:
         d = WIKI_DIR / subdir
@@ -775,9 +775,6 @@ def _rebuild_index(args: dict) -> str:
             continue
         sub_index = d / "index.md"
         existing_sub = sub_index.read_text(encoding="utf-8") if sub_index.exists() else ""
-        # Find the auto-generated block boundary: "\n---\n\n## <Heading>"
-        # This pattern is unique to the divider _rebuild_index writes, so it won't
-        # be confused with YAML frontmatter delimiters or any other "---" in the prose.
         divider_sub = existing_sub.find(f"\n---\n\n## {heading}")
         if divider_sub != -1:
             prose_sub = existing_sub[:divider_sub].rstrip()
@@ -786,15 +783,48 @@ def _rebuild_index(args: dict) -> str:
         else:
             prose_sub = f"# {heading}\n\n_Last updated: {today}_"
         prose_sub = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose_sub)
-        # Rewrite entries with relative paths (no subdir/ prefix needed from inside the subdir)
         block_local = section_blocks[subdir].replace(f"({subdir}/", "(")
         _atomic_write(sub_index, prose_sub + "\n\n---\n\n" + block_local + "\n")
+
+    # raw/index.md — parallel to wiki subdirectory indexes
+    raw_entries = []
+    for f in sorted(RAW_DIR.iterdir()):
+        if not f.is_file() or f.name == "index.md" or f.name.startswith("."):
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+            m = re.match(r"^---\s*\n(.*?)\n---\s*\n", text, re.DOTALL)
+            meta: dict = {}
+            if m:
+                for line in m.group(1).splitlines():
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        meta[k.strip()] = v.strip().strip('"').strip("'")
+            title      = meta.get("title") or f.stem.replace("-", " ").title()
+            added      = meta.get("added", "")
+            wikified   = meta.get("wikified", "false").lower() == "true"
+            wiki_page  = meta.get("wiki_page", "")
+            status     = "✓" if wikified else "—"
+            wiki_link  = f"[wiki](../wiki/{wiki_page})" if wiki_page else ""
+            raw_entries.append(f"| [{f.name}]({f.name}) | {title} | {added} | {status} | {wiki_link} |")
+        except Exception:
+            raw_entries.append(f"| [{f.name}]({f.name}) | | | | |")
+
+    raw_index_path = RAW_DIR / "index.md"
+    raw_header = (
+        f"# Raw Sources\n\n_Last updated: {today}_\n\n"
+        "| File | Title | Added | Wikified | Wiki Page |\n"
+        "|------|-------|-------|----------|-----------|\n"
+    )
+    _atomic_write(raw_index_path, raw_header + "\n".join(raw_entries) + "\n")
 
     total = sum(
         sum(1 for f in (WIKI_DIR / s).glob("*.md") if f.name != "index.md")
         for _, s in sections if (WIKI_DIR / s).is_dir()
     )
-    return f"Rebuilt wiki/index.md and subdirectory indexes — {total} pages across {len(sections)} sections."
+    raw_total = len(raw_entries)
+    return (f"Rebuilt wiki/index.md ({total} pages), subdirectory indexes, "
+            f"and raw/index.md ({raw_total} raw files).")
 
 
 def heal_index_if_stale() -> None:
