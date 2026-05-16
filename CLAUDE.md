@@ -24,7 +24,6 @@ Utility CLIs (no LLM needed):
 ```sh
 python3 tools/search.py "keyword"          # full-text search across wiki
 python3 tools/tasks.py --due-today         # filter tasks.md
-python3 tools/autolink_wiki.py [--dry-run] # one-shot cross-linker
 python3 tools/repair_links.py              # fix broken relative paths
 sh tools/lint.sh                           # shell-based broken-link checker
 ```
@@ -45,12 +44,9 @@ sh tools/lint.sh                           # shell-based broken-link checker
 
 ### The autolinker (common bug surface)
 
-Two autolinker entry points exist — keep them in sync conceptually:
+**`tools/agent.py:_autolink()`** — called automatically after every `create_page` or `write_file`. Uses a combined regex where group 1 protects existing links and group 2 matches titles bare or with a sub-span already linked (via `_title_alts()`). When a partial match is found (e.g. `CASA of [Monterey County](url)`), the inner link is stripped and the whole phrase is replaced with the longer-title link.
 
-- **`tools/agent.py:_autolink()`** — called automatically after every `create_page` or `write_file`. Splits body on existing links (`_LINK_RE.split`), substitutes bare title occurrences only in non-link segments, then reassembles. After each substitution it re-splits so newly inserted links are protected from subsequent passes.
-- **`tools/autolink_wiki.py`** — standalone one-shot script for batch re-linking the whole wiki. Uses a similar but independently maintained regex approach.
-
-The critical invariant: **never match inside existing markdown links**. The split/reassemble pattern in `agent.py:_autolink()` is what enforces this. If you see nested links like `[[text](path)](path)`, the autolinker processed a newly-inserted link as bare text on a subsequent pass.
+The critical invariant: **never match inside existing markdown links**. Group 1 of the combined regex takes priority at each position, consuming existing links before group 2 can fire.
 
 ### Wiki page lifecycle
 

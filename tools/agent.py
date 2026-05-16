@@ -4,7 +4,9 @@
 import collections
 import json
 import logging
+import os
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -162,7 +164,7 @@ _RAW_READ_LIMIT  = 60_000  # chars for raw source files
 _WIKI_READ_LIMIT = 20_000  # chars for wiki pages — generous but prevents context blowout
 
 
-def _read_file(path: str) -> "str | list":
+def _read_file(path: str, offset: int = 0) -> "str | list":
     """Return a string, or a list of content blocks for image/image-only PDF."""
     p = REPO_ROOT / path
     if not p.exists():
@@ -178,8 +180,10 @@ def _read_file(path: str) -> "str | list":
     try:
         p.resolve().relative_to((RAW_DIR / "inbox").resolve())
         stripped = text.strip()
-        if stripped.startswith("http") and "\n" not in stripped and stripped in _fetch_cache:
-            return _fetch_cache[stripped]
+        if stripped.startswith("http") and "\n" not in stripped:
+            with _fetch_cache_lock:
+                if stripped in _fetch_cache:
+                    return _fetch_cache[stripped]
     except ValueError:
         pass
     try:
@@ -191,8 +195,14 @@ def _read_file(path: str) -> "str | list":
             limit = _WIKI_READ_LIMIT
         except ValueError:
             limit = _RAW_READ_LIMIT
+    total = len(text)
+    if offset:
+        text = text[offset:]
     if len(text) > limit:
-        text = text[:limit] + f"\n\n[TRUNCATED — {len(text)} total chars, showing first {limit}]"
+        remaining = total - offset - limit
+        text = text[:limit] + f"\n\n[TRUNCATED — showing chars {offset}–{offset+limit} of {total} total. Call read_file with offset={offset+limit} to continue.]"
+    elif offset:
+        text = text + f"\n\n[END OF FILE — read chars {offset}–{total} of {total} total.]"
     return text
 
 
@@ -404,7 +414,7 @@ def _backfill_entity_sources(entity_path: str) -> None:
     new_fm = re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{src_str}]", fm_text, flags=re.MULTILINE)
     updated = new_fm + content[len(fm_text):]
     updated = _inject_sources_section(updated, p)
-    p.write_text(updated, encoding="utf-8")
+    _atomic_write(p, updated)
 
 
 def _autolink_sources_if_entity(path: str) -> None:
@@ -420,6 +430,22 @@ def _autolink_sources_if_entity(path: str) -> None:
         _backfill_entity_sources(path)
 
 
+def _atomic_write(p: Path, content: str) -> None:
+    """Write content to p atomically: write to a sibling .tmp file, then rename."""
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_path, p)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def _write_file(path: str, content: str) -> str:
     p = REPO_ROOT / path
     try:
@@ -433,10 +459,9 @@ def _write_file(path: str, content: str) -> str:
         return "Error: write_file refused on wiki/log.md — use prepend_log to add entries."
     if p.resolve() == (WIKI_DIR / "index.md").resolve():
         return "Error: write_file refused on wiki/index.md — it is auto-generated; use rebuild_index if needed."
-    p.parent.mkdir(parents=True, exist_ok=True)
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
-    p.write_text(content, encoding="utf-8")
+    _atomic_write(p, content)
     _autolink({"path": path})
     _autolink_sources_if_entity(path)
     _rebuild_index({})
@@ -457,6 +482,7 @@ def _list_dir(directory: str) -> str:
 
 
 _fetch_cache: dict[str, str] = {}
+_fetch_cache_lock = threading.Lock()
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -501,15 +527,16 @@ def _backfill_inbox_from_fetch(url: str, content: str) -> None:
             new_text = "\n".join(fm_lines) + "\n\n" + content
         else:
             new_text = content
-        f.write_text(new_text, encoding="utf-8")
+        _atomic_write(f, new_text)
         log.debug("Backfilled fetched content into %s", f.name)
         return
 
 
 def _fetch_url(url: str) -> str:
-    if url in _fetch_cache:
-        log.debug("fetch_url cache hit: %s", url)
-        return _fetch_cache[url]
+    with _fetch_cache_lock:
+        if url in _fetch_cache:
+            log.debug("fetch_url cache hit: %s", url)
+            return _fetch_cache[url]
     import urllib.parse
     from html.parser import HTMLParser
     from http.cookiejar import CookieJar
@@ -563,11 +590,13 @@ def _fetch_url(url: str) -> str:
             )
         else:
             msg = f"Error fetching {url}: {e}"
-        _fetch_cache[url] = msg
+        with _fetch_cache_lock:
+            _fetch_cache[url] = msg
         return msg
     except Exception as e:
         msg = f"Error: {e}"
-        _fetch_cache[url] = msg
+        with _fetch_cache_lock:
+            _fetch_cache[url] = msg
         return msg
 
     if "html" in ct.lower():
@@ -584,12 +613,14 @@ def _fetch_url(url: str) -> str:
                 "The page may require JavaScript to render (e.g. a SPA or Cloudflare-protected site).\n"
                 "Save the article manually and drop it in raw/inbox/ instead."
             )
-            _fetch_cache[url] = msg
+            with _fetch_cache_lock:
+                _fetch_cache[url] = msg
             return msg
     else:
         text = raw.decode("utf-8", errors="replace")
     text = text[:50_000]
-    _fetch_cache[url] = text
+    with _fetch_cache_lock:
+        _fetch_cache[url] = text
     _backfill_inbox_from_fetch(url, text)
     return text
 
@@ -607,7 +638,7 @@ def _prepend_log(entry: str) -> str:
     fm_open = text.find("---")
     fm_close = text.find("\n---", fm_open + 3)
     if fm_close == -1:
-        log_path.write_text(text.rstrip() + "\n\n" + entry.strip() + "\n", encoding="utf-8")
+        _atomic_write(log_path, text.rstrip() + "\n\n" + entry.strip() + "\n")
         return "Log entry prepended to wiki/log.md (no frontmatter close found)"
 
     # Find the --- divider that separates the prose intro from the entries.
@@ -618,15 +649,13 @@ def _prepend_log(entry: str) -> str:
         insert_at = fm_close + 4  # character after the closing ---\n
         before = text[:insert_at]
         after  = text[insert_at:]
-        log_path.write_text(before + "\n" + entry.strip() + "\n\n" + after.lstrip("\n"),
-                            encoding="utf-8")
+        _atomic_write(log_path, before + "\n" + entry.strip() + "\n\n" + after.lstrip("\n"))
         return "Log entry prepended to wiki/log.md (inserted after frontmatter)"
 
     # Insert new entry immediately after the divider.
     before = text[:divider + 5]   # up to and including \n---\n
     after  = text[divider + 5:]   # existing entries
-    log_path.write_text(before + "\n" + entry.strip() + "\n\n" + after.lstrip("\n"),
-                        encoding="utf-8")
+    _atomic_write(log_path, before + "\n" + entry.strip() + "\n\n" + after.lstrip("\n"))
     return "Log entry prepended to wiki/log.md"
 
 
@@ -702,7 +731,7 @@ def _rebuild_index(args: dict) -> str:
     cut = existing.find("\n## ")
     prose = (existing[:cut].rstrip() if cut != -1 else existing.rstrip())
     prose = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose)
-    index_path.write_text(prose + "\n\n---\n\n" + "\n\n---\n\n".join(blocks) + "\n", encoding="utf-8")
+    _atomic_write(index_path, prose + "\n\n---\n\n" + "\n\n---\n\n".join(blocks) + "\n")
 
     # Also write per-subdirectory index files
     section_blocks = dict(zip([s for _, s in sections], blocks))
@@ -725,13 +754,33 @@ def _rebuild_index(args: dict) -> str:
         prose_sub = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose_sub)
         # Rewrite entries with relative paths (no subdir/ prefix needed from inside the subdir)
         block_local = section_blocks[subdir].replace(f"({subdir}/", "(")
-        sub_index.write_text(prose_sub + "\n\n---\n\n" + block_local + "\n", encoding="utf-8")
+        _atomic_write(sub_index, prose_sub + "\n\n---\n\n" + block_local + "\n")
 
     total = sum(
         sum(1 for f in (WIKI_DIR / s).glob("*.md") if f.name != "index.md")
         for _, s in sections if (WIKI_DIR / s).is_dir()
     )
     return f"Rebuilt wiki/index.md and subdirectory indexes — {total} pages across {len(sections)} sections."
+
+
+def heal_index_if_stale() -> None:
+    """Rebuild wiki/index.md if any wiki page is newer than it — call at startup."""
+    index_path = WIKI_DIR / "index.md"
+    index_mtime = index_path.stat().st_mtime if index_path.exists() else 0.0
+    stale = False
+    for subdir in ("sources", "entities", "concepts", "synthesis"):
+        d = WIKI_DIR / subdir
+        if not d.is_dir():
+            continue
+        for f in d.glob("*.md"):
+            if f.name != "index.md" and f.stat().st_mtime > index_mtime:
+                stale = True
+                break
+        if stale:
+            break
+    if stale:
+        log.info("wiki/index.md is stale — rebuilding on startup")
+        _rebuild_index({})
 
 
 def _title_alts(title: str) -> str:
@@ -843,7 +892,7 @@ def _autolink(args: dict) -> str:
 
     result = body
 
-    target_p.write_text(frontmatter + result, encoding="utf-8")
+    _atomic_write(target_p, frontmatter + result)
     return f"Autolinked {linked} title(s) in {target_str}."
 
 
@@ -876,7 +925,7 @@ def _fix_wiki_links(_args: dict) -> str:
             text, n = bad_link_re.subn(_fix, text)
 
             if n and text != original:
-                page.write_text(text, encoding="utf-8")
+                _atomic_write(page, text)
                 total_fixed += n
                 pages_fixed += 1
 
@@ -1000,7 +1049,7 @@ def _create_page(args: dict) -> str:
     content = frontmatter + _strip_broken_wiki_links(body.lstrip("\n"), p)
     content = _inject_sources_section(content, p)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content, encoding="utf-8")
+    _atomic_write(p, content)
     _autolink({"path": path})
     _autolink_sources_if_entity(path)
     _rebuild_index({})
@@ -1088,7 +1137,7 @@ def _validate_ingest(args: dict) -> str:
 
 
 TOOL_FNS = {
-    "read_file":       lambda a: _read_file(a["path"]),
+    "read_file":       lambda a: _read_file(a["path"], int(a.get("offset", 0))),
     "write_file":       lambda a: _write_file(a["path"], a["content"]),
     "list_dir":         lambda a: _list_dir(a["directory"]),
     "fetch_url":        lambda a: _fetch_url(a["url"]),
@@ -1107,10 +1156,17 @@ TOOL_DEFS = [
         "type": "function",
         "function": {
             "name":        "read_file",
-            "description": "Read any file in the repository (wiki pages, raw sources, CLAUDE.md, etc.).",
+            "description": (
+                "Read any file in the repository (wiki pages, raw sources, CLAUDE.md, etc.). "
+                "Large files are truncated; the truncation message tells you the total size and "
+                "the next offset to use. Call again with offset=N to read subsequent pages."
+            ),
             "parameters":  {
                 "type": "object",
-                "properties": {"path": {"type": "string", "description": "Path relative to repo root"}},
+                "properties": {
+                    "path":   {"type": "string",  "description": "Path relative to repo root"},
+                    "offset": {"type": "integer", "description": "Character offset to start reading from (default 0)"},
+                },
                 "required": ["path"],
             },
         },
@@ -1448,7 +1504,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
         if not tool_calls:
             break
 
-        for tc in tool_calls:
+        for i, tc in enumerate(tool_calls):
             fn_name = (tc.get("function") or {}).get("name") or ""
             fn = TOOL_FNS.get(fn_name)
             try:
@@ -1464,6 +1520,15 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                 payload = result[len(_DONE_SENTINEL):]
                 ingested_flag, _, summary = payload.partition("|")
                 log.info("Agent called done() in round %d (ingested=%s): %s", _round, ingested_flag, summary[:120])
+                # Append placeholder responses for any unexecuted tool calls in this batch
+                # so the message history stays consistent (every tool_call must have a response).
+                remaining = tool_calls[i + 1:]
+                if remaining:
+                    log.warning("done() called mid-batch with %d unexecuted tool call(s) — adding placeholders", len(remaining))
+                for rtc in remaining:
+                    rname = (rtc.get("function") or {}).get("name") or "unknown_tool"
+                    messages.append({"role": "tool", "tool_call_id": rtc.get("id", ""),
+                                     "name": rname, "content": "Skipped — done() called in same batch."})
                 if summary:
                     messages.append({"role": "assistant", "content": summary})
                 messages.append({"role": "system", "content": f"__ingested__:{ingested_flag}"})
@@ -1669,7 +1734,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
 
         _had_tool_calls = True
         _tools_since_last_continuation += len(tool_calls)
-        for tc in tool_calls:
+        for i, tc in enumerate(tool_calls):
             fn_name = (tc.get("function") or {}).get("name") or ""
             fn = TOOL_FNS.get(fn_name)
             try:
@@ -1689,6 +1754,14 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                 payload = result[len(_DONE_SENTINEL):]
                 ingested_flag, _, summary = payload.partition("|")
                 log.info("Agent called done() in round %d (ingested=%s): %s", _round, ingested_flag, summary[:120])
+                # Append placeholder responses for any unexecuted tool calls in this batch.
+                remaining = tool_calls[i + 1:]
+                if remaining:
+                    log.warning("done() called mid-batch with %d unexecuted tool call(s) — adding placeholders", len(remaining))
+                for rtc in remaining:
+                    rname = (rtc.get("function") or {}).get("name") or "unknown_tool"
+                    messages.append({"role": "tool", "tool_call_id": rtc.get("id", ""),
+                                     "name": rname, "content": "Skipped — done() called in same batch."})
                 if summary:
                     yield json.dumps({"type": "text", "content": summary}) + "\n"
                 yield json.dumps({"type": "done", "ingested": ingested_flag == "1"}) + "\n"
