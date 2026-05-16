@@ -922,6 +922,19 @@ def chat_send():
                 f'{message}\n\n'
                 f'<file path="raw/{inbox_path.name}">\n{file_content}\n</file>'
             )
+            # Prime the globals that _create_page uses for url: and raw_source: fallbacks.
+            # Without this, the LLM skips read_file (content already injected) so the
+            # globals never get set and frontmatter ends up missing both fields.
+            import agent as _agent
+            stripped = file_content.strip()
+            _agent._last_inbox_path = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
+            if stripped.startswith("http") and "\n" not in stripped:
+                _agent._last_inbox_url = stripped
+            else:
+                import re as _re
+                _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', file_content, _re.MULTILINE)
+                if _m:
+                    _agent._last_inbox_url = _m.group(1).strip()
         except OSError:
             pass  # file unreadable — AI will fall back to read_file normally
 
