@@ -57,6 +57,7 @@ RSYNC_ARGS="$RSYNC_ARGS --exclude=.env"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=deploy.sh"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=README.md"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=CLAUDE.md"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=LOBOTOMY.md"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=tools/server.log"
 
 # Exclude data dirs if not full deploy
