@@ -193,6 +193,7 @@
   {% endif %}
 
   <!-- Bookmarklet / Shortcut setup -->
+  {% if push_key %}
   <div style="margin:16px 12px 0; padding:14px; background:var(--bg2); border-radius:12px;">
     <div style="font-size:13px; font-weight:700; margin-bottom:10px;">Save from your browser</div>
 
@@ -205,9 +206,14 @@
       <div style="font-size:12px; color:var(--text2); margin-bottom:6px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;">iOS Shortcut (share sheet)</div>
       <div style="font-size:12px; color:var(--text2); margin-bottom:6px;">Create a Shortcut that sends the current URL to Lobotomy — then it appears in your iOS share sheet.</div>
       <div style="font-size:11px; font-family:monospace; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px; color:var(--text); white-space:pre-wrap; word-break:break-all;" id="shortcut-url"></div>
-      <div style="font-size:11px; color:var(--text2); margin-top:6px;">In Shortcuts app: New → <em>Get Contents of URL</em> → paste the URL above with <code>?url=[Shortcut Input]&amp;title=[Name]</code> → set method GET → add <em>Show Result</em>. Enable in share sheet under Shortcut settings.</div>
+      <div style="font-size:11px; color:var(--text2); margin-top:6px;">In Shortcuts app: New → <em>Get Contents of URL</em> → paste the URL above → set method POST, Content-Type application/json, body <code>{"url":"[Shortcut Input]","title":"[Name]"}</code> → add <em>Show Result</em>. Enable in share sheet.</div>
     </div>
   </div>
+  {% else %}
+  <div style="margin:16px 12px 0; padding:14px; background:var(--bg2); border-radius:12px; font-size:13px; color:var(--text2);">
+    Add <code>api.push_key</code> to config.json to enable the bookmarklet and iOS Shortcut.
+  </div>
+  {% endif %}
 
   <div style="height:20px;"></div>
 </div>
@@ -503,6 +509,14 @@ async function wikifyItem(name, idx) {
       badge.className = 'wikified-badge';
       badge.textContent = 'Wikified ✓';
       metaEl.appendChild(badge);
+      if (wikiData && wikiData.wiki_path) {
+        const link = document.createElement('a');
+        link.href = '/wiki/' + wikiData.wiki_path;
+        link.onclick = e => e.stopPropagation();
+        link.style = 'font-size:11px;color:var(--accent);text-decoration:none;margin-left:4px;';
+        link.textContent = 'Wiki ↗';
+        metaEl.appendChild(link);
+      }
     }
   } catch(e) {
     progress.innerHTML += `<div class="prog-error">Failed: ${e.message}</div>`;
@@ -531,5 +545,67 @@ async function wikifyAll() {
   }
   allBtn.textContent = `All Done ✓`;
 }
+
+{% if push_key %}
+// ── Bookmarklet + iOS Shortcut ────────────────────────────────────────────────
+function _buildBookmarklet(base, key) {
+  function _bm(base, key) {
+    var STYLE = 'position:fixed;top:16px;right:16px;max-width:320px;background:#1c1c1e;' +
+                'color:#f2f2f7;border-radius:12px;padding:14px 18px;z-index:2147483647;' +
+                'font:600 14px -apple-system,BlinkMacSystemFont,sans-serif;' +
+                'box-shadow:0 4px 24px rgba(0,0,0,.7);cursor:pointer;transition:opacity .3s;';
+    var el = document.createElement('div');
+    el.setAttribute('style', STYLE);
+    el.textContent = 'Saving…';
+    el.title = 'Click to dismiss';
+    el.onclick = function() { el.remove(); };
+    document.body.appendChild(el);
+    function show(msg, isError) {
+      el.textContent = msg;
+      if (isError) {
+        el.style.background = '#4a1010';
+      } else {
+        setTimeout(function() {
+          el.style.opacity = '0';
+          setTimeout(function() { if (el.parentNode) el.remove(); }, 300);
+        }, 3000);
+      }
+    }
+    fetch(base + '/api/push', {
+      method: 'POST',
+      headers: {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
+      body: JSON.stringify({url: location.href, title: document.title, source: 'bookmarklet'})
+    })
+    .then(function(r) {
+      if (!r.ok) {
+        return r.json().catch(function() { return {}; }).then(function(d) {
+          throw new Error(d.error || ('Server error ' + r.status));
+        });
+      }
+      return r.json();
+    })
+    .then(function(d) {
+      if (d.duplicate) { show('Already in Reading List ✓'); }
+      else if (d.fetch_failed) { show('Saved – content fetched on wikify ✓'); }
+      else { show('Saved: ' + (d.title || 'Article') + ' ✓'); }
+    })
+    .catch(function(e) {
+      var msg = e && e.message ? e.message : String(e);
+      if (msg === 'Failed to fetch') msg = 'Could not reach Lobotomy — is it running?';
+      show('⚠ ' + msg, true);
+    });
+  }
+  var src = _bm.toString().replace(/\/\/[^\n]*/g, '').replace(/\s+/g, ' ').trim();
+  return 'javascript:(' + src + ')(' + JSON.stringify(base) + ',' + JSON.stringify(key) + ');void 0';
+}
+(function() {
+  var base = {{ base_url | tojson }};
+  var key  = {{ push_key | tojson }};
+  var bmLink = document.getElementById('bookmarklet-link');
+  if (bmLink) bmLink.href = _buildBookmarklet(base, key);
+  var scEl = document.getElementById('shortcut-url');
+  if (scEl) scEl.textContent = base + '/api/push';
+})();
+{% endif %}
 </script>
 {% endblock %}

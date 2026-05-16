@@ -180,10 +180,18 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
     try:
         p.resolve().relative_to((RAW_DIR / "inbox").resolve())
         stripped = text.strip()
+        global _last_inbox_url
         if stripped.startswith("http") and "\n" not in stripped:
+            _last_inbox_url = stripped
             with _fetch_cache_lock:
                 if stripped in _fetch_cache:
                     return _fetch_cache[stripped]
+        else:
+            # Inbox item with frontmatter — extract url: field
+            import re as _re
+            _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', text, _re.MULTILINE)
+            if _m:
+                _last_inbox_url = _m.group(1).strip()
     except ValueError:
         pass
     try:
@@ -483,6 +491,7 @@ def _list_dir(directory: str) -> str:
 
 _fetch_cache: dict[str, str] = {}
 _fetch_cache_lock = threading.Lock()
+_last_inbox_url: str = ""
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -1020,6 +1029,9 @@ def _create_page(args: dict) -> str:
     tags    = args.get("tags", [])
     body    = args.get("body", "")
     sources = args.get("sources", [])
+    url     = args.get("url", "")
+    if not url and pg_type == "source":
+        url = _last_inbox_url
 
     if not path or not title or not pg_type:
         return "Error: path, title, and type are required."
@@ -1033,18 +1045,23 @@ def _create_page(args: dict) -> str:
     today = datetime.date.today().isoformat()
     existed = p.exists()
     if existed:
-        # Preserve original created date
+        # Preserve original created date and url
         old = p.read_text(encoding="utf-8", errors="replace")
         m = re.search(r"created:\s*(\d{4}-\d{2}-\d{2})", old)
         created = m.group(1) if m else today
+        if not url:
+            mu = re.search(r'^url:\s*["\']?([^"\'\n]+)["\']?', old, re.MULTILINE)
+            if mu:
+                url = mu.group(1).strip()
     else:
         created = today
 
     tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]))
     src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]))
+    url_line = f'url: "{url}"\n' if url else ""
     frontmatter = (
         f'---\ntitle: "{title}"\ntype: {pg_type}\ntags: [{tag_str}]\n'
-        f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n---\n\n'
+        f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n{url_line}---\n\n'
     )
     content = frontmatter + _strip_broken_wiki_links(body.lstrip("\n"), p)
     content = _inject_sources_section(content, p)
@@ -1298,6 +1315,7 @@ TOOL_DEFS = [
                     "tags":    {"type": "array",  "items": {"type": "string"}, "description": "List of lowercase hyphenated tags"},
                     "body":    {"type": "string", "description": "Full page body content (no frontmatter — that is added automatically)"},
                     "sources": {"type": "array",  "items": {"type": "string"}, "description": "List of source page paths relative to wiki/, e.g. [\"sources/my-article.md\"]"},
+                    "url":     {"type": "string", "description": "Original article URL. Source pages only — omit for entity/concept/synthesis pages."},
                 },
                 "required": ["path", "title", "type", "body"],
             },
@@ -1310,7 +1328,7 @@ TOOL_DEFS = [
 # ---------------------------------------------------------------------------
 
 def system_prompt() -> str:
-    schema_path = REPO_ROOT / "AGENT.md"
+    schema_path = REPO_ROOT / "LOBOTOMY.md"
     if not schema_path.exists():
         schema_path = REPO_ROOT / "CLAUDE.md"  # fallback during transition
     base = schema_path.read_text(encoding="utf-8")

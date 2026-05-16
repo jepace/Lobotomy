@@ -4,12 +4,6 @@ Read this file completely before doing anything else. It is the authoritative gu
 operation in this wiki. If you are an LLM session that has just been pointed at this repository,
 this file tells you everything you need to know to operate correctly.
 
-## Git Branch Policy
-
-Always push to **main**. Do not use feature branches unless the user explicitly requests one.
-
----
-
 ## 1. What This Wiki Is
 
 This is a **personal knowledge base maintained by LLMs**. It is not a RAG system. Sources are not
@@ -23,13 +17,14 @@ Three layers:
 |-------|----------|---------------|
 | Raw sources | `raw/` | You (the human) — immutable |
 | Wiki pages | `wiki/` | The LLM |
-| This schema | `AGENT.md` | Defined once, evolved carefully |
+| This schema | `LOBOTOMY.md` | Defined once, evolved carefully |
 
 Key invariants:
 - **Raw sources are immutable.** The LLM reads `raw/` but never modifies or deletes anything there.
 - **Every wiki claim has a source.** Pages cite which raw source supports each claim.
 - **Contradictions are surfaced, not resolved.** The LLM flags disagreements; the human decides.
 - **The log is append-only.** Every operation is recorded and never deleted.
+- **Cross-links are automatic.** Write bare entity/concept names in page body text — the autolinker adds wiki links after every page write. Never write internal links manually.
 - **Cold-start friendly.** A fresh LLM session can orient itself from this file alone.
 
 ---
@@ -42,7 +37,7 @@ raw/inbox/             Drop articles, URLs, or notes here for later processing.
 raw/assets/            Binary attachments (images, PDFs) referenced by raw sources.
 
 wiki/                  All LLM-generated content lives here.
-wiki/index.md          Master catalog. Every wiki page listed here exactly once.
+wiki/index.md          Master catalog. Auto-generated — do not read or edit directly.
 wiki/log.md            Append-only operation log. Never delete entries.
 wiki/overview.md       High-level synthesis. Updated after every ingest.
 wiki/sources/          One summary page per ingested source document.
@@ -50,10 +45,6 @@ wiki/entities/         People, organizations, products, projects, codebases.
 wiki/concepts/         Ideas, techniques, frameworks, algorithms, terms.
 wiki/synthesis/        Cross-source analyses, comparisons, timelines, open questions.
 
-tools/                 Helper scripts. Do not modify unless explicitly asked.
-tools/search.py        Keyword search across wiki pages.
-tools/tasks.py         Task filter/query CLI.
-tools/agent.py         LLM agent core — tool implementations, agentic loops.
 ```
 
 ---
@@ -88,7 +79,7 @@ url: "https://original-article-url"   # source pages only; omit on entity/concep
 | `created` | YYYY-MM-DD | Date first created. Never change. |
 | `updated` | YYYY-MM-DD | Date of most recent edit. Update on every write. |
 | `sources` | list of strings | Relative paths from `wiki/` to supporting source pages |
-| `url` | string (quoted) | Original article URL. Source pages only. |
+| `url` | string (quoted) | Original article URL. Source pages only. Set automatically — do not supply. |
 
 ### Standard heading structures per page type
 
@@ -106,7 +97,7 @@ url: "https://original-article-url"   # source pages only; omit on entity/concep
 - Key Works / Products
 - Claims & Positions
 - Contradictions *(if any)*
-- Sources
+- Sources *(auto-generated — do not write)*
 
 **Concept page** (`wiki/concepts/`):
 - Definition
@@ -115,14 +106,14 @@ url: "https://original-article-url"   # source pages only; omit on entity/concep
 - Applications
 - Variants & Related Concepts
 - Contradictions / Debates *(if any)*
-- Sources
+- Sources *(auto-generated — do not write)*
 
 **Synthesis page** (`wiki/synthesis/`):
 - Question / Thesis
 - Evidence For
 - Evidence Against
 - Open Questions
-- Sources
+- Sources *(auto-generated — do not write)*
 
 ---
 
@@ -144,12 +135,12 @@ Use **standard relative markdown links** for all internal links. Do not use `[[w
 
 - From inside `wiki/sources/`: `[Yann LeCun](../entities/yann-lecun.md)`
 - From inside `wiki/entities/`: `[Attention Mechanism](../concepts/attention-mechanism.md)`
-- From `wiki/index.md` or `wiki/overview.md`: `[Attention Mechanism](concepts/attention-mechanism.md)`
+- From `wiki/overview.md`: `[Attention Mechanism](concepts/attention-mechanism.md)`
 
 When you mention an entity or concept that has (or should have) its own page, always link it with a relative wiki link — never with an external URL. Entity links always point to `wiki/entities/*.md`, never to `https://...`.
 
 External URLs appear **only** in two places:
-1. The `url:` frontmatter field on source pages (the original article URL).
+1. The `url:` frontmatter field on source pages (set automatically from the inbox item).
 2. The auto-generated `## Sources` section (rendered from that frontmatter). Never write external links into page body text.
 
 ---
@@ -158,15 +149,13 @@ External URLs appear **only** in two places:
 
 **Trigger**: User says "ingest", "add this source", or points at a file in `raw/`.
 
-Files in `raw/inbox/` can be ingested in place — do **not** move them. The inbox is
-permanent; the user archives articles manually via the UI.
+Files in `raw/inbox/` can be ingested in place — do **not** move them.
 
 Execute all steps in order. Do not skip any step.
 
 ### Step 1 — Verify source location
 The file must be in `raw/` or `raw/inbox/`. If the user gives pasted text, ask them to save it
-to `raw/` first as a `.txt` or `.md` file. Never move or delete anything in `raw/inbox/` — the
-server archives files automatically when wikification completes.
+to `raw/` first as a `.txt` or `.md` file.
 
 ### Step 2 — Read the source completely
 Read the entire file before writing anything. If it is very long (>20,000 words), read it in
@@ -176,7 +165,6 @@ sections sequentially before proceeding.
 Call `create_page` with:
 - `path`: `wiki/sources/{source-slug}.md` — always a wiki/ path, never a URL
 - `type`: `source`
-- `url`: the original article URL if available (this goes into frontmatter metadata, not the path)
 - `body`: the content below (do not write frontmatter manually — `create_page` fills in dates automatically)
 
 Required sections:
@@ -236,7 +224,7 @@ lists, for the narrative sections. Aim for something readable at a glance, not a
 ### Step 9 — Append to `wiki/log.md`
 Call `prepend_log` with the new entry text. Do NOT use `write_file` for the log — it would
 overwrite and destroy existing entries. `prepend_log` inserts the entry at the top automatically.
-Follow Section 12 for the entry format.
+Follow Section 8 for the entry format.
 
 ### Step 10 — Done
 Call `done()`. The server runs health checks automatically (broken links, missing frontmatter,
@@ -244,101 +232,7 @@ index coverage) — results are visible at `/wiki/lint`.
 
 ---
 
-## 7. Query Workflow
-
-**Trigger**: User asks a question, or says "query the wiki about X".
-
-### Step 1 — Read `wiki/overview.md`
-Get a high-level orientation. Note what domains and entities the wiki covers.
-
-### Step 2 — Search the wiki
-Call `search_wiki` with key terms from the question. Identify every page relevant to the question. List them explicitly.
-
-### Step 3 — Read relevant pages
-Read every page identified. Follow links one level deep if relevant cross-references are found.
-Do not follow links more than two levels deep unless specifically required.
-
-### Step 4 — Synthesize an answer
-Write a structured answer. For each claim:
-- Cite the wiki page it comes from
-- State well-supported multi-source claims confidently
-- Attribute single-source claims to their source
-- Flag contradictions explicitly
-- State clearly where the wiki has no coverage ("the wiki does not cover X")
-
-### Step 5 — Optionally file as a synthesis page
-If the question and answer represent non-trivial synthesis worth preserving, offer to create a page
-in `wiki/synthesis/`. If the user agrees, run Ingest Workflow Steps 8–10 to update index and log.
-
----
-
-## 8. Lint Workflow
-
-**Trigger**: User says "lint the wiki", "health check", or "find problems".
-
-Run all checks and produce a structured report.
-
-**Check 1 — Broken links**: Scan all `wiki/**/*.md` files for markdown links `[text](path)`.
-Verify each relative path exists on disk. List every broken link with the file it appears in.
-
-**Check 2 — Orphan pages**: List every file in `wiki/sources/`, `wiki/entities/`,
-`wiki/concepts/`, `wiki/synthesis/` that does not appear in `wiki/index.md`.
-
-**Check 3 — Missing frontmatter**: Check every wiki page for required fields (title, type, tags,
-created, updated, sources). List any page missing any field.
-
-**Check 4 — Stale pages**: Flag pages whose `updated` date is more than 90 days older than the
-most recently ingested source (check `wiki/log.md` for the latest ingest date).
-
-**Check 5 — Contradiction audit**: Scan all pages for `## Contradictions` sections. Summarize
-every flagged contradiction and whether it remains unresolved.
-
-**Check 6 — Underlinked pages**: Find pages with fewer than 2 incoming links from other wiki
-pages. These may be disconnected from the main knowledge graph.
-
-**Check 7 — Coverage gaps**: Review `wiki/overview.md` and synthesis pages. Identify topic areas
-mentioned but lacking source documents. Suggest sources to look for.
-
-**Lint report format**:
-```markdown
-# Wiki Lint Report — YYYY-MM-DD
-
-## Summary
-- Total pages: N
-- Broken links: N
-- Orphan pages: N
-- Missing frontmatter: N
-- Stale pages (>90 days): N
-- Active contradictions: N
-- Underlinked pages: N
-
-## Broken Links
-[list of broken links with file locations]
-
-## Orphan Pages
-[list]
-
-## Missing Frontmatter
-[list]
-
-## Stale Pages
-[list]
-
-## Active Contradictions
-[list]
-
-## Underlinked Pages
-[list]
-
-## Coverage Gaps & Suggested Sources
-[list of suggested topics and sources to find]
-```
-
-After the report, ask the user if they want to fix any identified issues.
-
----
-
-## 9. Inbox Workflow (Read-It-Later)
+## 7. Inbox Workflow (Read-It-Later)
 
 **Trigger**: User drops a file into `raw/inbox/` and says "process inbox", or points at a
 specific inbox file.
@@ -365,19 +259,13 @@ you want to process but have not gotten to yet.
      source on the same topic is still a separate source that warrants its own page.
    - **If article text or notes**: Assign a slug, run the full Ingest Workflow (Section 6)
      reading the file from `raw/inbox/` in place. **Do NOT move or delete the inbox file.**
-     The article stays in `raw/inbox/` permanently. The user archives it manually via the UI
-     when ready. The UI will show a "Wikified ✓" badge automatically once ingestion completes.
+     The article stays in `raw/inbox/` permanently. The UI will show a "Wikified ✓" badge
+     automatically once ingestion completes.
 4. **Report** to user: items processed, items queued, any issues.
 
 ---
 
-## 10. `wiki/index.md` Protocol
-
-The master catalog. It is **auto-generated** — every call to `create_page` or `write_file` rebuilds it automatically. Do not read or edit it directly.
-
----
-
-## 11. `wiki/log.md` Protocol
+## 8. `wiki/log.md` Protocol
 
 Append-only operation log. Never delete or modify existing entries. Always prepend new entries at
 the **top** (newest-first ordering).
@@ -401,7 +289,7 @@ Rules:
 
 ---
 
-## 12. Handling Contradictions
+## 9. Handling Contradictions
 
 When a new source contradicts an existing wiki page:
 
@@ -421,7 +309,7 @@ When a new source contradicts an existing wiki page:
 
 ---
 
-## 13. Handling Uncertainty
+## 10. Handling Uncertainty
 
 - Reflect hedged claims with appropriate language: "according to [Source](path)",
   "as of YYYY-MM-DD", "the author suggests but does not confirm"
@@ -432,30 +320,27 @@ When a new source contradicts an existing wiki page:
 
 ---
 
-## 14. Cold-Start Checklist
+## 11. Cold-Start Checklist
 
 If you are a fresh LLM session with no context beyond this file and the wiki directory:
 
-1. Read this file (`AGENT.md`) completely — you have done so
-2. Read `wiki/index.md` — understand what knowledge currently exists
-3. Read the top 10 entries of `wiki/log.md` — understand recent operations
-4. Read `wiki/overview.md` — understand the current synthesis
-5. Ask the user what operation to perform: ingest / query / lint / process inbox
+1. Read this file (`LOBOTOMY.md`) completely — you have done so
+2. Read `wiki/log.md` — understand recent operations
+3. Read `wiki/overview.md` — understand the current synthesis
+4. Ask the user what operation to perform: ingest or process inbox
 
 Do not modify any file until the user gives an explicit instruction.
 
 ---
 
-## 15. Do Not Do These Things
+## 12. Do Not Do These Things
 
 - Do not call `list_dir` to verify a file exists before reading it — call `read_file` directly
 - Do not modify, move, or delete anything in `raw/` — it is immutable
-- Do not move or delete files from `raw/inbox/` — articles stay there permanently; the user archives manually
-- Do not modify `AGENT.md` unless the user explicitly asks you to update the schema
+- Do not modify `LOBOTOMY.md` unless the user explicitly asks you to update the schema
 - Do not read or edit `wiki/index.md` — it is auto-generated on every page write
 - Do not write wiki page frontmatter manually — always use `create_page` for new pages
-- Do not write internal wiki links manually — write bare text, cross-links are added automatically
-
+- Do not write internal wiki links manually — write bare text, cross-links are added automatically by the autolinker
 - Do not resolve contradictions without user instruction
 - Do not delete wiki pages — set `deprecated: true` in frontmatter instead, then note it in the log
 - Do not ingest sources from outside `raw/`
