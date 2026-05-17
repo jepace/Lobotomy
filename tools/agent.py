@@ -1156,6 +1156,14 @@ def _create_page(args: dict) -> str:
     except ValueError:
         return f"Error: create_page only writes inside wiki/. Got: {path}"
 
+    # Entities and concepts must always cite at least one source page.
+    _subdir = p.parent.name
+    if _subdir in ("entities", "concepts") and not sources:
+        return (
+            f"Error: cannot create {_subdir} page '{title}' without sources. "
+            "Add the wiki/sources/ path(s) that support this page to the sources argument."
+        )
+
     today = datetime.date.today().isoformat()
     existed = p.exists()
     raw_source = ""
