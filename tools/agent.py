@@ -382,7 +382,7 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
                         title = line.split(":", 1)[1].strip().strip('"')
                     elif line.startswith("url:"):
                         url = line.split(":", 1)[1].strip().strip('"').strip("'")
-                suffix = f" ([original]({url}))" if url else ""
+                suffix = ""  # no external links on entity/concept pages
         lines.append(f"- [{title}]({prefix}{sp}){suffix}")
 
     return fm_text + body + "\n".join(lines) + "\n"
