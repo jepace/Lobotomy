@@ -1158,11 +1158,7 @@ def _create_page(args: dict) -> str:
 
     # Entities and concepts must always cite at least one source page.
     _subdir = p.parent.name
-    if _subdir in ("entities", "concepts") and not sources:
-        return (
-            f"Error: cannot create {_subdir} page '{title}' without sources. "
-            "Add the wiki/sources/ path(s) that support this page to the sources argument."
-        )
+    _missing_sources = _subdir in ("entities", "concepts") and not sources
 
     today = datetime.date.today().isoformat()
     existed = p.exists()
@@ -1193,7 +1189,10 @@ def _create_page(args: dict) -> str:
         f'---\ntitle: "{title}"\ntype: {pg_type}\ntags: [{tag_str}]\n'
         f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n{url_line}{raw_source_line}---\n\n'
     )
-    content = frontmatter + _strip_broken_wiki_links(body.lstrip("\n"), p)
+    body_text = body.lstrip("\n")
+    if _missing_sources:
+        body_text = "<!-- WARNING: no sources cited — update sources: frontmatter -->\n\n" + body_text
+    content = frontmatter + _strip_broken_wiki_links(body_text, p)
     content = _inject_sources_section(content, p)
     p.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(p, content)
@@ -1201,7 +1200,8 @@ def _create_page(args: dict) -> str:
     _autolink_sources_if_entity(path)
     _rebuild_index({})
     action = "Updated" if existed else "Created"
-    return f"{action} {path} ({len(content)} bytes)"
+    suffix = " — WARNING: no sources cited, update sources: frontmatter before calling done()" if _missing_sources else ""
+    return f"{action} {path} ({len(content)} bytes){suffix}"
 
 
 def _validate_ingest(args: dict) -> str:
