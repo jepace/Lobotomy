@@ -518,6 +518,7 @@ _fetch_cache: dict[str, str] = {}
 _fetch_cache_lock = threading.Lock()
 _last_inbox_url: str = ""
 _last_inbox_path: str = ""
+_last_source_page: str = ""  # wiki/sources/ path created in this session
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -1157,7 +1158,10 @@ def _create_page(args: dict) -> str:
         return f"Error: create_page only writes inside wiki/. Got: {path}"
 
     # Entities and concepts must always cite at least one source page.
+    # Auto-populate from the source page created earlier in this session.
     _subdir = p.parent.name
+    if _subdir in ("entities", "concepts") and not sources and _last_source_page:
+        sources = [_last_source_page]
     _missing_sources = _subdir in ("entities", "concepts") and not sources
 
     today = datetime.date.today().isoformat()
@@ -1196,6 +1200,11 @@ def _create_page(args: dict) -> str:
     content = _inject_sources_section(content, p)
     p.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(p, content)
+
+    global _last_source_page
+    if _subdir == "sources":
+        _last_source_page = str(p.relative_to(WIKI_DIR))
+
     _autolink({"path": path})
     _autolink_sources_if_entity(path)
     _rebuild_index({})
