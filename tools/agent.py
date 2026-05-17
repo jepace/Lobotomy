@@ -1157,11 +1157,10 @@ def _create_page(args: dict) -> str:
     except ValueError:
         return f"Error: create_page only writes inside wiki/. Got: {path}"
 
-    # Entities and concepts must always cite at least one source page.
-    # Auto-populate from the source page created earlier in this session.
     _subdir = p.parent.name
-    if _subdir in ("entities", "concepts") and not sources and _current_source_page:
-        sources = [_current_source_page]
+    if _subdir in ("entities", "concepts") and _current_source_page:
+        if _current_source_page not in sources:
+            sources = [_current_source_page] + [s for s in sources if s != _current_source_page]
     _missing_sources = _subdir in ("entities", "concepts") and not sources
 
     today = datetime.date.today().isoformat()
