@@ -573,7 +573,7 @@ async function wikifyItem(name, idx) {
 
 async function wikifyAll() {
   const allBtn = document.getElementById('wikify-all-btn');
-  const btns = [...document.querySelectorAll('.act-btn.wikify:not(:disabled)')];
+  const btns = [...document.querySelectorAll('[id^="wikify-"]:not(:disabled)')];
   if (!btns.length) return;
   allBtn.disabled = true;
   allBtn.textContent = `Wikifying… 0/${btns.length}`;
