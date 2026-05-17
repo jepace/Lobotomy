@@ -65,12 +65,13 @@ def _repair_path(page: Path, link_path: str) -> str | None:
     if target.exists():
         return None  # already valid
 
-    # Extract just the filename and search wiki/ for it
+    # Extract just the filename and search wiki/ and raw/ for it
     filename = Path(link_path).name
-    if not filename.endswith(".md"):
+    if not filename.endswith(".md") and not filename.endswith(".txt"):
         return None
 
-    matches = list(WIKI_DIR.rglob(filename))
+    RAW_DIR = WIKI_DIR.parent / "raw"
+    matches = list(WIKI_DIR.rglob(filename)) + list(RAW_DIR.glob(filename))
     if len(matches) == 1:
         correct_rel = Path(os.path.relpath(matches[0], page.parent))
         return str(correct_rel) + fragment
