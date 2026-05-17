@@ -1076,6 +1076,64 @@ def _search_wiki(args: dict) -> str:
     return "\n".join(lines)
 
 
+def _search_raw(args: dict) -> str:
+    """Keyword search across all raw source files. Returns filename, source URL, and snippet."""
+    import re
+    query = args.get("query", "").strip()
+    if not query:
+        return "Error: query is required."
+    keywords = query.split()
+    if not keywords:
+        return "Error: no search keywords provided."
+    patterns = [re.compile(re.escape(kw), re.IGNORECASE) for kw in keywords]
+
+    results = []
+    for f in sorted(RAW_DIR.rglob("*")):
+        if not f.is_file() or f.name.startswith(".") or f.name == "index.md":
+            continue
+        if f.suffix not in (".md", ".txt", ".html", ".url"):
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # Strip link URLs so path tokens don't create false matches
+        searchable = re.sub(r'\]\([^)]*\)', ']()', text)
+        if not all(p.search(searchable) for p in patterns):
+            continue
+        score = sum(len(p.findall(searchable)) for p in patterns)
+        # Extract title and url from frontmatter if present
+        title = f.stem
+        source_url = ""
+        fm = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+        if fm:
+            for line in fm.group(1).splitlines():
+                if line.startswith("title:"):
+                    title = line.split(":", 1)[1].strip().strip('"')
+                elif line.startswith("url:"):
+                    source_url = line.split(":", 1)[1].strip().strip('"')
+        # Find first matching line for snippet
+        snippet = ""
+        body_start = (text.index("---", 3) + 3) if text.startswith("---") and "---" in text[3:] else 0
+        for line in text[body_start:].splitlines():
+            if any(p.search(line) for p in patterns):
+                snippet = line.strip()[:120]
+                break
+        rel = str(f.relative_to(REPO_ROOT))
+        results.append((score, title, rel, source_url, snippet))
+
+    results.sort(key=lambda x: -x[0])
+    if not results:
+        return f"No raw files found matching: {' '.join(keywords)}"
+    lines = [f"Found {len(results)} raw file(s) matching '{' '.join(keywords)}':\n"]
+    for _, title, rel, source_url, snippet in results[:15]:
+        url_suffix = f" — {source_url}" if source_url else ""
+        lines.append(f"- {rel} ({title}){url_suffix}")
+        if snippet:
+            lines.append(f"  > {snippet}")
+    return "\n".join(lines)
+
+
 def _create_page(args: dict) -> str:
     """Write a new wiki page with auto-populated frontmatter."""
     import datetime, re
@@ -1227,6 +1285,7 @@ TOOL_FNS = {
 
 
     "search_wiki":      _search_wiki,
+    "search_raw":       _search_raw,
     "create_page":      _create_page,
 
     "done":             _done,
@@ -1364,6 +1423,28 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
+            "name":        "search_raw",
+            "description": (
+                "Keyword search across all raw source files in raw/. Returns filename, "
+                "original URL, and a snippet of the matching line. Use this to find raw "
+                "sources that mention a person, topic, or event — especially useful when "
+                "retroactively reviewing old articles for a newly prominent entity."
+            ),
+            "parameters":  {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type":        "string",
+                        "description": "One or more keywords to search for (space-separated, AND logic — all keywords must appear in the file).",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name":        "create_page",
             "description": (
                 "Write a new wiki page with auto-populated frontmatter (created/updated dates "
@@ -1406,6 +1487,7 @@ def system_prompt() -> str:
         "| write_file | Write wiki pages (raw/ is blocked). Use create_page for new pages instead. |\n"
         "| create_page | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
+        "| search_raw | Search raw source files by keyword — use when retroactively reviewing old articles for a newly prominent entity. |\n"
         "| prepend_log | Add entry to wiki/log.md. Never use write_file for the log. |\n"
         "| list_dir | List directory contents. |\n"
         "| fetch_url | Fetch a web page for inbox processing. |\n"
