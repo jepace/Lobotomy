@@ -329,7 +329,7 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
                 lines.append(f"- **URL**: [{u}]({u})")
             if raw_m:
                 raw_rel = raw_m.group(1).strip()
-                up_count = len(page_path.parent.relative_to(WIKI_DIR).parts)
+                up_count = len(page_path.relative_to(WIKI_DIR).parts)
                 prefix = "../" * up_count
                 lines.append(f"- **Raw**: [{raw_rel}]({prefix}{raw_rel})")
         return fm_text + body + ("\n".join(lines) + "\n" if lines else "\n")
