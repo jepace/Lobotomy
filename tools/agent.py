@@ -1137,6 +1137,7 @@ def _search_raw(args: dict) -> str:
 
 def _create_page(args: dict) -> str:
     """Write a new wiki page with auto-populated frontmatter."""
+    global _current_source_page
     import datetime, re
     path    = args.get("path", "")
     title   = args.get("title", "")
@@ -1200,7 +1201,6 @@ def _create_page(args: dict) -> str:
     p.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(p, content)
 
-    global _current_source_page
     if _subdir == "sources":
         _current_source_page = str(p.relative_to(WIKI_DIR))
 
