@@ -132,13 +132,7 @@ url: "https://original-article-url"   # source pages only; omit on entity/concep
 
 ## 5. Cross-References
 
-Use **standard relative markdown links** for all internal links. Do not use `[[wikilinks]]`.
-
-- From inside `wiki/sources/`: `[Yann LeCun](../entities/yann-lecun.md)`
-- From inside `wiki/entities/`: `[Attention Mechanism](../concepts/attention-mechanism.md)`
-- From `wiki/overview.md`: `[Attention Mechanism](concepts/attention-mechanism.md)`
-
-When you mention an entity or concept that has (or should have) its own page, always link it with a relative wiki link — never with an external URL. Entity links always point to `wiki/entities/*.md`, never to `https://...`.
+**Do not write internal links.** The autolinker runs automatically after every page write and adds all cross-links. Write bare names — the system handles linking.
 
 External URLs appear **only** in two places:
 1. The `url:` frontmatter field on source pages (set automatically from the inbox item).
@@ -171,8 +165,8 @@ Call `create_page` with:
 Required sections:
 - **Summary**: 3–5 paragraphs synthesizing the source's main content and contribution
 - **Claims**: bulleted list of factual or analytical claims from the source
-- **Entities**: bulleted list of people, orgs, products, projects (each linked to its wiki page). Plain links only — no annotations like "(new)" or "(update)".
-- **Concepts**: bulleted list of important concepts and terms (each linked to its wiki page). Plain links only — no annotations like "(new)" or "(update)".
+- **Entities**: bulleted list of people, orgs, products, projects. Write bare names only — no links, no annotations.
+- **Concepts**: bulleted list of important concepts and terms. Write bare names only — no links, no annotations.
 - **Quotes**: 3–5 direct quotes with section references if available
 - **Wiki Context**: how it relates to, extends, supports, or contradicts existing pages
 
@@ -346,10 +340,8 @@ Do not modify any file until the user gives an explicit instruction.
 - Do not delete wiki pages — set `deprecated: true` in frontmatter instead, then note it in the log
 - Do not ingest sources from outside `raw/`
 - Do not invent sources — only cite documents actually present in `raw/`
-- Do not use `[[wikilink]]` syntax — use standard relative markdown links
-- Do not link entities or people to external URLs in page body text — always create a `wiki/entities/*.md` page and link to that instead
+- Do not write any internal links in page body text — the autolinker handles all cross-linking automatically
 - Do not put external URLs in page body text at all — they belong only in `url:` frontmatter on source pages
 - Do not write workflow annotations like "(new)" or "(update)" in page content — these are planning notes only
-- Do not link to a page without first confirming the linked file exists and is about the correct subject
 - Do not modify existing `wiki/log.md` entries — only prepend new ones at the top
 - Do not save important information only in chat — write it to a wiki page so it persists
