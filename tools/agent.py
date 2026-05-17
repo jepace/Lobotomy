@@ -180,11 +180,11 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
     try:
         p.resolve().relative_to(RAW_DIR.resolve())
         stripped = text.strip()
-        global _last_inbox_url, _last_inbox_path
-        _last_inbox_path = str(p.resolve().relative_to(REPO_ROOT.resolve()))
-        _last_inbox_url = ""  # always reset so stale URL from prior ingest isn't inherited
+        global _current_inbox_url, _current_inbox_path
+        _current_inbox_path = str(p.resolve().relative_to(REPO_ROOT.resolve()))
+        _current_inbox_url = ""  # always reset so stale URL from prior ingest isn't inherited
         if stripped.startswith("http") and "\n" not in stripped:
-            _last_inbox_url = stripped
+            _current_inbox_url = stripped
             with _fetch_cache_lock:
                 if stripped in _fetch_cache:
                     return _fetch_cache[stripped]
@@ -193,7 +193,7 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
             import re as _re
             _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', text, _re.MULTILINE)
             if _m:
-                _last_inbox_url = _m.group(1).strip()
+                _current_inbox_url = _m.group(1).strip()
     except ValueError:
         pass
     try:
@@ -516,8 +516,9 @@ def _list_dir(directory: str) -> str:
 
 _fetch_cache: dict[str, str] = {}
 _fetch_cache_lock = threading.Lock()
-_last_inbox_url: str = ""
-_last_inbox_path: str = ""
+_current_inbox_url: str = ""
+_current_inbox_path: str = ""
+_current_source_page: str = ""  # wiki/sources/ path created in this session
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -1145,7 +1146,7 @@ def _create_page(args: dict) -> str:
     sources = args.get("sources", [])
     url     = args.get("url", "")
     if not url and pg_type == "source":
-        url = _last_inbox_url
+        url = _current_inbox_url
 
     if not path or not title or not pg_type:
         return "Error: path, title, and type are required."
@@ -1155,6 +1156,12 @@ def _create_page(args: dict) -> str:
         p.resolve().relative_to(WIKI_DIR.resolve())
     except ValueError:
         return f"Error: create_page only writes inside wiki/. Got: {path}"
+
+    _subdir = p.parent.name
+    if _subdir in ("entities", "concepts") and _current_source_page:
+        if _current_source_page not in sources:
+            sources = [_current_source_page] + [s for s in sources if s != _current_source_page]
+    _missing_sources = _subdir in ("entities", "concepts") and not sources
 
     today = datetime.date.today().isoformat()
     existed = p.exists()
@@ -1175,7 +1182,7 @@ def _create_page(args: dict) -> str:
         created = today
 
     if pg_type == "source" and not raw_source:
-        raw_source = _last_inbox_path
+        raw_source = _current_inbox_path
 
     tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]))
     src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]))
@@ -1185,15 +1192,24 @@ def _create_page(args: dict) -> str:
         f'---\ntitle: "{title}"\ntype: {pg_type}\ntags: [{tag_str}]\n'
         f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n{url_line}{raw_source_line}---\n\n'
     )
-    content = frontmatter + _strip_broken_wiki_links(body.lstrip("\n"), p)
+    body_text = body.lstrip("\n")
+    if _missing_sources:
+        body_text = "<!-- WARNING: no sources cited — update sources: frontmatter -->\n\n" + body_text
+    content = frontmatter + _strip_broken_wiki_links(body_text, p)
     content = _inject_sources_section(content, p)
     p.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(p, content)
+
+    global _current_source_page
+    if _subdir == "sources":
+        _current_source_page = str(p.relative_to(WIKI_DIR))
+
     _autolink({"path": path})
     _autolink_sources_if_entity(path)
     _rebuild_index({})
     action = "Updated" if existed else "Created"
-    return f"{action} {path} ({len(content)} bytes)"
+    suffix = " — WARNING: no sources cited, update sources: frontmatter before calling done()" if _missing_sources else ""
+    return f"{action} {path} ({len(content)} bytes){suffix}"
 
 
 def _validate_ingest(args: dict) -> str:
