@@ -18,6 +18,7 @@ Fixes two classes of problems:
 Run from the repo root:
   python3 tools/repair_links.py [--dry-run]
 """
+import os
 import re
 import sys
 from pathlib import Path
@@ -71,13 +72,13 @@ def _repair_path(page: Path, link_path: str) -> str | None:
 
     matches = list(WIKI_DIR.rglob(filename))
     if len(matches) == 1:
-        correct_rel = matches[0].relative_to(page.parent)
+        correct_rel = Path(os.path.relpath(matches[0], page.parent))
         return str(correct_rel) + fragment
     elif len(matches) > 1:
         # Prefer match whose parent dir name appears in link_path
         for m in matches:
             if m.parent.name in link_path:
-                correct_rel = m.relative_to(page.parent)
+                correct_rel = Path(os.path.relpath(m, page.parent))
                 return str(correct_rel) + fragment
 
     return None
