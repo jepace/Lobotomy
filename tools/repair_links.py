@@ -95,18 +95,18 @@ for f in sorted(WIKI_DIR.rglob("*.md")):
     new_text, n1 = nested_re.subn(_repair_nested, text)
 
     # Pass 2: wrong relative paths
-    n2 = 0
-    def _path_replacer(m, _page=f):
-        nonlocal n2
+    count = [0]
+    def _path_replacer(m, _page=f, _count=count):
         display   = m.group(1)
         link_path = m.group(2)
         fixed     = _repair_path(_page, link_path)
         if fixed:
-            n2 += 1
+            _count[0] += 1
             return f"[{display}]({fixed})"
         return m.group(0)
 
     new_text = link_re.sub(_path_replacer, new_text)
+    n2 = count[0]
 
     total = n1 + n2
     if total:
