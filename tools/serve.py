@@ -910,16 +910,16 @@ def chat_send():
             # globals never get set and frontmatter ends up missing both fields.
             import agent as _agent
             stripped = file_content.strip()
-            _agent._last_inbox_path = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
-            _agent._last_inbox_url = ""      # always reset so stale URL from prior ingest isn't inherited
-            _agent._last_source_page = ""    # reset so prior session's source page isn't inherited
+            _agent._current_inbox_path = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
+            _agent._current_inbox_url = ""      # always reset so stale URL from prior ingest isn't inherited
+            _agent._current_source_page = ""    # reset so prior session's source page isn't inherited
             if stripped.startswith("http") and "\n" not in stripped:
-                _agent._last_inbox_url = stripped
+                _agent._current_inbox_url = stripped
             else:
                 import re as _re
                 _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', file_content, _re.MULTILINE)
                 if _m:
-                    _agent._last_inbox_url = _m.group(1).strip()
+                    _agent._current_inbox_url = _m.group(1).strip()
         except OSError:
             pass  # file unreadable — AI will fall back to read_file normally
 

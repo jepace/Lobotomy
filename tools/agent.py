@@ -180,11 +180,11 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
     try:
         p.resolve().relative_to(RAW_DIR.resolve())
         stripped = text.strip()
-        global _last_inbox_url, _last_inbox_path
-        _last_inbox_path = str(p.resolve().relative_to(REPO_ROOT.resolve()))
-        _last_inbox_url = ""  # always reset so stale URL from prior ingest isn't inherited
+        global _current_inbox_url, _current_inbox_path
+        _current_inbox_path = str(p.resolve().relative_to(REPO_ROOT.resolve()))
+        _current_inbox_url = ""  # always reset so stale URL from prior ingest isn't inherited
         if stripped.startswith("http") and "\n" not in stripped:
-            _last_inbox_url = stripped
+            _current_inbox_url = stripped
             with _fetch_cache_lock:
                 if stripped in _fetch_cache:
                     return _fetch_cache[stripped]
@@ -193,7 +193,7 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
             import re as _re
             _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', text, _re.MULTILINE)
             if _m:
-                _last_inbox_url = _m.group(1).strip()
+                _current_inbox_url = _m.group(1).strip()
     except ValueError:
         pass
     try:
@@ -516,9 +516,9 @@ def _list_dir(directory: str) -> str:
 
 _fetch_cache: dict[str, str] = {}
 _fetch_cache_lock = threading.Lock()
-_last_inbox_url: str = ""
-_last_inbox_path: str = ""
-_last_source_page: str = ""  # wiki/sources/ path created in this session
+_current_inbox_url: str = ""
+_current_inbox_path: str = ""
+_current_source_page: str = ""  # wiki/sources/ path created in this session
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -1146,7 +1146,7 @@ def _create_page(args: dict) -> str:
     sources = args.get("sources", [])
     url     = args.get("url", "")
     if not url and pg_type == "source":
-        url = _last_inbox_url
+        url = _current_inbox_url
 
     if not path or not title or not pg_type:
         return "Error: path, title, and type are required."
@@ -1160,8 +1160,8 @@ def _create_page(args: dict) -> str:
     # Entities and concepts must always cite at least one source page.
     # Auto-populate from the source page created earlier in this session.
     _subdir = p.parent.name
-    if _subdir in ("entities", "concepts") and not sources and _last_source_page:
-        sources = [_last_source_page]
+    if _subdir in ("entities", "concepts") and not sources and _current_source_page:
+        sources = [_current_source_page]
     _missing_sources = _subdir in ("entities", "concepts") and not sources
 
     today = datetime.date.today().isoformat()
@@ -1183,7 +1183,7 @@ def _create_page(args: dict) -> str:
         created = today
 
     if pg_type == "source" and not raw_source:
-        raw_source = _last_inbox_path
+        raw_source = _current_inbox_path
 
     tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]))
     src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]))
@@ -1201,9 +1201,9 @@ def _create_page(args: dict) -> str:
     p.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(p, content)
 
-    global _last_source_page
+    global _current_source_page
     if _subdir == "sources":
-        _last_source_page = str(p.relative_to(WIKI_DIR))
+        _current_source_page = str(p.relative_to(WIKI_DIR))
 
     _autolink({"path": path})
     _autolink_sources_if_entity(path)
