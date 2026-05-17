@@ -1380,7 +1380,9 @@ TOOL_DEFS = [
                 "Signal that you have finished ALL your work for this task. "
                 "You MUST call this tool when your task is complete — do not simply stop responding. "
                 "Provide a concise summary of what you accomplished. "
-                "Set ingested=true ONLY if you successfully created a new wiki source page during this session."
+                "Set ingested=true ONLY if you successfully created a new wiki source page during this session. "
+                "Set ingested=false if the source file contained fetch_failed:true, had no readable content, "
+                "or if you could not create a meaningful wiki page."
             ),
             "parameters":  {
                 "type": "object",
@@ -1391,7 +1393,7 @@ TOOL_DEFS = [
                     },
                     "ingested": {
                         "type":        "boolean",
-                        "description": "True only if a new wiki source page was created in this session.",
+                        "description": "True only if a new wiki source page was created in this session. Must be false if the raw file had fetch_failed:true or contained no article content.",
                     },
                 },
                 "required": ["summary"],
