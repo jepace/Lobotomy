@@ -933,6 +933,17 @@ def chat_send():
                 if m.get("role") == "system"
             )
             if ingested:
+                # Belt-and-suspenders: never mark wikified if the raw file still has
+                # fetch_failed set (agent may have called done(ingested=1) despite no content).
+                raw_path = RAW_DIR / Path(inbox_file).name
+                try:
+                    raw_fm, _ = _parse_frontmatter(raw_path.read_text(encoding="utf-8"))
+                    if raw_fm.get("fetch_failed"):
+                        log.warning("on_done: refusing to mark wikified — fetch_failed=true in %s", inbox_file)
+                        ingested = False
+                except Exception:
+                    pass
+            if ingested:
                 _mark_inbox_wikified(inbox_file)
             else:
                 log.warning("on_done: inbox_file=%s but no __ingested__:1 in messages — not marking wikified", inbox_file)
@@ -1699,8 +1710,10 @@ def api_push():
                 log.debug("Skipping unreadable inbox file %s: %s", existing.name, e)
 
     # If URL given but no content, fetch the page
+    fetch_failed = False
+    fetch_error  = None
     if url and not content:
-        fetched, _ = _clip_fetch(url)
+        fetched, fetch_error = _clip_fetch(url)
         if fetched:
             content = fetched
             # Auto-extract title from first non-empty non-markup line
@@ -1710,6 +1723,8 @@ def api_push():
                     if line and not line.startswith("<"):
                         title = line[:120]
                         break
+        else:
+            fetch_failed = True
 
     # Final title fallback
     if not title:
@@ -1734,13 +1749,22 @@ def api_push():
     fm.append(f"added: {now}")
     fm.append(f"wikified: false")
     fm.append(f"source: {source}")
+    if fetch_failed:
+        fm.append(f"fetch_failed: true")
     if author:
         fm.append(f"author: {author}")
     if tags:
         fm.append(f"tags: {json.dumps(tags)}")
     fm += ["---", ""]
 
-    _atomic_write(dest, "\n".join(fm) + (content or ""))
+    body = content or ""
+    if fetch_failed:
+        body = (
+            f"<!-- fetch_failed: {fetch_error or 'unknown'} -->\n\n"
+            "Content could not be fetched automatically. "
+            "Paste the article text here before ingesting."
+        )
+    _atomic_write(dest, "\n".join(fm) + body)
 
     return {
         "ok":          True,
