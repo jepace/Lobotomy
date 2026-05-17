@@ -1,4 +1,5 @@
 #!/bin/sh
+# Run with: sh tools/lint.sh  (not python3)
 
 grep -roE "\[.*\]\(.*\)" wiki/ | while IFS=: read -r file link; do
     target=$(echo "$link" | sed -E 's/.*\]\((.*)\).*/\1/' | cut -d'#' -f1)
