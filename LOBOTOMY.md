@@ -176,8 +176,12 @@ For each significant entity (person, organization, product, project) in the sour
 - **Always call `search_wiki` before calling `create_page`.** Do not create a document until you have
   confirmed no existing document covers this entity. Search by the entity's full name and any common
   abbreviations or alternate names.
-- If a document exists, update it with `write_file`. **Read the existing document first and send the complete file content** — frontmatter and full body — with your changes incorporated. Sending a fragment will be rejected. Preserve its `sources:` frontmatter list, appending the new source if not already present.
-- If the entity is new and significant, use `create_page` to create `wiki/entities/{slug}.md`.
+- **If a document exists**, build full context before rewriting it:
+  1. Read the existing entity page — note its `sources:` frontmatter list.
+  2. Call `search_wiki` with `in:sources` and the entity's name to find any source pages not yet in the frontmatter.
+  3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you just created in Step 3).
+  4. Rewrite the entity page from this complete picture using `write_file`. Set `sources:` to the full union. Preserve the original `created` date.
+- **If the entity is new**, use `create_page` for `wiki/entities/{slug}.md`, citing the current source page in `sources:`.
 - Note any contradictions with existing claims in a `## Contradictions` section.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
@@ -186,8 +190,12 @@ For each significant concept, technique, framework, or term:
 - **Always call `search_wiki` before calling `create_page`.** Do not create a document until you have
   confirmed no existing document covers this concept. Search by the concept's full name and any common
   abbreviations or alternate names.
-- If a document exists, update it with `write_file`. **Read the existing document first and send the complete file content** — frontmatter and full body — with your changes incorporated. Sending a fragment will be rejected. Preserve existing `sources:` and append the new source if not already present.
-- If no document exists and the concept warrants one, use `create_page` for `wiki/concepts/{slug}.md`.
+- **If a document exists**, build full context before rewriting it:
+  1. Read the existing concept page — note its `sources:` frontmatter list.
+  2. Call `search_wiki` with `in:sources` and the concept's name to find any source pages not yet in the frontmatter.
+  3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you just created in Step 3).
+  4. Rewrite the concept page from this complete picture using `write_file`. Set `sources:` to the full union. Preserve the original `created` date.
+- **If no document exists** and the concept warrants one, use `create_page` for `wiki/concepts/{slug}.md`, citing the current source page in `sources:`.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
 ### Step 7 — Update synthesis documents
@@ -213,7 +221,30 @@ Call `done()`. The server runs health checks automatically — results are visib
 
 ---
 
-## 6. Inbox Workflow (Read-It-Later)
+## 6. Regenerate Workflow
+
+**Trigger**: User says "regenerate", "fix", "rewrite", or "redo" a wiki page (entity, concept, synthesis, etc.).
+
+This workflow rewrites a wiki page from the synthesized source documents already in `wiki/sources/`. **Do not read `raw/` during a regenerate** — raw content has already been synthesized into `wiki/sources/` pages.
+
+### Step 1 — Read the existing page
+Call `read_file` on the page. Note the `sources:` frontmatter list — this is your initial source set.
+
+### Step 2 — Discover additional sources
+Call `search_wiki` with `in:sources` scope using the page's title and key terms (e.g. `"Colorado River Compact in:sources"`). Add any results not already in your source set from Step 1. Your final source set is the union of both.
+
+### Step 3 — Read all source pages
+Call `read_file` on every `wiki/sources/*.md` page in your final source set. Do not read `raw/` files.
+
+### Step 4 — Rewrite the page
+Call `write_file` with the full rewritten content synthesized from all the source pages you read in Step 3. Preserve the original `created` date. Set `sources:` frontmatter to the full union from Steps 1–2.
+
+### Step 5 — Done
+Call `done()`.
+
+---
+
+## 7. Inbox Workflow (Read-It-Later)
 
 **Trigger**: User drops a file into `raw/` and says "process inbox", or points at a
 specific inbox file.
@@ -245,7 +276,7 @@ you want to process but have not gotten to yet.
 
 ---
 
-## 7. `wiki/log.md` Protocol
+## 8. `wiki/log.md` Protocol
 
 Append-only operation log. Never delete or modify existing entries. Always prepend new entries at
 the **top** (newest-first ordering).
@@ -268,7 +299,7 @@ Rules:
 
 ---
 
-## 8. Handling Contradictions
+## 9. Handling Contradictions
 
 When a new source contradicts an existing document:
 
@@ -288,7 +319,7 @@ When a new source contradicts an existing document:
 
 ---
 
-## 9. Handling Uncertainty
+## 10. Handling Uncertainty
 
 - Reflect hedged claims with appropriate language: "according to [source name]",
   "as of YYYY-MM-DD", "the author suggests but does not confirm"
@@ -298,7 +329,7 @@ When a new source contradicts an existing document:
 
 ---
 
-## 10. Cold-Start Checklist
+## 11. Cold-Start Checklist
 
 If you are a fresh LLM session with no context beyond this file and the wiki directory:
 
@@ -311,7 +342,7 @@ Do not modify any file until the user gives an explicit instruction.
 
 ---
 
-## 11. Do Not Do These Things
+## 12. Do Not Do These Things
 
 - Do not call `list_dir` to verify a file exists before reading it — call `read_file` directly
 - Do not modify, move, or delete anything in `raw/` — it is immutable

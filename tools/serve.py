@@ -1104,6 +1104,17 @@ def chat_clear():
     return {"ok": True}
 
 
+@app.route("/chat/cancel", methods=["POST"])
+@require_login
+def chat_cancel():
+    data   = request.get_json(silent=True) or {}
+    job_id = (data.get("job_id") or "").strip()
+    if not job_id:
+        return {"error": "Missing job_id"}, 400
+    found = job_queue.cancel(job_id)
+    return {"ok": found}
+
+
 @app.route("/wiki/search")
 @require_login
 def wiki_search():

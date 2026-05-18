@@ -33,6 +33,7 @@ class JobQueue:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._q = queue.Queue()
         self._current_job_id: "str | None" = None
+        self._cancel_events: "dict[str, threading.Event]" = {}
         self._lock = threading.Lock()
         self._recover()
         t = threading.Thread(target=self._worker, daemon=True)
@@ -56,8 +57,20 @@ class JobQueue:
         """
         job_id = secrets.token_hex(8)
         self._event_file(job_id).write_text("", encoding="utf-8")
-        self._q.put((job_id, client, model, messages, system, on_done))
+        stop_event = threading.Event()
+        with self._lock:
+            self._cancel_events[job_id] = stop_event
+        self._q.put((job_id, client, model, messages, system, on_done, stop_event))
         return job_id
+
+    def cancel(self, job_id: str) -> bool:
+        """Signal the running job to stop. Returns True if the job was found."""
+        with self._lock:
+            ev = self._cancel_events.get(job_id)
+        if ev:
+            ev.set()
+            return True
+        return False
 
     def tail(self, job_id: str):
         """
@@ -151,17 +164,25 @@ class JobQueue:
     def _worker(self):
         from agent import stream_agent_turn
         while True:
-            job_id, client, model, messages, system, on_done = self._q.get()
+            job_id, client, model, messages, system, on_done, stop_event = self._q.get()
             with self._lock:
                 self._current_job_id = job_id
             f = self._event_file(job_id)
             log.info("Job %s started (model=%s, messages=%d)", job_id, model, len(messages))
+            cancelled = False
             try:
                 with open(f, "a", encoding="utf-8") as fp:
-                    for line in stream_agent_turn(client, model, messages, system):
+                    for line in stream_agent_turn(client, model, messages, system,
+                                                  stop_event=stop_event):
                         fp.write(line)
                         fp.flush()
-                log.info("Job %s completed", job_id)
+                        try:
+                            ev = json.loads(line.strip())
+                            if ev.get("type") == "cancelled":
+                                cancelled = True
+                        except json.JSONDecodeError:
+                            pass
+                log.info("Job %s %s", job_id, "cancelled" if cancelled else "completed")
             except Exception as e:
                 log.error("Job %s crashed: %s", job_id, e, exc_info=True)
                 with open(f, "a", encoding="utf-8") as fp:
@@ -171,7 +192,8 @@ class JobQueue:
             finally:
                 with self._lock:
                     self._current_job_id = None
-                if on_done:
+                    self._cancel_events.pop(job_id, None)
+                if on_done and not cancelled:
                     try:
                         on_done(messages)
                     except Exception as e:
