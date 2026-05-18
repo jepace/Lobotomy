@@ -530,6 +530,7 @@ async function wikifyItem(name, idx) {
     const decoder = new TextDecoder();
     let buffer = '';
     const tools = [];
+    let ingestedFlag = false;
 
     while (true) {
       const chunk = await reader.read();
@@ -550,9 +551,17 @@ async function wikifyItem(name, idx) {
             progress.innerHTML = tools.map(t => `<div class="prog-tool">${t}</div>`).join('');
           } else if (ev.type === 'error') {
             progress.innerHTML += `<div class="prog-error">Error: ${ev.content}</div>`;
+          } else if (ev.type === 'done') {
+            ingestedFlag = ev.ingested === true;
           }
         } catch(e) {}
       }
+    }
+    if (!ingestedFlag) {
+      progress.innerHTML += `<div class="prog-error">Ingest failed — no wiki page was created. Check fetch errors above.</div>`;
+      btn.disabled = false;
+      btn.textContent = 'Wikify';
+      return;
     }
     btn.textContent = 'Wikified ✓';
     // Mark wikified in file frontmatter; use returned wiki_path for direct link

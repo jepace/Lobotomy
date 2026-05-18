@@ -181,6 +181,7 @@ async function ingestArticle() {
     const reader = streamResp.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let ingestedFlag = false;
 
     while (true) {
       const chunk = await reader.read();
@@ -197,9 +198,17 @@ async function ingestArticle() {
             progress.scrollTop = progress.scrollHeight;
           } else if (ev.type === 'error') {
             progress.innerHTML += `<div class="prog-error">Error: ${ev.content}</div>`;
+          } else if (ev.type === 'done') {
+            ingestedFlag = ev.ingested === true;
           }
         } catch(e) {}
       }
+    }
+    if (!ingestedFlag) {
+      progress.innerHTML += `<div class="prog-error">Ingest failed — no wiki page was created. Check fetch errors above.</div>`;
+      btn.disabled = false;
+      btn.textContent = 'Wikify';
+      return;
     }
     btn.textContent = 'Wikified ✓';
     const wikiResp = await fetch('/inbox/mark-wikified', {
