@@ -349,10 +349,20 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
                     source_paths.append(s)
                 else:
                     resolved = (page_path.parent / s).resolve()
+                    found = False
                     try:
-                        s = str(resolved.relative_to(WIKI_DIR.resolve()))
+                        rel = str(resolved.relative_to(WIKI_DIR.resolve()))
+                        if (WIKI_DIR / rel).exists():
+                            s = rel
+                            found = True
                     except ValueError:
                         pass
+                    if not found:
+                        # LLM may prefix with wrong subdir — search by basename.
+                        basename = Path(s).name
+                        matches = list(WIKI_DIR.rglob(basename))
+                        if len(matches) == 1:
+                            s = str(matches[0].relative_to(WIKI_DIR))
                     source_paths.append(s)
 
     # Strip existing ## Sources section (assumed to be at end of file)
