@@ -492,6 +492,9 @@ async function saveEdit(name, idx) {
       return;
     }
     cancelEdit(idx);
+    // Re-enable the Wikify button in case it was disabled after a failed ingest
+    const wikifyBtn = document.getElementById('wikify-' + idx);
+    if (wikifyBtn) { wikifyBtn.disabled = false; wikifyBtn.textContent = 'Wikify'; }
     // Refresh the inline reader if it was open
     const card = document.getElementById('item-' + idx);
     if (card.classList.contains('expanded')) {
