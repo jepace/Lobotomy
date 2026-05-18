@@ -893,7 +893,7 @@ def _title_alts(title: str) -> str:
 
 
 def _autolink(args: dict) -> str:
-    """Replace first bare occurrence of each other wiki page title with a markdown link."""
+    """Replace all bare occurrences of each other wiki page title with a markdown link."""
     import re
 
     target_str = args.get("path", "")
@@ -947,15 +947,9 @@ def _autolink(args: dict) -> str:
             r"|(?<!\w)(" + _title_alts(title) + r")(?!\w)",
             re.IGNORECASE,
         )
-        replaced = False
-
         def _replacer(m, _lp=link_path):
-            nonlocal replaced
             if m.group(1):           # existing complete link — keep as-is
                 return m.group(1)
-            if replaced:             # only link first occurrence
-                return m.group(2)
-            replaced = True
             # Strip any inner link syntax (e.g. [Monterey County](url) → Monterey County)
             display = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", m.group(2))
             return f"[{display}]({_lp})"
@@ -967,7 +961,7 @@ def _autolink(args: dict) -> str:
             else:
                 new_lines.append(combined.sub(_replacer, line))
         new_body = "\n".join(new_lines)
-        if replaced:
+        if new_body != body:
             body = new_body
             linked += 1
 
