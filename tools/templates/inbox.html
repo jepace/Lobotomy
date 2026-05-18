@@ -155,7 +155,7 @@
   {% if items %}
     {% for item in items %}
     <div class="reading-item{% if item.archived %} archived-item{% endif %}" id="item-{{ loop.index }}"
-         data-search="{{ (item.title ~ ' ' ~ item.excerpt) | lower | e }}">
+         data-name="{{ item.name | e }}">
       <div class="item-header" onclick="toggleItem({{ loop.index }}, '{{ item.name | e }}')">
         <div class="item-body">
           <div class="item-title">
@@ -281,7 +281,7 @@ async function pollInbox() {
     // Insert new items at the top
     newItems.forEach(item => {
       const idx = items.indexOf(item) + 1;
-      const html = `<div class="reading-item" id="item-${idx}">
+      const html = `<div class="reading-item" id="item-${idx}" data-name="${item.name.replace(/"/g, '&quot;')}">
       <div class="item-header" onclick="toggleItem(${idx}, '${item.name.replace(/'/g, "\\'")}')">
         <div class="item-body">
           <div class="item-title">${item.source_url
@@ -397,12 +397,26 @@ async function toggleItem(idx, name) {
   }
 }
 
+const SHOW_ARCHIVED = {{ 'true' if show_archived else 'false' }};
+let _searchTimer = null;
 function filterItems(q) {
-  const term = q.trim().toLowerCase();
-  document.querySelectorAll('.reading-item').forEach(el => {
-    const text = (el.dataset.search || '');
-    el.style.display = (!term || text.includes(term)) ? '' : 'none';
-  });
+  clearTimeout(_searchTimer);
+  const term = q.trim();
+  if (!term) {
+    document.querySelectorAll('.reading-item').forEach(el => el.style.display = '');
+    return;
+  }
+  _searchTimer = setTimeout(async () => {
+    try {
+      const url = '/inbox/search?q=' + encodeURIComponent(term) + (SHOW_ARCHIVED ? '&archived=1' : '');
+      const resp = await fetch(url);
+      const data = await resp.json();
+      const matchedNames = new Set((data.results || []).map(r => r.name));
+      document.querySelectorAll('.reading-item').forEach(el => {
+        el.style.display = matchedNames.has(el.dataset.name) ? '' : 'none';
+      });
+    } catch(e) { console.error('Search error:', e); }
+  }, 200);
 }
 
 async function unarchiveItem(name, idx) {

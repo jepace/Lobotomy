@@ -1614,6 +1614,39 @@ def inbox_list():
     return {"items": items}
 
 
+@app.route("/inbox/search")
+@require_login
+def inbox_search():
+    q = request.args.get("q", "").strip()
+    show_archived = request.args.get("archived", "0") == "1"
+    if len(q) < 2:
+        return {"results": []}
+    words = [w.lower() for w in q.split() if w]
+    results = []
+    for f in RAW_DIR.iterdir():
+        if not f.is_file() or f.name.startswith(".") or f.name == "index.md":
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        fm, body = _parse_frontmatter(text)
+        is_archived = bool(fm.get("archived"))
+        if is_archived != show_archived:
+            continue
+        text_lower = text.lower()
+        if not all(w in text_lower for w in words):
+            continue
+        title = fm.get("title", "").strip() or f.stem
+        excerpt = ""
+        for line in body.splitlines():
+            if line.strip() and any(w in line.lower() for w in words):
+                excerpt = line.strip()[:120]
+                break
+        results.append({"name": f.name, "title": title, "excerpt": excerpt})
+    return {"results": results}
+
+
 # ---------------------------------------------------------------------------
 # External API — /api/*
 # ---------------------------------------------------------------------------
