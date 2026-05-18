@@ -285,16 +285,15 @@ def _read_pdf(p) -> "str | list":
 
 
 def _strip_broken_wiki_links(content: str, page_path: Path) -> str:
-    """Replace any internal wiki link whose target doesn't exist with bare link text."""
+    """Strip all internal wiki links from body text, keeping display text.
+    External links (http/mailto/#) are preserved.
+    The autolinker re-adds correct internal links after every write."""
     import re
     def _check(m):
         text, target = m.group(1), m.group(2)
         if target.startswith("http") or target.startswith("#") or target.startswith("mailto"):
             return m.group(0)
-        resolved = (page_path.parent / target).resolve()
-        if resolved.exists():
-            return m.group(0)
-        return text  # drop the broken link, keep display text
+        return text  # drop all internal links — autolinker handles them
     return re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _check, content)
 
 
