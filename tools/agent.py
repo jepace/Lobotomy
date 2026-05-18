@@ -317,7 +317,7 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
     # Source pages get a simple ## Sources with URL and raw file link
     if pg_type == "source":
         body = content[len(fm_text):]
-        body = re.sub(r"\n*^## Sources\b.*", "", body, flags=re.DOTALL | re.MULTILINE).rstrip()
+        body = re.sub(r"\n*^#{1,6} Sources\b.*", "", body, flags=re.DOTALL | re.MULTILINE).rstrip()
         url_m = re.search(r'^url:\s*["\']?([^"\'\n]+)["\']?', fm_text, re.MULTILINE)
         raw_m = re.search(r'^raw_source:\s*["\']?([^"\'\n]+)["\']?', fm_text, re.MULTILINE)
         lines = []
@@ -357,7 +357,7 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
 
     # Strip existing ## Sources section (assumed to be at end of file)
     body = content[len(fm_text):]
-    body = re.sub(r"\n*^## Sources\b.*", "", body, flags=re.DOTALL | re.MULTILINE).rstrip()
+    body = re.sub(r"\n*^#{1,6} Sources\b.*", "", body, flags=re.DOTALL | re.MULTILINE).rstrip()
 
     if not source_paths:
         return fm_text + body + "\n"
