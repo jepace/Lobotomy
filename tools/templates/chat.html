@@ -380,6 +380,8 @@ function setStopMode(userText) {
   document.getElementById('send-icon').style.display = 'none';
   document.getElementById('stop-icon').style.display = '';
   btn._pendingText = userText;
+  var navChat = document.getElementById('nav-chat');
+  if (navChat) navChat.classList.add('ai-busy');
 }
 
 function setSendMode() {
@@ -388,6 +390,8 @@ function setSendMode() {
   btn.disabled = false;
   document.getElementById('send-icon').style.display = '';
   document.getElementById('stop-icon').style.display = 'none';
+  var navChat = document.getElementById('nav-chat');
+  if (navChat) navChat.classList.remove('ai-busy');
 }
 
 async function stopGeneration() {
