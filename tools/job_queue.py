@@ -116,6 +116,9 @@ class JobQueue:
                         pass
             else:
                 idle += 1
+                # Heartbeat every 15s to keep the HTTP connection alive
+                if idle % 300 == 0:
+                    yield json.dumps({"type": "ping"}) + "\n"
                 # If no new data for 30 min and job is no longer current, give up
                 if idle > 36000:
                     log.warning("Job %s: stream idle timeout after 30 min", job_id)

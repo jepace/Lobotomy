@@ -270,7 +270,9 @@ async function readStream(streamResp, toolsEl, bubbleEl) {
       if (!line) continue;
       try {
         var ev = JSON.parse(line);
-        if (ev.type === 'tool') {
+        if (ev.type === 'ping') {
+          continue;
+        } else if (ev.type === 'tool') {
           hadTools = true;
           tools.push(ev.name + '  ' + ev.arg);
           toolsEl.style.display = 'block';
@@ -333,6 +335,7 @@ async function reconnectToJob(jobId) {
   try {
     var resp = await fetch('/chat/stream/' + jobId);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    hideBanner();  // stream is open — no longer "reconnecting"
     var result = await readStream(resp, toolsEl, bubbleEl);
     if (!result.text && bubbleEl.querySelector('.typing')) {
       bubbleEl.innerHTML = result.hadTools
