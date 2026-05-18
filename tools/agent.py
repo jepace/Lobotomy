@@ -449,9 +449,12 @@ def _backfill_entity_sources(entity_path: str) -> None:
     _atomic_write(p, updated)
 
 
-def _autolink_sources_if_entity(path: str) -> None:
-    """When an entity or concept page is written, re-autolink all source pages so
-    links that couldn't resolve at source-creation time are wired up now."""
+def _autolink_sources_if_entity(path: str, is_new: bool = False) -> None:
+    """When a NEW entity or concept page is written, re-autolink all source pages so
+    links that couldn't resolve at source-creation time are wired up now.
+    Skipped for updates to existing pages — the title hasn't changed."""
+    if not is_new:
+        return
     parts = Path(path).parts
     if len(parts) >= 2 and parts[-2] in ("entities", "concepts"):
         sources_dir = WIKI_DIR / "sources"
@@ -503,11 +506,12 @@ def _write_file(path: str, content: str) -> str:
                 f"full file with your changes incorporated."
             )
 
+    is_new = not p.exists()
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
     _autolink({"path": path})
-    _autolink_sources_if_entity(path)
+    _autolink_sources_if_entity(path, is_new=is_new)
     _rebuild_index({})
     return f"Written {len(content)} bytes to {path}"
 
@@ -969,7 +973,10 @@ def _autolink(args: dict) -> str:
 
     result = body
 
-    _atomic_write(target_p, frontmatter + result)
+    new_content = frontmatter + result
+    if new_content == content:
+        return f"Autolink: no changes in {target_str}."
+    _atomic_write(target_p, new_content)
     return f"Autolinked {linked} title(s) in {target_str}."
 
 
@@ -1216,7 +1223,7 @@ def _create_page(args: dict) -> str:
         _current_source_page = str(p.relative_to(WIKI_DIR))
 
     _autolink({"path": path})
-    _autolink_sources_if_entity(path)
+    _autolink_sources_if_entity(path, is_new=not existed)
     _rebuild_index({})
     action = "Updated" if existed else "Created"
     suffix = " — WARNING: no sources cited, update sources: frontmatter before calling done()" if _missing_sources else ""
