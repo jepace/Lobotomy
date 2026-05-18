@@ -135,6 +135,8 @@
   }
   .send-btn:disabled { background: var(--bg3); }
   .send-btn svg { width: 18px; height: 18px; }
+  .send-btn.stop { background: var(--danger, #e55); }
+  .send-btn.stop:hover { background: #c33; }
 
   /* quick prompts */
   .quick-prompts {
@@ -208,9 +210,12 @@
   <div class="input-bar">
     <textarea id="msg-input" placeholder="Ask anything or give a command…" rows="1"
               onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-    <button class="send-btn" id="send-btn" onclick="sendMessage()">
-      <svg viewBox="0 0 24 24" fill="currentColor">
+    <button class="send-btn" id="send-btn" onclick="sendOrStop()">
+      <svg id="send-icon" viewBox="0 0 24 24" fill="currentColor">
         <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+      </svg>
+      <svg id="stop-icon" viewBox="0 0 24 24" fill="currentColor" style="display:none">
+        <rect x="6" y="6" width="12" height="12" rx="2"/>
       </svg>
     </button>
   </div>
@@ -240,15 +245,18 @@ function escHtml(s) {
 }
 
 var sending = false;
+var activeJobId = null;
+var pendingCancelResolve = null;
 
 // ── Stream reader (shared by sendMessage and reconnectToJob) ─────────────
 async function readStream(streamResp, toolsEl, bubbleEl) {
-  var fullText = '';
-  var hadTools = false;
-  var tools    = [];
-  var reader   = streamResp.body.getReader();
-  var decoder  = new TextDecoder();
-  var buffer   = '';
+  var fullText  = '';
+  var hadTools  = false;
+  var cancelled = false;
+  var tools     = [];
+  var reader    = streamResp.body.getReader();
+  var decoder   = new TextDecoder();
+  var buffer    = '';
 
   while (true) {
     var chunk = await reader.read();
@@ -276,6 +284,8 @@ async function readStream(streamResp, toolsEl, bubbleEl) {
           tools.push('⏳ ' + retryMsg);
           toolsEl.style.display = 'block';
           toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">' + escHtml(t) + '</div>'; }).join('');
+        } else if (ev.type === 'cancelled') {
+          cancelled = true;
         } else if (ev.type === 'error') {
           bubbleEl.innerHTML = '<span style="color:var(--danger)">Error: ' + escHtml(ev.content) + '</span>';
         }
@@ -283,7 +293,7 @@ async function readStream(streamResp, toolsEl, bubbleEl) {
       } catch(e) {}
     }
   }
-  return {text: fullText, hadTools: hadTools};
+  return {text: fullText, hadTools: hadTools, cancelled: cancelled};
 }
 
 // ── Check for active job on page load ───────────────────────────────────
@@ -309,7 +319,8 @@ function hideBanner() {
 
 async function reconnectToJob(jobId) {
   sending = true;
-  document.getElementById('send-btn').disabled = true;
+  activeJobId = jobId;
+  setStopMode('');
 
   var id      = appendAssistantMsg();
   var toolsEl = document.getElementById('tools-' + id);
@@ -333,7 +344,8 @@ async function reconnectToJob(jobId) {
   } finally {
     hideBanner();
     sending = false;
-    document.getElementById('send-btn').disabled = false;
+    activeJobId = null;
+    setSendMode();
     scrollToBottom();
   }
 }
@@ -344,10 +356,56 @@ function autoResize(el) {
 }
 
 function handleKey(e) {
-  // Send on Enter (not Shift+Enter) on non-mobile
-  if (e.key === 'Enter' && !e.shiftKey && window.innerWidth > 600) {
+  if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
+    sendOrStop();
+  }
+}
+
+function sendOrStop() {
+  if (sending) {
+    stopGeneration();
+  } else {
     sendMessage();
+  }
+}
+
+function setStopMode(userText) {
+  var btn = document.getElementById('send-btn');
+  btn.classList.add('stop');
+  btn.disabled = false;
+  document.getElementById('send-icon').style.display = 'none';
+  document.getElementById('stop-icon').style.display = '';
+  btn._pendingText = userText;
+}
+
+function setSendMode() {
+  var btn = document.getElementById('send-btn');
+  btn.classList.remove('stop');
+  btn.disabled = false;
+  document.getElementById('send-icon').style.display = '';
+  document.getElementById('stop-icon').style.display = 'none';
+}
+
+async function stopGeneration() {
+  var btn = document.getElementById('send-btn');
+  var pendingText = btn._pendingText || '';
+  btn.disabled = true;
+  if (activeJobId) {
+    try {
+      await fetch('/chat/cancel', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({job_id: activeJobId}),
+      });
+    } catch(e) {}
+  }
+  // Restore the user's message so they can edit and resend
+  if (pendingText) {
+    var input = document.getElementById('msg-input');
+    input.value = pendingText;
+    autoResize(input);
+    input.focus();
   }
 }
 
@@ -397,7 +455,8 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
   sending = true;
-  document.getElementById('send-btn').disabled = true;
+  activeJobId = null;
+  setStopMode(text);
 
   appendUserMsg(text);
   var id      = appendAssistantMsg();
@@ -417,12 +476,19 @@ async function sendMessage() {
       throw new Error(err.error || 'HTTP ' + sendResp.status);
     }
     var job = await sendResp.json();
+    activeJobId = job.job_id;
 
-    var resp    = await fetch('/chat/stream/' + job.job_id);
+    var resp = await fetch('/chat/stream/' + job.job_id);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     var result = await readStream(resp, toolsEl, bubbleEl);
     fullText = result.text;
-    if (!fullText && bubbleEl.querySelector('.typing')) {
+    if (result.cancelled) {
+      var typing = bubbleEl.querySelector('.typing');
+      if (typing) typing.remove();
+      if (!fullText) {
+        bubbleEl.innerHTML = '<span style="color:var(--text2)">Stopped.</span>';
+      }
+    } else if (!fullText && bubbleEl.querySelector('.typing')) {
       bubbleEl.innerHTML = result.hadTools
         ? '<span style="color:var(--text2)">Done — see activity above.</span>'
         : '<span style="color:var(--text2)">No response.</span>';
@@ -431,11 +497,12 @@ async function sendMessage() {
     bubbleEl.innerHTML = '<span style="color:var(--danger)">Error: ' + escHtml(e.message) + '</span>';
     bubbleEl.querySelector && bubbleEl.querySelector('.typing') && (bubbleEl.querySelector('.typing').remove());
   } finally {
-    if (!fullText && bubbleEl.querySelector('.typing')) {
+    if (!fullText && bubbleEl.querySelector && bubbleEl.querySelector('.typing')) {
       bubbleEl.querySelector('.typing').remove();
     }
     sending = false;
-    document.getElementById('send-btn').disabled = false;
+    activeJobId = null;
+    setSendMode();
     scrollToBottom();
   }
 }

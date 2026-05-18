@@ -1745,7 +1745,8 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
     return messages
 
 
-def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> Generator:
+def stream_agent_turn(client: dict, model: str, messages: list, system: str,
+                      stop_event=None) -> Generator:
     """
     Run one user turn and yield newline-delimited JSON events:
       {"type": "tool",      "name": "...", "arg": "..."}
@@ -1777,6 +1778,11 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
     _had_tool_calls = False
     _tools_since_last_continuation = 0  # reset each continuation; 0 = no progress = give up
     while True:
+        if stop_event and stop_event.is_set():
+            log.info("stream_agent_turn: cancelled by stop_event before round %d", _round + 1)
+            yield json.dumps({"type": "cancelled"}) + "\n"
+            yield json.dumps({"type": "done"}) + "\n"
+            return
         _round += 1
         payload = dict(payload_base)
         payload["messages"] = [{"role": "system", "content": system}] + messages
@@ -1977,5 +1983,11 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str) -> 
                 fn_name = "unknown_tool"
             messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
                              "name": fn_name, "content": result})
+
+        if stop_event and stop_event.is_set():
+            log.info("stream_agent_turn: cancelled by stop_event after tool calls in round %d", _round)
+            yield json.dumps({"type": "cancelled"}) + "\n"
+            yield json.dumps({"type": "done"}) + "\n"
+            return
 
     yield json.dumps({"type": "done"}) + "\n"
