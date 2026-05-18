@@ -493,19 +493,13 @@ def _write_file(path: str, content: str) -> str:
     if p.resolve() == (WIKI_DIR / "index.md").resolve():
         return "Error: write_file refused on wiki/index.md — it is auto-generated; use rebuild_index if needed."
 
-    # Entity and concept pages must go through create_page to preserve structure.
-    if p.parent.name in ("entities", "concepts"):
-        return (
-            f"Error: write_file refused on {path} — use create_page for entity/concept pages "
-            "so frontmatter, sources, and body are preserved correctly."
-        )
-
-    # Refuse to overwrite an existing page that has frontmatter with content that lacks it.
+    # If the new content lacks frontmatter but the existing page has it, preserve the frontmatter.
     if p.exists() and not content.lstrip().startswith("---"):
-        return (
-            f"Error: write_file refused — existing page {path} has frontmatter but new content "
-            "does not. Use create_page to update structured wiki pages."
-        )
+        import re as _re
+        existing = p.read_text(encoding="utf-8", errors="replace")
+        fm_match = _re.match(r"^(---\s*\n.*?\n---\s*\n)", existing, _re.DOTALL)
+        if fm_match:
+            content = fm_match.group(1) + content.lstrip("\n")
 
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
