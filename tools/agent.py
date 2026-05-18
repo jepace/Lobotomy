@@ -1124,11 +1124,18 @@ def _search_wiki(args: dict) -> str:
         return "Error: no search keywords provided (only filter tokens found)."
     patterns = [re.compile(re.escape(kw), re.IGNORECASE) for kw in keywords]
     valid_subdirs = {"sources", "entities", "concepts", "synthesis"}
-    search_root = WIKI_DIR / scope if scope and scope in valid_subdirs else WIKI_DIR
+    if scope and scope in valid_subdirs:
+        search_root = WIKI_DIR / scope
+        exclude_sources = False
+    else:
+        search_root = WIKI_DIR
+        exclude_sources = True  # sources excluded unless in:sources requested
 
     _META_STEMS = {"log", "overview", "index", "lint"}
     results = []
     for f in sorted(search_root.rglob("*.md")):
+        if exclude_sources and f.is_relative_to(WIKI_DIR / "sources"):
+            continue
         if f.stem in _META_STEMS:
             continue
         try:
@@ -1547,10 +1554,10 @@ TOOL_DEFS = [
         "function": {
             "name":        "search_wiki",
             "description": (
-                "Keyword search across all wiki pages. Returns matching page titles, paths, and "
+                "Keyword search across wiki pages. Returns matching page titles, paths, and "
                 "a snippet of the matching line. Use this to check whether an entity or concept "
-                "already has a page before creating one — much faster than reading index.md "
-                "and then reading individual pages to verify."
+                "already has a page before creating one. By default excludes wiki/sources/ pages "
+                "(use 'in:sources' scope token to search sources explicitly, e.g. 'california in:sources')."
             ),
             "parameters":  {
                 "type": "object",
