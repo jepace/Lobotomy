@@ -994,11 +994,15 @@ def _autolink(args: dict) -> str:
             fm_lines = m.group(1).splitlines()
             title = None
             aliases = []
+            no_autolink = False
             i = 0
             while i < len(fm_lines):
                 line = fm_lines[i]
                 if line.startswith("title:"):
                     title = line.split(":", 1)[1].strip().strip('"')
+                elif line.startswith("no_autolink:"):
+                    val = line.split(":", 1)[1].strip().lower()
+                    no_autolink = val in ("true", "yes", "1")
                 elif line.startswith("aliases:"):
                     rest = line.split(":", 1)[1].strip()
                     if rest.startswith("["):
@@ -1015,7 +1019,7 @@ def _autolink(args: dict) -> str:
                             aliases.append(fm_lines[j][2:].strip().strip('"'))
                             j += 1
                 i += 1
-            if title:
+            if title and not no_autolink:
                 rel = f.relative_to(WIKI_DIR)
                 up_parts = target_p.parent.relative_to(WIKI_DIR).parts
                 prefix = "../" * len(up_parts)
