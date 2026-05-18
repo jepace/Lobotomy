@@ -82,6 +82,9 @@ url: "https://original-article-url"   # source documents only; omit on all other
 | `sources` | list of strings | Paths from `wiki/` to supporting source documents. **During ingest: set automatically — do not supply.** During regenerate: set to the full union of source pages you read. |
 | `url` | string (quoted) | Original article URL. Source documents only. Set automatically — do not supply. |
 | `raw_source` | string (quoted) | Repo-relative path to the raw inbox file. Source documents only. Set automatically — do not supply. |
+| `aliases` | list of strings | Extra names the autolinker should match and link to this page (e.g. common abbreviations or alternate spellings). Human-set only — do not supply during ingest. Example: `aliases: ["FBI", "bureau"]` |
+| `no_autolink` | boolean | If `true`, this page's title and aliases are excluded from the autolinker — bare occurrences of the title in other pages will not be linked here. Use for concept titles that are also common nouns. Human-set only — do not supply during ingest. |
+| `deprecated` | boolean | If `true`, the page is retired. Do not delete — set this flag and note it in the log. |
 
 ### Standard heading structures per document type
 
