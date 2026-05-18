@@ -213,7 +213,30 @@ Call `done()`. The server runs health checks automatically — results are visib
 
 ---
 
-## 6. Inbox Workflow (Read-It-Later)
+## 6. Regenerate Workflow
+
+**Trigger**: User says "regenerate", "fix", "rewrite", or "redo" a wiki page (entity, concept, synthesis, etc.).
+
+This workflow rewrites a wiki page from the synthesized source documents already in `wiki/sources/`. **Do not read `raw/` during a regenerate** — raw content has already been synthesized into `wiki/sources/` pages.
+
+### Step 1 — Read the existing page
+Call `read_file` on the page to retrieve its current `sources:` frontmatter list and body.
+
+### Step 2 — Discover all relevant sources
+Call `search_wiki` with `in:sources` scope using the page's title and key terms (e.g. `"Colorado River Compact in:sources"`). This catches source pages that mention the entity but aren't yet listed in its `sources:` frontmatter. Combine results with the `sources:` list from Step 1 — use the union of both.
+
+### Step 3 — Read all source pages
+Call `read_file` on each `wiki/sources/*.md` page found in Steps 1–2. Do not read `raw/` files.
+
+### Step 4 — Rewrite the page
+Call `write_file` with the full rewritten content synthesized from the source pages. Preserve the original `created` date. Update the `sources:` frontmatter to include all sources found in Step 2.
+
+### Step 5 — Done
+Call `done()`.
+
+---
+
+## 7. Inbox Workflow (Read-It-Later)
 
 **Trigger**: User drops a file into `raw/` and says "process inbox", or points at a
 specific inbox file.
@@ -245,7 +268,7 @@ you want to process but have not gotten to yet.
 
 ---
 
-## 7. `wiki/log.md` Protocol
+## 8. `wiki/log.md` Protocol
 
 Append-only operation log. Never delete or modify existing entries. Always prepend new entries at
 the **top** (newest-first ordering).
@@ -268,7 +291,7 @@ Rules:
 
 ---
 
-## 8. Handling Contradictions
+## 9. Handling Contradictions
 
 When a new source contradicts an existing document:
 
@@ -288,7 +311,7 @@ When a new source contradicts an existing document:
 
 ---
 
-## 9. Handling Uncertainty
+## 10. Handling Uncertainty
 
 - Reflect hedged claims with appropriate language: "according to [source name]",
   "as of YYYY-MM-DD", "the author suggests but does not confirm"
@@ -298,7 +321,7 @@ When a new source contradicts an existing document:
 
 ---
 
-## 10. Cold-Start Checklist
+## 11. Cold-Start Checklist
 
 If you are a fresh LLM session with no context beyond this file and the wiki directory:
 
@@ -311,7 +334,7 @@ Do not modify any file until the user gives an explicit instruction.
 
 ---
 
-## 11. Do Not Do These Things
+## 12. Do Not Do These Things
 
 - Do not call `list_dir` to verify a file exists before reading it — call `read_file` directly
 - Do not modify, move, or delete anything in `raw/` — it is immutable
