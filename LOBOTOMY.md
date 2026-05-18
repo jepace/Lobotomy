@@ -220,16 +220,16 @@ Call `done()`. The server runs health checks automatically — results are visib
 This workflow rewrites a wiki page from the synthesized source documents already in `wiki/sources/`. **Do not read `raw/` during a regenerate** — raw content has already been synthesized into `wiki/sources/` pages.
 
 ### Step 1 — Read the existing page
-Call `read_file` on the page to retrieve its current `sources:` frontmatter list and body.
+Call `read_file` on the page. Note the `sources:` frontmatter list — this is your initial source set.
 
-### Step 2 — Discover all relevant sources
-Call `search_wiki` with `in:sources` scope using the page's title and key terms (e.g. `"Colorado River Compact in:sources"`). This catches source pages that mention the entity but aren't yet listed in its `sources:` frontmatter. Combine results with the `sources:` list from Step 1 — use the union of both.
+### Step 2 — Discover additional sources
+Call `search_wiki` with `in:sources` scope using the page's title and key terms (e.g. `"Colorado River Compact in:sources"`). Add any results not already in your source set from Step 1. Your final source set is the union of both.
 
 ### Step 3 — Read all source pages
-Call `read_file` on each `wiki/sources/*.md` page found in Steps 1–2. Do not read `raw/` files.
+Call `read_file` on every `wiki/sources/*.md` page in your final source set. Do not read `raw/` files.
 
 ### Step 4 — Rewrite the page
-Call `write_file` with the full rewritten content synthesized from the source pages. Preserve the original `created` date. Update the `sources:` frontmatter to include all sources found in Step 2.
+Call `write_file` with the full rewritten content synthesized from all the source pages you read in Step 3. Preserve the original `created` date. Set `sources:` frontmatter to the full union from Steps 1–2.
 
 ### Step 5 — Done
 Call `done()`.
