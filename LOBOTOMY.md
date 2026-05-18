@@ -4,6 +4,8 @@ Read this file completely before doing anything else. It is the authoritative gu
 operation in this wiki. If you are an LLM session that has just been pointed at this repository,
 this file tells you everything you need to know to operate correctly.
 
+> **NEVER write markdown links in page body text.** Write bare names only. The system adds all internal links automatically after every write. Any link you write will be stripped anyway — do not waste tokens on them.
+
 ## 1. What This Wiki Is
 
 This is a **personal knowledge base maintained by LLMs**. It is not a RAG system. Sources are not
