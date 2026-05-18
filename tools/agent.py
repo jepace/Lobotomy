@@ -492,6 +492,21 @@ def _write_file(path: str, content: str) -> str:
         return "Error: write_file refused on wiki/log.md — use prepend_log to add entries."
     if p.resolve() == (WIKI_DIR / "index.md").resolve():
         return "Error: write_file refused on wiki/index.md — it is auto-generated; use rebuild_index if needed."
+
+    # Entity and concept pages must go through create_page to preserve structure.
+    if p.parent.name in ("entities", "concepts"):
+        return (
+            f"Error: write_file refused on {path} — use create_page for entity/concept pages "
+            "so frontmatter, sources, and body are preserved correctly."
+        )
+
+    # Refuse to overwrite an existing page that has frontmatter with content that lacks it.
+    if p.exists() and not content.lstrip().startswith("---"):
+        return (
+            f"Error: write_file refused — existing page {path} has frontmatter but new content "
+            "does not. Use create_page to update structured wiki pages."
+        )
+
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
