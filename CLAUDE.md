@@ -44,7 +44,7 @@ sh tools/lint.sh                           # shell-based broken-link checker
 
 ### The autolinker (common bug surface)
 
-**`tools/agent.py:_autolink()`** — called automatically after every `create_page` or `write_file`. Uses a combined regex where group 1 protects existing links and group 2 matches titles bare or with a sub-span already linked (via `_title_alts()`). When a partial match is found (e.g. `CASA of [Monterey County](url)`), the inner link is stripped and the whole phrase is replaced with the longer-title link.
+**`tools/agent.py:_autolink()`** — called automatically after every `create_page` or `write_file`. Uses a combined regex where group 1 protects existing links and group 2 matches titles bare or with a sub-span already linked (via `_title_alts()`). **All** bare occurrences of each title are linked (not just the first). When a partial match is found (e.g. `CASA of [Monterey County](url)`), the inner link is stripped and the whole phrase is replaced with the longer-title link.
 
 The critical invariant: **never match inside existing markdown links**. Group 1 of the combined regex takes priority at each position, consuming existing links before group 2 can fire.
 
