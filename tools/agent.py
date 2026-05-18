@@ -516,6 +516,21 @@ def _write_file(path: str, content: str) -> str:
                 f"full file with your changes incorporated."
             )
 
+    import re as _re
+    _subdir = p.parent.name
+    if _subdir in ("entities", "concepts") and _current_source_page:
+        # Override whatever sources: the LLM wrote with the session source page.
+        if _re.search(r"^sources:\s*\[", content, _re.MULTILINE):
+            content = _re.sub(
+                r"^sources:\s*\[[^\]]*\]",
+                f'sources: ["{_current_source_page}"]',
+                content, flags=_re.MULTILINE,
+            )
+        if _subdir in ("entities", "concepts"):
+            wiki_rel = str(p.relative_to(WIKI_DIR))
+            if wiki_rel not in _session_entity_pages:
+                _session_entity_pages.append(wiki_rel)
+
     is_new = not p.exists()
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
