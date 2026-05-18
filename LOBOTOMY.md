@@ -176,8 +176,12 @@ For each significant entity (person, organization, product, project) in the sour
 - **Always call `search_wiki` before calling `create_page`.** Do not create a document until you have
   confirmed no existing document covers this entity. Search by the entity's full name and any common
   abbreviations or alternate names.
-- If a document exists, update it with `write_file`. **Read the existing document first and send the complete file content** — frontmatter and full body — with your changes incorporated. Sending a fragment will be rejected. Preserve its `sources:` frontmatter list, appending the new source if not already present.
-- If the entity is new and significant, use `create_page` to create `wiki/entities/{slug}.md`.
+- **If a document exists**, build full context before rewriting it:
+  1. Read the existing entity page — note its `sources:` frontmatter list.
+  2. Call `search_wiki` with `in:sources` and the entity's name to find any source pages not yet in the frontmatter.
+  3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you just created in Step 3).
+  4. Rewrite the entity page from this complete picture using `write_file`. Set `sources:` to the full union. Preserve the original `created` date.
+- **If the entity is new**, use `create_page` for `wiki/entities/{slug}.md`, citing the current source page in `sources:`.
 - Note any contradictions with existing claims in a `## Contradictions` section.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
@@ -186,8 +190,12 @@ For each significant concept, technique, framework, or term:
 - **Always call `search_wiki` before calling `create_page`.** Do not create a document until you have
   confirmed no existing document covers this concept. Search by the concept's full name and any common
   abbreviations or alternate names.
-- If a document exists, update it with `write_file`. **Read the existing document first and send the complete file content** — frontmatter and full body — with your changes incorporated. Sending a fragment will be rejected. Preserve existing `sources:` and append the new source if not already present.
-- If no document exists and the concept warrants one, use `create_page` for `wiki/concepts/{slug}.md`.
+- **If a document exists**, build full context before rewriting it:
+  1. Read the existing concept page — note its `sources:` frontmatter list.
+  2. Call `search_wiki` with `in:sources` and the concept's name to find any source pages not yet in the frontmatter.
+  3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you just created in Step 3).
+  4. Rewrite the concept page from this complete picture using `write_file`. Set `sources:` to the full union. Preserve the original `created` date.
+- **If no document exists** and the concept warrants one, use `create_page` for `wiki/concepts/{slug}.md`, citing the current source page in `sources:`.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
 ### Step 7 — Update synthesis documents
