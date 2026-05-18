@@ -937,8 +937,11 @@ def _autolink(args: dict) -> str:
         return "Error: autolink only works on wiki/ pages."
 
     # Build title -> relative-link-path map
+    # Iterate non-source subdirs first so entity/concept pages take priority over
+    # source pages when both share a title — links should point to distilled knowledge.
     title_map: list[tuple[str, str]] = []
-    for subdir in ("sources", "entities", "concepts", "synthesis"):
+    seen_titles: set[str] = set()
+    for subdir in ("entities", "concepts", "synthesis", "sources"):
         d = WIKI_DIR / subdir
         if not d.is_dir():
             continue
@@ -978,10 +981,16 @@ def _autolink(args: dict) -> str:
                 up_parts = target_p.parent.relative_to(WIKI_DIR).parts
                 prefix = "../" * len(up_parts)
                 link_path = f"{prefix}{rel}"
-                title_map.append((title, link_path))
+                key = title.lower()
+                if key not in seen_titles:
+                    seen_titles.add(key)
+                    title_map.append((title, link_path))
                 for alias in aliases:
                     if alias:
-                        title_map.append((alias, link_path))
+                        akey = alias.lower()
+                        if akey not in seen_titles:
+                            seen_titles.add(akey)
+                            title_map.append((alias, link_path))
 
     if not title_map:
         return "No other wiki pages found to link."
