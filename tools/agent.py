@@ -1126,8 +1126,11 @@ def _search_wiki(args: dict) -> str:
     valid_subdirs = {"sources", "entities", "concepts", "synthesis"}
     search_root = WIKI_DIR / scope if scope and scope in valid_subdirs else WIKI_DIR
 
+    _META_STEMS = {"log", "overview", "index", "lint"}
     results = []
     for f in sorted(search_root.rglob("*.md")):
+        if f.stem in _META_STEMS:
+            continue
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
