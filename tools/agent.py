@@ -677,11 +677,42 @@ def _fetch_url(url: str) -> str:
 
 
 
+def _linkify_log_paths(entry: str) -> str:
+    """Replace bare wiki-relative .md paths in a log entry with titled markdown links.
+    Paths are resolved relative to wiki/ (where log.md lives). Already-linked paths
+    (inside [...](…)) are left alone."""
+    import re
+    combined = re.compile(
+        r"(\[[^\]]*\]\([^)]*\))"           # group 1: existing link — skip
+        r"|(?<!\()([^\s,\[]+\.md)\b"       # group 2: bare .md path
+    )
+    def _repl(m):
+        if m.group(1):
+            return m.group(1)
+        raw_path = m.group(2)
+        candidate = WIKI_DIR / raw_path
+        if not candidate.exists():
+            return m.group(2)
+        text = candidate.read_text(encoding="utf-8", errors="replace")
+        fm = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+        title = None
+        if fm:
+            for line in fm.group(1).splitlines():
+                if line.startswith("title:"):
+                    title = line.split(":", 1)[1].strip().strip('"')
+                    break
+        if not title:
+            return m.group(2)
+        return f"[{title}]({raw_path})"
+    return combined.sub(_repl, entry)
+
+
 def _prepend_log(entry: str) -> str:
     """Prepend a log entry to wiki/log.md, preserving all existing entries."""
     log_path = WIKI_DIR / "log.md"
     if not log_path.exists():
         return "Error: wiki/log.md does not exist"
+    entry = _linkify_log_paths(entry)
     text = log_path.read_text(encoding="utf-8")
 
     # Structure: frontmatter (---...---), prose paragraph, --- divider, then entries.
