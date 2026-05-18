@@ -1236,7 +1236,7 @@ def _search_raw(args: dict) -> str:
     return "\n".join(lines)
 
 
-def _create_page(args: dict) -> str:
+def _create_file(args: dict) -> str:
     """Write a new wiki page with auto-populated frontmatter."""
     global _current_source_page, _session_entity_pages
     import datetime, re
@@ -1257,7 +1257,7 @@ def _create_page(args: dict) -> str:
     try:
         p.resolve().relative_to(WIKI_DIR.resolve())
     except ValueError:
-        return f"Error: create_page only writes inside wiki/. Got: {path}"
+        return f"Error: create_file only writes inside wiki/. Got: {path}"
 
     _subdir = p.parent.name
     if _subdir in ("entities", "concepts"):
@@ -1425,7 +1425,7 @@ TOOL_FNS = {
 
     "search_wiki":      _search_wiki,
     "search_raw":       _search_raw,
-    "create_page":      _create_page,
+    "create_file":      _create_file,
 
     "done":             _done,
 }
@@ -1586,7 +1586,7 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
-            "name":        "create_page",
+            "name":        "create_file",
             "description": (
                 "Write a new wiki page with auto-populated frontmatter (created/updated dates "
                 "filled automatically). Preferred over write_file for new wiki pages — "
@@ -1624,8 +1624,8 @@ def system_prompt() -> str:
         "| Tool | When to use |\n"
         "|------|-------------|\n"
         "| read_file | Read any repo file. Raw sources truncated at 60k chars, wiki pages at 20k. |\n"
-        "| write_file | Write wiki pages (raw/ is blocked). Use create_page for new pages instead. |\n"
-        "| create_page | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
+        "| write_file | Write wiki pages (raw/ is blocked). Use create_file for new pages instead. |\n"
+        "| create_file | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
         "| search_raw | Search raw source files by keyword — use when retroactively reviewing old articles for a newly prominent entity. |\n"
         "| prepend_log | Add entry to wiki/log.md. Never use write_file for the log. |\n"

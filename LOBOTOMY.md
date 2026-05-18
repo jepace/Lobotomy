@@ -148,10 +148,10 @@ Read the entire file before writing anything. If it is very long (>20,000 words)
 sections sequentially before proceeding.
 
 ### Step 3 — Create a source summary document
-Call `create_page` with:
+Call `create_file` with:
 - `path`: `wiki/sources/{source-slug}.md` — always a wiki/ path, never a URL
 - `type`: `source`
-- `body`: the content below (do not write frontmatter manually — `create_page` fills in dates automatically)
+- `body`: the content below (do not write frontmatter manually — `create_file` fills in dates automatically)
 
 Required sections:
 - **Summary**: 3–5 paragraphs synthesizing the source's main content and contribution
@@ -173,7 +173,7 @@ List these explicitly before modifying any of them.
 
 ### Step 5 — Update or create entity documents
 For each significant entity (person, organization, product, project) in the source:
-- **Always call `search_wiki` before calling `create_page`.** Do not create a document until you have
+- **Always call `search_wiki` before calling `create_file`.** Do not create a document until you have
   confirmed no existing document covers this entity. Search by the entity's full name and any common
   abbreviations or alternate names.
 - **If a document exists**, build full context before rewriting it:
@@ -181,13 +181,13 @@ For each significant entity (person, organization, product, project) in the sour
   2. Call `search_wiki` with `in:sources` and the entity's name to find any source pages not yet in the frontmatter.
   3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you just created in Step 3).
   4. Rewrite the entity page from this complete picture using `write_file`. Set `sources:` to the full union. Preserve the original `created` date.
-- **If the entity is new**, use `create_page` for `wiki/entities/{slug}.md`, citing the current source page in `sources:`.
+- **If the entity is new**, use `create_file` for `wiki/entities/{slug}.md`, citing the current source page in `sources:`.
 - Note any contradictions with existing claims in a `## Contradictions` section.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
 ### Step 6 — Update or create concept documents
 For each significant concept, technique, framework, or term:
-- **Always call `search_wiki` before calling `create_page`.** Do not create a document until you have
+- **Always call `search_wiki` before calling `create_file`.** Do not create a document until you have
   confirmed no existing document covers this concept. Search by the concept's full name and any common
   abbreviations or alternate names.
 - **If a document exists**, build full context before rewriting it:
@@ -195,7 +195,7 @@ For each significant concept, technique, framework, or term:
   2. Call `search_wiki` with `in:sources` and the concept's name to find any source pages not yet in the frontmatter.
   3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you just created in Step 3).
   4. Rewrite the concept page from this complete picture using `write_file`. Set `sources:` to the full union. Preserve the original `created` date.
-- **If no document exists** and the concept warrants one, use `create_page` for `wiki/concepts/{slug}.md`, citing the current source page in `sources:`.
+- **If no document exists** and the concept warrants one, use `create_file` for `wiki/concepts/{slug}.md`, citing the current source page in `sources:`.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
 ### Step 7 — Update synthesis documents
@@ -348,7 +348,7 @@ Do not modify any file until the user gives an explicit instruction.
 - Do not modify, move, or delete anything in `raw/` — it is immutable
 - Do not modify `LOBOTOMY.md` unless the user explicitly asks you to update the schema
 - Do not read or edit `wiki/index.md` — it is auto-generated on every page write
-- Do not write document frontmatter manually — always use `create_page` for new documents
+- Do not write document frontmatter manually — always use `create_file` for new documents
 - Do not write any markdown links in document body text — plain text only
 - Do not resolve contradictions without user instruction
 - Do not delete documents — set `deprecated: true` in frontmatter instead, then note it in the log
