@@ -492,6 +492,18 @@ def _write_file(path: str, content: str) -> str:
         return "Error: write_file refused on wiki/log.md — use prepend_log to add entries."
     if p.resolve() == (WIKI_DIR / "index.md").resolve():
         return "Error: write_file refused on wiki/index.md — it is auto-generated; use rebuild_index if needed."
+
+    # Reject partial writes — write_file requires the complete file content.
+    if p.exists() and not content.lstrip().startswith("---"):
+        existing = p.read_text(encoding="utf-8", errors="replace")
+        import re as _re
+        if _re.match(r"^---\s*\n", existing):
+            return (
+                f"Error: write_file requires the complete file content including frontmatter. "
+                f"You sent a fragment without frontmatter. Read {path} first, then resend the "
+                f"full file with your changes incorporated."
+            )
+
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)

@@ -185,8 +185,7 @@ For each significant entity (person, organization, product, project) in the sour
 - **Always call `search_wiki` before calling `create_page`.** Do not create a page until you have
   confirmed no existing page covers this entity. Search by the entity's full name and any common
   abbreviations or alternate names.
-- If a page exists and is correct, update it with `write_file`. When updating, read the existing
-  page first and preserve its `sources:` frontmatter list, appending the new source if not already present.
+- If a page exists and is correct, update it with `write_file`. **You must read the existing page first and send the complete file content** — frontmatter and full body — with your changes incorporated. Sending a fragment will be rejected. Preserve its `sources:` frontmatter list, appending the new source if not already present.
 - If the entity is new and significant, use `create_page` to create `wiki/entities/{slug}.md`.
   Pass `sources: ["sources/{source-slug}.md"]` so the Sources section is populated automatically.
 - Note any contradictions with existing claims in a `## Contradictions` section.
@@ -197,8 +196,7 @@ For each significant concept, technique, framework, or term:
 - **Always call `search_wiki` before calling `create_page`.** Do not create a page until you have
   confirmed no existing page covers this concept. Search by the concept's full name and any common
   abbreviations or alternate names.
-- If a page exists and is correct, update it with `write_file`. Preserve existing `sources:` and
-  append the new source if not already present.
+- If a page exists and is correct, update it with `write_file`. **You must read the existing page first and send the complete file content** — frontmatter and full body — with your changes incorporated. Sending a fragment will be rejected. Preserve existing `sources:` and append the new source if not already present.
 - If no page exists and the concept warrants one, use `create_page` for `wiki/concepts/{slug}.md`.
   Pass `sources: ["sources/{source-slug}.md"]` so the Sources section is populated automatically.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
