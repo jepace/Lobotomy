@@ -32,7 +32,7 @@ sh tools/lint.sh                           # shell-based broken-link checker
 
 ### Core modules
 
-**`tools/agent.py`** — the heart of the system. Contains all AI tool implementations (`_read_file`, `_write_file`, `_create_page`, `_autolink`, `_search_wiki`, `_fetch_url`, `_prepend_log`, `_done`, `_rebuild_index`, etc.) plus the agentic loop (`stream_agent_turn`, `run_agent_turn`) and LLM provider abstraction. Both `serve.py` and `wiki.py` import from here.
+**`tools/agent.py`** — the heart of the system. Contains all AI tool implementations (`_read_file`, `_write_file`, `_create_file`, `_autolink`, `_search_wiki`, `_fetch_url`, `_prepend_log`, `_done`, `_rebuild_index`, etc.) plus the agentic loop (`stream_agent_turn`, `run_agent_turn`) and LLM provider abstraction. Both `serve.py` and `wiki.py` import from here.
 
 **`tools/serve.py`** — Flask web server. Routes for: `/chat` (streaming AI), `/wiki/*` (rendered markdown), `/tasks` (task manager UI), `/inbox` (read-it-later), `/blog`, auth, and settings. Imports `agent.py` for AI functionality and `job_queue.py` for background jobs.
 
@@ -44,7 +44,7 @@ sh tools/lint.sh                           # shell-based broken-link checker
 
 ### The autolinker (common bug surface)
 
-**`tools/agent.py:_autolink()`** — called automatically after every `create_page` or `write_file`. **This is the only way wiki links are ever created** — the LLM never writes raw markdown links itself. Uses a combined regex where group 1 protects existing links and group 2 matches titles bare or with a sub-span already linked (via `_title_alts()`). **All** bare occurrences of each title (and any `aliases:`) are linked (not just the first). When a partial match is found (e.g. `CASA of [Monterey County](url)`), the inner link is stripped and the whole phrase is replaced with the longer-title link.
+**`tools/agent.py:_autolink()`** — called automatically after every `create_file` or `write_file`. **This is the only way wiki links are ever created** — the LLM never writes raw markdown links itself. Uses a combined regex where group 1 protects existing links and group 2 matches titles bare or with a sub-span already linked (via `_title_alts()`). **All** bare occurrences of each title (and any `aliases:`) are linked (not just the first). When a partial match is found (e.g. `CASA of [Monterey County](url)`), the inner link is stripped and the whole phrase is replaced with the longer-title link.
 
 The critical invariant: **never match inside existing markdown links**. Group 1 of the combined regex takes priority at each position, consuming existing links before group 2 can fire.
 
@@ -52,7 +52,7 @@ Pages can carry an `aliases:` frontmatter list (e.g. `aliases: ["gonzales", "uc 
 
 ### Wiki page lifecycle
 
-1. `create_page` → writes frontmatter + body, calls `_autolink`, calls `_inject_sources_section`
+1. `create_file` → writes frontmatter + body, calls `_autolink`, calls `_inject_sources_section`
 2. `_autolink` → cross-links bare title occurrences to other wiki pages
 3. `_inject_sources_section` → renders a `## Sources` section from `sources:` frontmatter
 4. `_autolink_sources_if_entity` → if the written page is an entity, also re-autolinks all source pages that mention it
@@ -67,7 +67,7 @@ Pages can carry an `aliases:` frontmatter list (e.g. `aliases: ["gonzales", "uc 
 - **`raw/` is immutable for the LLM** — code in `_write_file` blocks the LLM from writing outside `wiki/`. However, `serve.py` itself does move files within `raw/`: inbox items are renamed from `raw/inbox/` to `raw/sources/` when the user archives them (`serve.py:_mark_inbox_wikified`, `inbox_archive`). Don't assume files stay in `raw/inbox/` permanently.
 - **`wiki/log.md` is append-only** — always use `prepend_log`, never `write_file` on the log.
 - **No `[[wikilink]]` syntax** — standard relative markdown links only.
-- **`create_page` over `write_file`** for new wiki pages — it auto-fills `created`/`updated` dates.
+- **`create_file` over `write_file`** for new wiki pages — it auto-fills `created`/`updated` dates.
 - Internal wiki links use paths relative to the page's location: `../entities/foo.md` from `wiki/sources/`.
 - File names: `lowercase-hyphenated-slugs.md`. Source slugs encode `{author-or-org}-{year}-{short-title}`.
 - The `## Sources` section in entity/concept pages is auto-generated from frontmatter — never write it manually.

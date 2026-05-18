@@ -349,10 +349,20 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
                     source_paths.append(s)
                 else:
                     resolved = (page_path.parent / s).resolve()
+                    found = False
                     try:
-                        s = str(resolved.relative_to(WIKI_DIR.resolve()))
+                        rel = str(resolved.relative_to(WIKI_DIR.resolve()))
+                        if (WIKI_DIR / rel).exists():
+                            s = rel
+                            found = True
                     except ValueError:
                         pass
+                    if not found:
+                        # LLM may prefix with wrong subdir — search by basename.
+                        basename = Path(s).name
+                        matches = list(WIKI_DIR.rglob(basename))
+                        if len(matches) == 1:
+                            s = str(matches[0].relative_to(WIKI_DIR))
                     source_paths.append(s)
 
     # Strip existing ## Sources section (assumed to be at end of file)
@@ -506,6 +516,21 @@ def _write_file(path: str, content: str) -> str:
                 f"full file with your changes incorporated."
             )
 
+    import re as _re
+    _subdir = p.parent.name
+    if _subdir in ("entities", "concepts") and _current_source_page:
+        # Override whatever sources: the LLM wrote with the session source page.
+        if _re.search(r"^sources:\s*\[", content, _re.MULTILINE):
+            content = _re.sub(
+                r"^sources:\s*\[[^\]]*\]",
+                f'sources: ["{_current_source_page}"]',
+                content, flags=_re.MULTILINE,
+            )
+        if _subdir in ("entities", "concepts"):
+            wiki_rel = str(p.relative_to(WIKI_DIR))
+            if wiki_rel not in _session_entity_pages:
+                _session_entity_pages.append(wiki_rel)
+
     is_new = not p.exists()
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
@@ -533,7 +558,8 @@ _fetch_cache: dict[str, str] = {}
 _fetch_cache_lock = threading.Lock()
 _current_inbox_url: str = ""
 _current_inbox_path: str = ""
-_current_source_page: str = ""  # wiki/sources/ path created in this session
+_current_source_page: str = ""   # wiki/sources/ path created in this session
+_session_entity_pages: list = [] # wiki/entities|concepts/ paths created this session
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -1210,9 +1236,9 @@ def _search_raw(args: dict) -> str:
     return "\n".join(lines)
 
 
-def _create_page(args: dict) -> str:
+def _create_file(args: dict) -> str:
     """Write a new wiki page with auto-populated frontmatter."""
-    global _current_source_page
+    global _current_source_page, _session_entity_pages
     import datetime, re
     path    = args.get("path", "")
     title   = args.get("title", "")
@@ -1231,12 +1257,12 @@ def _create_page(args: dict) -> str:
     try:
         p.resolve().relative_to(WIKI_DIR.resolve())
     except ValueError:
-        return f"Error: create_page only writes inside wiki/. Got: {path}"
+        return f"Error: create_file only writes inside wiki/. Got: {path}"
 
     _subdir = p.parent.name
-    if _subdir in ("entities", "concepts") and _current_source_page:
-        if _current_source_page not in sources:
-            sources = [_current_source_page] + [s for s in sources if s != _current_source_page]
+    if _subdir in ("entities", "concepts"):
+        # Always derive sources from the current session source page; ignore LLM-supplied value.
+        sources = [_current_source_page] if _current_source_page else []
     _missing_sources = _subdir in ("entities", "concepts") and not sources
 
     today = datetime.date.today().isoformat()
@@ -1276,8 +1302,30 @@ def _create_page(args: dict) -> str:
     p.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(p, content)
 
+    if _subdir in ("entities", "concepts"):
+        wiki_rel = str(p.relative_to(WIKI_DIR))
+        if wiki_rel not in _session_entity_pages:
+            _session_entity_pages.append(wiki_rel)
+
     if _subdir == "sources":
         _current_source_page = str(p.relative_to(WIKI_DIR))
+        # Backfill any entity/concept pages created earlier this session.
+        for ep in _session_entity_pages:
+            ep_path = WIKI_DIR / ep
+            if not ep_path.exists():
+                continue
+            ep_content = ep_path.read_text(encoding="utf-8", errors="replace")
+            src_m = re.search(r"^sources:\s*\[([^\]]*)\]", ep_content, re.MULTILINE)
+            existing = []
+            if src_m and src_m.group(1).strip():
+                existing = [s.strip().strip('"').strip("'") for s in src_m.group(1).split(",") if s.strip()]
+            if _current_source_page not in existing:
+                new_src_str = ", ".join(f'"{s}"' for s in [_current_source_page] + existing)
+                ep_content = re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{new_src_str}]", ep_content, flags=re.MULTILINE)
+                # Remove any WARNING comment inserted due to missing sources
+                ep_content = ep_content.replace("<!-- WARNING: no sources cited — update sources: frontmatter -->\n\n", "")
+                ep_content = _inject_sources_section(ep_content, ep_path)
+                _atomic_write(ep_path, ep_content)
 
     _autolink({"path": path})
     _autolink_sources_if_entity(path, is_new=not existed)
@@ -1377,7 +1425,7 @@ TOOL_FNS = {
 
     "search_wiki":      _search_wiki,
     "search_raw":       _search_raw,
-    "create_page":      _create_page,
+    "create_file":      _create_file,
 
     "done":             _done,
 }
@@ -1538,7 +1586,7 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
-            "name":        "create_page",
+            "name":        "create_file",
             "description": (
                 "Write a new wiki page with auto-populated frontmatter (created/updated dates "
                 "filled automatically). Preferred over write_file for new wiki pages — "
@@ -1552,7 +1600,6 @@ TOOL_DEFS = [
                     "type":    {"type": "string", "description": "Page type: source | entity | concept | synthesis"},
                     "tags":    {"type": "array",  "items": {"type": "string"}, "description": "List of lowercase hyphenated tags"},
                     "body":    {"type": "string", "description": "Full page body content (no frontmatter — that is added automatically)"},
-                    "sources": {"type": "array",  "items": {"type": "string"}, "description": "List of source page paths relative to wiki/, e.g. [\"sources/my-article.md\"]"},
                     "url":     {"type": "string", "description": "Original article URL. Source pages only — omit for entity/concept/synthesis pages."},
                 },
                 "required": ["path", "title", "type", "body"],
@@ -1577,8 +1624,8 @@ def system_prompt() -> str:
         "| Tool | When to use |\n"
         "|------|-------------|\n"
         "| read_file | Read any repo file. Raw sources truncated at 60k chars, wiki pages at 20k. |\n"
-        "| write_file | Write wiki pages (raw/ is blocked). Use create_page for new pages instead. |\n"
-        "| create_page | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
+        "| write_file | Write wiki pages (raw/ is blocked). Use create_file for new pages instead. |\n"
+        "| create_file | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
         "| search_raw | Search raw source files by keyword — use when retroactively reviewing old articles for a newly prominent entity. |\n"
         "| prepend_log | Add entry to wiki/log.md. Never use write_file for the log. |\n"

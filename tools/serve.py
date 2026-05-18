@@ -905,7 +905,7 @@ def chat_send():
                 f'{message}\n\n'
                 f'<file path="raw/{inbox_path.name}">\n{file_content}\n</file>'
             )
-            # Prime the globals that _create_page uses for url: and raw_source: fallbacks.
+            # Prime the globals that _create_file uses for url: and raw_source: fallbacks.
             # Without this, the LLM skips read_file (content already injected) so the
             # globals never get set and frontmatter ends up missing both fields.
             import agent as _agent
