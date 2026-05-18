@@ -918,16 +918,39 @@ def _autolink(args: dict) -> str:
             m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
             if not m:
                 continue
-            for line in m.group(1).splitlines():
+            fm_lines = m.group(1).splitlines()
+            title = None
+            aliases = []
+            i = 0
+            while i < len(fm_lines):
+                line = fm_lines[i]
                 if line.startswith("title:"):
                     title = line.split(":", 1)[1].strip().strip('"')
-                    if title:
-                        rel = f.relative_to(WIKI_DIR)
-                        up_parts = target_p.parent.relative_to(WIKI_DIR).parts
-                        prefix = "../" * len(up_parts)
-                        link_path = f"{prefix}{rel}"
-                        title_map.append((title, link_path))
-                    break
+                elif line.startswith("aliases:"):
+                    rest = line.split(":", 1)[1].strip()
+                    if rest.startswith("["):
+                        # inline list: aliases: ["foo", "bar"]
+                        import json
+                        try:
+                            aliases = json.loads(rest)
+                        except Exception:
+                            pass
+                    else:
+                        # block list: next lines start with "- "
+                        j = i + 1
+                        while j < len(fm_lines) and fm_lines[j].startswith("- "):
+                            aliases.append(fm_lines[j][2:].strip().strip('"'))
+                            j += 1
+                i += 1
+            if title:
+                rel = f.relative_to(WIKI_DIR)
+                up_parts = target_p.parent.relative_to(WIKI_DIR).parts
+                prefix = "../" * len(up_parts)
+                link_path = f"{prefix}{rel}"
+                title_map.append((title, link_path))
+                for alias in aliases:
+                    if alias:
+                        title_map.append((alias, link_path))
 
     if not title_map:
         return "No other wiki pages found to link."

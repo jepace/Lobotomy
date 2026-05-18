@@ -44,9 +44,11 @@ sh tools/lint.sh                           # shell-based broken-link checker
 
 ### The autolinker (common bug surface)
 
-**`tools/agent.py:_autolink()`** — called automatically after every `create_page` or `write_file`. Uses a combined regex where group 1 protects existing links and group 2 matches titles bare or with a sub-span already linked (via `_title_alts()`). **All** bare occurrences of each title are linked (not just the first). When a partial match is found (e.g. `CASA of [Monterey County](url)`), the inner link is stripped and the whole phrase is replaced with the longer-title link.
+**`tools/agent.py:_autolink()`** — called automatically after every `create_page` or `write_file`. **This is the only way wiki links are ever created** — the LLM never writes raw markdown links itself. Uses a combined regex where group 1 protects existing links and group 2 matches titles bare or with a sub-span already linked (via `_title_alts()`). **All** bare occurrences of each title (and any `aliases:`) are linked (not just the first). When a partial match is found (e.g. `CASA of [Monterey County](url)`), the inner link is stripped and the whole phrase is replaced with the longer-title link.
 
 The critical invariant: **never match inside existing markdown links**. Group 1 of the combined regex takes priority at each position, consuming existing links before group 2 can fire.
+
+Pages can carry an `aliases:` frontmatter list (e.g. `aliases: ["gonzales", "uc davis"]`) for common short names that the autolinker should also match. The LLM is not instructed to set this field — it's a manual human override for when the formal page title differs from how the subject is typically referenced in prose.
 
 ### Wiki page lifecycle
 
