@@ -206,6 +206,17 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
             limit = _WIKI_READ_LIMIT
         except ValueError:
             limit = _RAW_READ_LIMIT
+    # Strip system-owned frontmatter fields before exposing to LLM.
+    # These are maintained exclusively by code; the LLM must never write them.
+    # The rendered ## Sources section in the body is still returned.
+    import re as _re2
+    _fm = _re2.match(r'^(---\s*\n)(.*?\n)(---\s*\n)', text, _re2.DOTALL)
+    if _fm:
+        _stripped_fm = _re2.sub(
+            r'^(sources|created|raw_source):[ \t]*.*\n?', '', _fm.group(2), flags=_re2.MULTILINE
+        )
+        text = _fm.group(1) + _stripped_fm + _fm.group(3) + text[_fm.end():]
+
     total = len(text)
     if offset:
         text = text[offset:]
@@ -547,6 +558,16 @@ def _write_file(path: str, content: str) -> str:
                 _session_entity_pages.append(wiki_rel)
 
     is_new = not p.exists()
+    # Restore system-owned scalar fields from disk — never trust LLM-supplied values.
+    if not is_new:
+        _disk_existing = p.read_text(encoding="utf-8", errors="replace")
+        for _field in ("created", "raw_source"):
+            _disk_m = _re.search(r"^" + _field + r":[ \t]*\S.*", _disk_existing, _re.MULTILINE)
+            if _disk_m:
+                if _re.search(r"^" + _field + r":", content, _re.MULTILINE):
+                    content = _re.sub(r"^" + _field + r":.*", _disk_m.group(0), content, flags=_re.MULTILINE)
+                else:
+                    content = _re.sub(r"^(updated:.*)", r"\1\n" + _disk_m.group(0), content, flags=_re.MULTILINE, count=1)
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)

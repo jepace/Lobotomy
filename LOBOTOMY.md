@@ -77,11 +77,11 @@ url: "https://original-article-url"   # source documents only; omit on all other
 | `title` | string (quoted) | Title-case, human readable |
 | `type` | enum | One of: `source`, `entity`, `concept`, `synthesis`, `overview` |
 | `tags` | list of strings | lowercase, hyphenated, no spaces |
-| `created` | YYYY-MM-DD | Date first created. Never change. |
+| `created` | YYYY-MM-DD | Date first created. **System-managed — never supply or modify.** |
 | `updated` | YYYY-MM-DD | Date of most recent edit. Update on every write. |
-| `sources` | list of strings | Paths from `wiki/` to supporting source documents. **During ingest: set automatically — do not supply.** During regenerate: set to the full union of source pages you read. |
-| `url` | string (quoted) | Original article URL. Source documents only. Set automatically — do not supply. |
-| `raw_source` | string (quoted) | Repo-relative path to the raw inbox file. Source documents only. Set automatically — do not supply. |
+| `sources` | list of strings | Paths from `wiki/` to supporting source documents. **System-managed — never supply or modify.** Use `search_wiki in:sources` to discover source pages instead of reading this field. |
+| `url` | string (quoted) | Original article URL. Source documents only. **System-managed — never supply or modify.** |
+| `raw_source` | string (quoted) | Repo-relative path to the raw inbox file. Source documents only. **System-managed — never supply or modify.** |
 | `aliases` | list of strings | Extra names the autolinker should match and link to this page (e.g. common abbreviations or alternate spellings). Human-set only — do not supply during ingest. Example: `aliases: ["FBI", "bureau"]` |
 | `no_autolink` | boolean | If `true`, this page's title and aliases are excluded from the autolinker — bare occurrences of the title in other pages will not be linked here. Use for concept titles that are also common nouns. Human-set only — do not supply during ingest. |
 | `deprecated` | boolean | If `true`, the page is retired. Do not delete — set this flag and note it in the log. |
@@ -230,19 +230,16 @@ Call `done()`. The server runs health checks automatically — results are visib
 
 This workflow rewrites a wiki page from the synthesized source documents already in `wiki/sources/`. **Do not read `raw/` during a regenerate** — raw content has already been synthesized into `wiki/sources/` pages.
 
-### Step 1 — Read the existing page
-Call `read_file` on the page. Note the `sources:` frontmatter list — this is your initial source set.
+### Step 1 — Read the existing page and discover sources
+Call `read_file` on the page to understand its current content and key terms. Then call `search_wiki in:sources` using the page title and key terms (e.g. `"Colorado River Compact in:sources"`) to find all supporting source pages. That search result is your source set.
 
-### Step 2 — Discover additional sources
-Call `search_wiki` with `in:sources` scope using the page's title and key terms (e.g. `"Colorado River Compact in:sources"`). Add any results not already in your source set from Step 1. Your final source set is the union of both.
+### Step 2 — Read all source pages
+Call `read_file` on every `wiki/sources/*.md` page in your source set. Do not read `raw/` files.
 
-### Step 3 — Read all source pages
-Call `read_file` on every `wiki/sources/*.md` page in your final source set. Do not read `raw/` files.
+### Step 3 — Rewrite the page
+Call `write_file` with the full rewritten content synthesized from all the source pages you read. Do not include `sources:`, `created:`, or `raw_source:` in the frontmatter — these are managed automatically by the system.
 
-### Step 4 — Rewrite the page
-Call `write_file` with the full rewritten content synthesized from all the source pages you read in Step 3. Preserve the original `created` date. Set `sources:` frontmatter to the full union from Steps 1–2.
-
-### Step 5 — Done
+### Step 4 — Done
 Call `done()`.
 
 ---
