@@ -114,9 +114,11 @@
       0%, 100% { opacity: 1; }
       50% { opacity: 0.3; }
     }
+    .nav a.ai-busy {
+      color: var(--accent);
+    }
     .nav a.ai-busy svg {
       animation: chat-thinking 1s ease-in-out infinite;
-      filter: invert(1);
     }
     /* ── Buttons ─────────────────────────────────────────────── */
     .btn {
@@ -297,6 +299,20 @@
       localStorage.setItem('fontSize', s);
       applyFontSize(s);
     };
+  })();
+  </script>
+  <script>
+  (function() {
+    var navChat = document.getElementById('nav-chat');
+    if (!navChat) return;
+    function syncBusy() {
+      fetch('/chat/status').then(function(r){ return r.json(); }).then(function(s) {
+        if (s.running) navChat.classList.add('ai-busy');
+        else navChat.classList.remove('ai-busy');
+      }).catch(function(){});
+    }
+    syncBusy();
+    setInterval(syncBusy, 2000);
   })();
   </script>
 </body>
