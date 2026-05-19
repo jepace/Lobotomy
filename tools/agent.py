@@ -468,12 +468,14 @@ def _autolink_sources_if_entity(path: str, is_new: bool = False) -> None:
         return
     parts = Path(path).parts
     if len(parts) >= 2 and parts[-2] in ("entities", "concepts"):
+        # Backfill BEFORE autolink: only capture links the LLM wrote intentionally,
+        # not links the autolinker is about to insert into source pages.
+        _backfill_entity_sources(path)
         sources_dir = WIKI_DIR / "sources"
         if sources_dir.is_dir():
             for src in sources_dir.glob("*.md"):
                 if src.name != "index.md":
                     _autolink({"path": str(src.relative_to(REPO_ROOT))})
-        _backfill_entity_sources(path)
 
 
 def _atomic_write(p: Path, content: str) -> None:
@@ -1334,6 +1336,11 @@ def _create_file(args: dict) -> str:
         f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n{url_line}{raw_source_line}---\n\n'
     )
     body_text = body.lstrip("\n")
+    # Strip frontmatter the LLM accidentally included in body (would produce a duplicate --- block).
+    if body_text.startswith("---"):
+        _fm_strip = re.match(r'^---\s*\n.*?\n---\s*\n', body_text, re.DOTALL)
+        if _fm_strip:
+            body_text = body_text[_fm_strip.end():]
     if _missing_sources:
         body_text = "<!-- WARNING: no sources cited — update sources: frontmatter -->\n\n" + body_text
     content = frontmatter + _strip_broken_wiki_links(body_text, p)
