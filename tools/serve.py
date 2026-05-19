@@ -74,6 +74,15 @@ def _setup_logging() -> None:
 _setup_logging()
 log = logging.getLogger("lobotomy.serve")
 
+# Suppress noisy polling endpoints from werkzeug's access log.
+class _SuppressPollingPaths(logging.Filter):
+    _QUIET = {"/chat/status", "/api/status"}
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(p in msg for p in self._QUIET)
+
+logging.getLogger("werkzeug").addFilter(_SuppressPollingPaths())
+
 from config import cfg_get, cfg_bool, cfg_int, validate_config
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,

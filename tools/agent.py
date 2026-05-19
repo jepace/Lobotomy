@@ -206,6 +206,17 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
             limit = _WIKI_READ_LIMIT
         except ValueError:
             limit = _RAW_READ_LIMIT
+    # Strip system-owned frontmatter fields before exposing to LLM.
+    # These are maintained exclusively by code; the LLM must never write them.
+    # The rendered ## Sources section in the body is still returned.
+    import re as _re2
+    _fm = _re2.match(r'^(---\s*\n)(.*?\n)(---\s*\n)', text, _re2.DOTALL)
+    if _fm:
+        _stripped_fm = _re2.sub(
+            r'^(sources|created|raw_source):[ \t]*.*\n?', '', _fm.group(2), flags=_re2.MULTILINE
+        )
+        text = _fm.group(1) + _stripped_fm + _fm.group(3) + text[_fm.end():]
+
     total = len(text)
     if offset:
         text = text[offset:]
@@ -521,10 +532,9 @@ def _write_file(path: str, content: str) -> str:
 
     import re as _re
     _subdir = p.parent.name
-    if _subdir in ("entities", "concepts") and _current_source_page:
-        # Merge _current_source_page into sources: — preserve any already on disk.
+    if _subdir in ("entities", "concepts"):
+        # Always preserve sources already on disk — the LLM must never shrink this list.
         if _re.search(r"^sources:\s*\[", content, _re.MULTILINE):
-            # Collect sources already written to disk (truth), ignoring what the LLM wrote.
             existing_sources: list[str] = []
             if p.exists():
                 disk_text = p.read_text(encoding="utf-8", errors="replace")
@@ -534,7 +544,7 @@ def _write_file(path: str, content: str) -> str:
                         _s = _s.strip().strip('"').strip("'")
                         if _s and _s not in existing_sources:
                             existing_sources.append(_s)
-            if _current_source_page not in existing_sources:
+            if _current_source_page and _current_source_page not in existing_sources:
                 existing_sources.append(_current_source_page)
             merged_str = ", ".join(f'"{s}"' for s in existing_sources)
             content = _re.sub(
@@ -542,11 +552,22 @@ def _write_file(path: str, content: str) -> str:
                 f"sources: [{merged_str}]",
                 content, flags=_re.MULTILINE,
             )
-        wiki_rel = str(p.relative_to(WIKI_DIR))
-        if wiki_rel not in _session_entity_pages:
-            _session_entity_pages.append(wiki_rel)
+        if _current_source_page:
+            wiki_rel = str(p.relative_to(WIKI_DIR))
+            if wiki_rel not in _session_entity_pages:
+                _session_entity_pages.append(wiki_rel)
 
     is_new = not p.exists()
+    # Restore system-owned scalar fields from disk — never trust LLM-supplied values.
+    if not is_new:
+        _disk_existing = p.read_text(encoding="utf-8", errors="replace")
+        for _field in ("created", "raw_source"):
+            _disk_m = _re.search(r"^" + _field + r":[ \t]*\S.*", _disk_existing, _re.MULTILINE)
+            if _disk_m:
+                if _re.search(r"^" + _field + r":", content, _re.MULTILINE):
+                    content = _re.sub(r"^" + _field + r":.*", _disk_m.group(0), content, flags=_re.MULTILINE)
+                else:
+                    content = _re.sub(r"^(updated:.*)", r"\1\n" + _disk_m.group(0), content, flags=_re.MULTILINE, count=1)
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
