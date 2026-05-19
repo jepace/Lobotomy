@@ -44,7 +44,7 @@
     display: inline-block; font-size: 10px; font-weight: 700;
     background: var(--success); color: #fff;
     padding: 1px 6px; border-radius: 10px; margin-left: 6px;
-    vertical-align: middle; letter-spacing: .03em;
+    vertical-align: middle; letter-spacing: .03em; text-decoration: none;
   }
   .item-excerpt {
     font-size: 13px; color: var(--text2);
@@ -167,7 +167,7 @@
               {{ item.title }}
             {%- endif -%}
           </div>
-          <div class="item-meta">{{ item.date }} &middot; {{ item.name }}{% if item.wikified %}<span class="wikified-badge">Wikified ✓</span>{% if item.wiki_path %} <a href="/wiki/{{ item.wiki_path }}" onclick="event.stopPropagation()" style="font-size:11px;color:var(--accent);text-decoration:none;">Wiki ↗</a>{% endif %}{% endif %}</div>
+          <div class="item-meta">{{ item.date }} &middot; {{ item.name }}{% if item.wikified %}{% if item.wiki_path %}<a href="/wiki/{{ item.wiki_path }}" onclick="event.stopPropagation()" class="wikified-badge">Wikified ✓</a>{% else %}<span class="wikified-badge">Wikified ✓</span>{% endif %}{% endif %}</div>
           {% if item.excerpt %}<div class="item-excerpt">{{ item.excerpt }}</div>{% endif %}
         </div>
         <span class="item-chevron">▶</span>
@@ -287,7 +287,7 @@ async function pollInbox() {
           <div class="item-title">${item.source_url
             ? `<a href="${item.source_url.replace(/"/g,'&quot;')}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:inherit;text-decoration:none;">${item.title.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</a>&#8202;<a href="${item.source_url.replace(/"/g,'&quot;')}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;color:var(--text2);text-decoration:none;">↗</a>`
             : item.title.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
-          <div class="item-meta">${item.date} &middot; ${item.name.replace(/</g,'&lt;').replace(/>/g,'&gt;')}${item.wikified ? `<span class="wikified-badge">Wikified ✓</span>${item.wiki_path ? ` <a href="/wiki/${item.wiki_path}" onclick="event.stopPropagation()" style="font-size:11px;color:var(--accent);text-decoration:none;">Wiki ↗</a>` : ''}` : ''}</div>
+          <div class="item-meta">${item.date} &middot; ${item.name.replace(/</g,'&lt;').replace(/>/g,'&gt;')}${item.wikified ? (item.wiki_path ? `<a href="/wiki/${item.wiki_path}" onclick="event.stopPropagation()" class="wikified-badge">Wikified ✓</a>` : `<span class="wikified-badge">Wikified ✓</span>`) : ''}</div>
           ${item.excerpt ? `<div class="item-excerpt">${item.excerpt.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>` : ''}
         </div>
         <span class="item-chevron">&#9654;</span>
@@ -514,6 +514,8 @@ async function wikifyItem(name, idx) {
   const progress = document.getElementById('progress-' + idx);
   btn.disabled   = true;
   btn.textContent = 'Working…';
+  const navChat = document.getElementById('nav-chat');
+  if (navChat) navChat.classList.add('ai-busy');
   progress.className = 'item-progress active';
   progress.innerHTML = '<div class="prog-tool">Starting AI ingest…</div>';
 
@@ -564,6 +566,7 @@ async function wikifyItem(name, idx) {
       progress.innerHTML += `<div class="prog-error">Ingest failed — no wiki page was created. Check fetch errors above.</div>`;
       btn.disabled = false;
       btn.textContent = 'Wikify';
+      if (navChat) navChat.classList.remove('ai-busy');
       return;
     }
     btn.textContent = 'Wikified ✓';
@@ -575,25 +578,28 @@ async function wikifyItem(name, idx) {
     const wikiData = wikiResp ? await wikiResp.json().catch(() => {}) : {};
     const wikiHref = wikiData && wikiData.wiki_path ? `/wiki/${wikiData.wiki_path}` : '/wiki/sources/';
     progress.innerHTML += `<div class="prog-done">Done — <a href="${wikiHref}" style="color:inherit">view in wiki</a></div>`;
+    if (navChat) navChat.classList.remove('ai-busy');
     const metaEl = document.querySelector(`#item-${idx} .item-meta`);
     if (metaEl && !metaEl.querySelector('.wikified-badge')) {
-      const badge = document.createElement('span');
-      badge.className = 'wikified-badge';
-      badge.textContent = 'Wikified ✓';
-      metaEl.appendChild(badge);
       if (wikiData && wikiData.wiki_path) {
         const link = document.createElement('a');
         link.href = '/wiki/' + wikiData.wiki_path;
         link.onclick = e => e.stopPropagation();
-        link.style = 'font-size:11px;color:var(--accent);text-decoration:none;margin-left:4px;';
-        link.textContent = 'Wiki ↗';
+        link.className = 'wikified-badge';
+        link.textContent = 'Wikified ✓';
         metaEl.appendChild(link);
+      } else {
+        const badge = document.createElement('span');
+        badge.className = 'wikified-badge';
+        badge.textContent = 'Wikified ✓';
+        metaEl.appendChild(badge);
       }
     }
   } catch(e) {
     progress.innerHTML += `<div class="prog-error">Failed: ${e.message}</div>`;
     btn.disabled = false;
     btn.textContent = 'Wikify';
+    if (navChat) navChat.classList.remove('ai-busy');
   }
 }
 
