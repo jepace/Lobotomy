@@ -5,6 +5,7 @@ import collections
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -769,6 +770,18 @@ def _prepend_log(entry: str) -> str:
 
 _DONE_SENTINEL = "__AGENT_DONE__:"
 
+# Matches quoted wiki paths like 'sources/foo.md' or 'wiki/entities/bar.md'
+_WIKI_PATH_RE = re.compile(r"'((?:wiki/)?(?:[\w-]+/)+[\w-]+\.md)'")
+
+
+def _linkify_summary(text: str) -> str:
+    """Turn quoted wiki paths in a done-summary into markdown links."""
+    def _replace(m: re.Match) -> str:
+        raw = m.group(1).removeprefix("wiki/")   # e.g. sources/foo.md
+        url = "/wiki/" + raw.removesuffix(".md")  # e.g. /wiki/sources/foo
+        return f"[{raw}]({url})"
+    return _WIKI_PATH_RE.sub(_replace, text)
+
 
 def _done(args: dict) -> str:
     ingested = "1" if args.get("ingested") else "0"
@@ -981,11 +994,15 @@ def _autolink(args: dict) -> str:
             fm_lines = m.group(1).splitlines()
             title = None
             aliases = []
+            no_autolink = False
             i = 0
             while i < len(fm_lines):
                 line = fm_lines[i]
                 if line.startswith("title:"):
                     title = line.split(":", 1)[1].strip().strip('"')
+                elif line.startswith("no_autolink:"):
+                    val = line.split(":", 1)[1].strip().lower()
+                    no_autolink = val in ("true", "yes", "1")
                 elif line.startswith("aliases:"):
                     rest = line.split(":", 1)[1].strip()
                     if rest.startswith("["):
@@ -1002,7 +1019,7 @@ def _autolink(args: dict) -> str:
                             aliases.append(fm_lines[j][2:].strip().strip('"'))
                             j += 1
                 i += 1
-            if title:
+            if title and not no_autolink:
                 rel = f.relative_to(WIKI_DIR)
                 up_parts = target_p.parent.relative_to(WIKI_DIR).parts
                 prefix = "../" * len(up_parts)
@@ -2083,7 +2100,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                     messages.append({"role": "tool", "tool_call_id": rtc.get("id", ""),
                                      "name": rname, "content": "Skipped — done() called in same batch."})
                 if summary:
-                    yield json.dumps({"type": "text", "content": summary}) + "\n"
+                    yield json.dumps({"type": "text", "content": _linkify_summary(summary)}) + "\n"
                 # Stamp ingested flag into messages so on_done() callbacks can check it.
                 messages.append({"role": "system", "content": f"__ingested__:{ingested_flag}"})
                 yield json.dumps({"type": "done", "ingested": ingested_flag == "1"}) + "\n"

@@ -110,6 +110,14 @@
     }
     .nav a.active { color: var(--accent); }
     .nav a svg { width: 24px; height: 24px; }
+    @keyframes chat-thinking {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .nav a.ai-busy svg {
+      animation: chat-thinking 1s ease-in-out infinite;
+      filter: invert(1);
+    }
     /* ── Buttons ─────────────────────────────────────────────── */
     .btn {
       display: inline-flex;
@@ -229,7 +237,7 @@
     {% if current_user %}
     <form method="post" action="/auth/logout" style="display:none" id="logout-form"></form>
     {% endif %}
-    <a href="/chat" {% if active == 'chat' %}class="active"{% endif %}>
+    <a href="/chat" id="nav-chat" {% if active == 'chat' %}class="active"{% endif %}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
       </svg>
