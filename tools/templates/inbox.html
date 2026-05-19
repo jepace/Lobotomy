@@ -176,7 +176,8 @@
       <div class="item-actions">
         {% if item.has_content %}
           <a class="act-btn read" href="/inbox/read/{{ item.name | urlencode }}">Read</a>
-        {% elif item.source_url %}
+        {% endif %}
+        {% if item.source_url %}
           <a class="act-btn open" href="{{ item.source_url }}" target="_blank" rel="noopener">Open ↗</a>
         {% endif %}
         {% if item.archived %}
@@ -294,7 +295,8 @@ async function pollInbox() {
       </div>
 
       <div class="item-actions">
-        ${item.has_content ? `<a class="act-btn read" href="/inbox/read/${encodeURIComponent(item.name)}">Read</a>` : item.source_url ? `<a class="act-btn open" href="${item.source_url.replace(/"/g, '&quot;')}" target="_blank" rel="noopener">Open &#8599;</a>` : ''}
+        ${item.has_content ? `<a class="act-btn read" href="/inbox/read/${encodeURIComponent(item.name)}">Read</a>` : ''}
+        ${item.source_url ? `<a class="act-btn open" href="${item.source_url.replace(/"/g, '&quot;')}" target="_blank" rel="noopener">Open &#8599;</a>` : ''}
         <button class="act-btn archive" onclick="archiveItem('${item.name.replace(/'/g, "\\'")}'  , ${idx})">Archive</button>
         <button class="act-btn wikify" id="wikify-${idx}"
                 onclick="wikifyItem('${item.name.replace(/'/g, "\\'")}'  , ${idx})">Wikify</button>
