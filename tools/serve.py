@@ -784,15 +784,21 @@ def list_inbox(show_archived: bool = False) -> list:
         else:
             # Strip frontmatter from all text files before extracting title/excerpt
             meta, body = _parse_frontmatter(text)
-            source_url = meta.get("url", "")
-            title      = meta.get("title", "").strip() or f.stem
-            title      = title[:100]
-            lines      = [l.strip() for l in body.splitlines() if l.strip() and not l.startswith("#")]
-            has_content = bool(lines)
-            if lines:
+            source_url   = meta.get("url", "")
+            fetch_failed = bool(meta.get("fetch_failed"))
+            title        = meta.get("title", "").strip() or f.stem
+            title        = title[:100]
+            # Exclude fetch-failure placeholder lines from content check
+            lines = [
+                l.strip() for l in body.splitlines()
+                if l.strip() and not l.startswith("#") and not l.startswith("<!--")
+                   and "Content could not be fetched" not in l
+            ]
+            has_content = bool(lines) and not fetch_failed
+            if fetch_failed or not lines:
+                excerpt = source_url or ""
+            else:
                 excerpt = " ".join(lines[:3])[:200]
-            elif source_url:
-                excerpt = source_url
 
         mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
         wikified = False
