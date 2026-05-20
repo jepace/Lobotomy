@@ -187,6 +187,27 @@
     {% endif %}
 
     {% for msg in history %}
+    {% if msg.role == 'user' %}
+    <div class="msg user">
+      {% if msg.source == 'inbox' %}
+      <div class="msg-meta">from inbox{% if msg.ts %} · {{ msg.ts[:10] }}{% endif %}</div>
+      {% endif %}
+      <div class="bubble">{{ msg.content }}</div>
+    </div>
+    {% if msg.tools %}
+    <div class="tool-list" style="display:block">
+      {% for t in msg.tools %}<div class="tool-item">⚙ {{ t }}</div>{% endfor %}
+    </div>
+    {% endif %}
+    {% if msg.reply %}
+    <div class="msg assistant">
+      <div class="bubble" id="bubble-static-{{ loop.index }}">
+        <span class="md-content">{{ msg.reply }}</span>
+      </div>
+    </div>
+    {% endif %}
+    {% else %}
+    {# Legacy entries without the new turn structure #}
     <div class="msg {{ msg.role }}">
       {% if msg.source == 'inbox' %}
       <div class="msg-meta">from inbox{% if msg.ts %} · {{ msg.ts[:10] }}{% endif %}</div>
@@ -199,6 +220,7 @@
         {% endif %}
       </div>
     </div>
+    {% endif %}
     {% endfor %}
   </div>
 
