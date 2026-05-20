@@ -178,9 +178,7 @@ List these explicitly before modifying any of them.
 
 ### Step 5 — Update or create entity documents
 For each significant entity (person, organization, product, project) in the source:
-- **Always call `search_wiki` before calling `create_file`.** Do not create a document until you have
-  confirmed no existing document covers this entity. Search by the entity's full name and any common
-  abbreviations or alternate names.
+- **Always call `search_wiki` before calling `create_file`.** You do not know how large the wiki is or what it contains — always search first. Do not create a document until you have confirmed no existing document covers this entity. Search by the entity's full name and any common abbreviations or alternate names.
 - **If a document exists**, build full context before rewriting it:
   1. Read the existing entity page.
   2. Call `search_wiki` with `in:sources` and the entity's name to find any additional source pages.
@@ -192,9 +190,7 @@ For each significant entity (person, organization, product, project) in the sour
 
 ### Step 6 — Update or create concept documents
 For each significant concept, technique, framework, or term:
-- **Always call `search_wiki` before calling `create_file`.** Do not create a document until you have
-  confirmed no existing document covers this concept. Search by the concept's full name and any common
-  abbreviations or alternate names.
+- **Always call `search_wiki` before calling `create_file`.** You do not know how large the wiki is or what it contains — always search first. Do not create a document until you have confirmed no existing document covers this concept. Search by the concept's full name and any common abbreviations or alternate names.
 - **If a document exists**, build full context before rewriting it:
   1. Read the existing concept page.
   2. Call `search_wiki` with `in:sources` and the concept's name to find any additional source pages.
