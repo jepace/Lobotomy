@@ -23,7 +23,10 @@ def rebuild(path: Path) -> bool:
 
 
 if len(sys.argv) > 1:
-    targets = [Path(sys.argv[1])]
+    p = Path(sys.argv[1]).resolve()
+    if not p.is_absolute() or not p.exists():
+        p = (WIKI_DIR.parent / sys.argv[1]).resolve()
+    targets = [p]
 else:
     targets = [
         p for d in ("entities", "concepts")
