@@ -214,16 +214,21 @@ Call `done()`. The server automatically writes the log entry and runs health che
 
 This workflow rewrites a wiki page from the synthesized source documents already in `wiki/sources/`. **Do not read `raw/` during a regenerate** — raw content has already been synthesized into `wiki/sources/` pages.
 
-### Step 1 — Read the existing page and discover sources
-Call `read_file` on the page to understand its current content and key terms. Then call `search_wiki in:sources` using the page title and key terms (e.g. `"Colorado River Compact in:sources"`) to find all supporting source pages. That search result is your source set.
+**You must read every source page before rewriting. Do not skip this.**
 
-### Step 2 — Read all source pages
-Call `read_file` on every `wiki/sources/*.md` page in your source set. Do not read `raw/` files.
+### Step 1 — Read the existing page
+Call `read_file` on the target page. Note its title and key terms. Also note the `sources:` frontmatter list — these are the files you must read.
 
-### Step 3 — Rewrite the page
-Call `update_file` with the full rewritten content synthesized from all the source pages you read. Do not include `sources:`, `created:`, or `raw_source:` in the frontmatter — these are managed automatically by the system.
+### Step 2 — Discover all source pages
+Call `search_wiki in:sources` using the page title and key terms (e.g. `"Trump Administration in:sources"`) to find any additional source pages not already in the `sources:` list. Combine both sets.
 
-### Step 4 — Done
+### Step 3 — Read every source page
+**You must call `read_file` on every `wiki/sources/*.md` page in your combined source set.** Do not skip any. Do not read `raw/` files. The rewrite is only as good as what you read here — reading one file and skipping others produces an incomplete page.
+
+### Step 4 — Rewrite the page
+Only after reading all source pages: call `update_file` with the full rewritten content synthesized from everything you read. Do not include `sources:`, `created:`, or `raw_source:` in the frontmatter — these are managed automatically by the system.
+
+### Step 5 — Done
 Call `done()`.
 
 ---

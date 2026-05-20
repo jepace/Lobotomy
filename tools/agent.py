@@ -485,30 +485,32 @@ def _update_file(path: str, content: str) -> str:
     _subdir = p.parent.name
     if _subdir in ("entities", "concepts"):
         # Always preserve sources already on disk — the LLM must never shrink this list.
+        # First, collect everything already on disk.
+        existing_sources: list[str] = []
+        if p.exists():
+            disk_text = p.read_text(encoding="utf-8", errors="replace")
+            disk_src_m = _re.search(r"^sources:\s*\[([^\]]*)\]", disk_text, _re.MULTILINE)
+            if disk_src_m and disk_src_m.group(1).strip():
+                for _s in disk_src_m.group(1).split(","):
+                    _s = _s.strip().strip('"').strip("'")
+                    if _s and _s not in existing_sources:
+                        existing_sources.append(_s)
+        if _current_source_page and _current_source_page not in existing_sources:
+            existing_sources.append(_current_source_page)
+        merged_str = ", ".join(f'"{s}"' for s in existing_sources)
         if _re.search(r"^sources:\s*\[", content, _re.MULTILINE):
-            existing_sources: list[str] = []
-            if p.exists():
-                disk_text = p.read_text(encoding="utf-8", errors="replace")
-                disk_src_m = _re.search(r"^sources:\s*\[([^\]]*)\]", disk_text, _re.MULTILINE)
-                if disk_src_m and disk_src_m.group(1).strip():
-                    for _s in disk_src_m.group(1).split(","):
-                        _s = _s.strip().strip('"').strip("'")
-                        if _s and _s not in existing_sources:
-                            existing_sources.append(_s)
-            if _current_source_page and _current_source_page not in existing_sources:
-                existing_sources.append(_current_source_page)
-            merged_str = ", ".join(f'"{s}"' for s in existing_sources)
+            # LLM included a sources: field — replace it with the merged list.
             content = _re.sub(
                 r"^sources:\s*\[[^\]]*\]",
                 f"sources: [{merged_str}]",
                 content, flags=_re.MULTILINE,
             )
-        elif _current_source_page:
-            # sources: field missing entirely — insert it before closing --- of frontmatter
+        else:
+            # LLM omitted sources: entirely — insert the disk list before closing ---.
             _fm_match = _re.match(r"^---\s*\n.*?\n(---\s*\n)", content, _re.DOTALL)
             if _fm_match:
                 _insert_at = _fm_match.start(1)
-                content = content[:_insert_at] + f'sources: ["{_current_source_page}"]\n' + content[_insert_at:]
+                content = content[:_insert_at] + f'sources: [{merged_str}]\n' + content[_insert_at:]
     is_new = False  # update_file is update-only; create_file handles new pages
     assert not is_new, "update_file invariant violated: is_new should never be True here"
     wiki_rel = str(p.relative_to(WIKI_DIR))
