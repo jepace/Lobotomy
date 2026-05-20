@@ -474,63 +474,6 @@ def _backfill_entity_sources(entity_path: str) -> None:
     _atomic_write(p, updated)
 
 
-def _backfill_source_into_linked_entities(source_wiki_rel: str) -> None:
-    """After writing a source page, scan it for links to entity/concept pages and
-    ensure each linked entity's sources: frontmatter includes this source page.
-    Called after autolink so the source file reflects its final link state."""
-    import re
-    src_path = WIKI_DIR / source_wiki_rel
-    if not src_path.exists():
-        return
-    try:
-        src_text = src_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return
-
-    # Find all markdown link targets inside this source page
-    link_targets = re.findall(r'\]\(([^)]+\.md)\)', src_text)
-    updated_any = False
-    for target in link_targets:
-        # Resolve relative to sources/ directory
-        try:
-            resolved = (src_path.parent / target).resolve()
-            wiki_rel = str(resolved.relative_to(WIKI_DIR.resolve()))
-        except (ValueError, OSError):
-            continue
-        parts = Path(wiki_rel).parts
-        if len(parts) < 2 or parts[0] not in ("entities", "concepts"):
-            continue
-        entity_path = WIKI_DIR / wiki_rel
-        if not entity_path.exists():
-            continue
-        try:
-            ep_content = entity_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        fm_match = re.match(r"^(---\s*\n.*?\n---\s*\n)", ep_content, re.DOTALL)
-        if not fm_match:
-            continue
-        fm_text = fm_match.group(1)
-        src_m = re.search(r"^sources:\s*\[([^\]]*)\]", fm_text, re.MULTILINE)
-        existing: set[str] = set()
-        if src_m and src_m.group(1).strip():
-            for s in src_m.group(1).split(","):
-                s = s.strip().strip('"').strip("'")
-                if s:
-                    existing.add(s)
-        if source_wiki_rel in existing:
-            continue
-        new_sources = existing | {source_wiki_rel}
-        src_str = ", ".join(f'"{s}"' for s in sorted(new_sources))
-        new_fm = re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{src_str}]", fm_text, flags=re.MULTILINE)
-        new_ep = new_fm + ep_content[len(fm_text):]
-        new_ep = _inject_sources_section(new_ep, entity_path)
-        _atomic_write(entity_path, new_ep)
-        updated_any = True
-        log.debug("backfill_source_into_linked_entities: added %s → %s", source_wiki_rel, wiki_rel)
-    return
-
-
 def _autolink_sources_if_entity(path: str, is_new: bool = False) -> None:
     """When a NEW entity or concept page is written, re-autolink all source pages so
     links that couldn't resolve at source-creation time are wired up now.
@@ -685,13 +628,6 @@ def _update_file(path: str, content: str) -> str:
     _atomic_write(p, content)
     _autolink({"path": path})
     _autolink_sources_if_entity(path, is_new=is_new)
-    # After autolink, ensure any entities linked from this source page carry it in sources:
-    try:
-        wiki_rel = str(p.resolve().relative_to(WIKI_DIR.resolve()))
-        if wiki_rel.startswith("sources/"):
-            _backfill_source_into_linked_entities(wiki_rel)
-    except ValueError:
-        pass
     _rebuild_index({})
     return f"Written {len(content)} bytes to {path}"
 
@@ -1597,13 +1533,6 @@ def _create_file(args: dict) -> str:
 
     _autolink({"path": path})
     _autolink_sources_if_entity(path, is_new=True)
-    # After autolink, ensure any entities linked from this source page carry it in sources:
-    try:
-        wiki_rel = str(p.resolve().relative_to(WIKI_DIR.resolve()))
-        if wiki_rel.startswith("sources/"):
-            _backfill_source_into_linked_entities(wiki_rel)
-    except ValueError:
-        pass
     _rebuild_index({})
     action = "Created"
     suffix = " — WARNING: no sources cited, update sources: frontmatter before calling done()" if _missing_sources else ""
