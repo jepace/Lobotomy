@@ -892,7 +892,7 @@ def _auto_write_log_entry() -> None:
         src_p = WIKI_DIR / _current_source_page
         if src_p.exists():
             text = src_p.read_text(encoding="utf-8", errors="replace")
-            m = _re.search(r"^title:\s*\"?([^\"\\n]+)\"?", text, _re.MULTILINE)
+            m = _re.search(r"^title:\s*\"?([^\"\n]+)\"?", text, _re.MULTILINE)
             if m:
                 title = m.group(1).strip()
     if not title:
@@ -1464,6 +1464,11 @@ def _create_file(args: dict) -> str:
 
     if p.exists():
         return f"Error: create_file refused — {path} already exists. Use update_file to update existing pages."
+
+    # Only one source page per ingest session.
+    if _subdir == "sources" and _current_source_page:
+        return (f"Error: create_file refused — a source page ({_current_source_page}) was already "
+                f"created this session. Each ingest produces exactly one source page.")
 
     _subdir = p.parent.name
     if _subdir in ("entities", "concepts"):

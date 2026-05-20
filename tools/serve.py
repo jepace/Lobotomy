@@ -419,7 +419,8 @@ def settings_profile():
 # Chat history
 # ---------------------------------------------------------------------------
 
-HISTORY_FILE = WIKI_DIR / ".chat_history.json"
+HISTORY_FILE       = WIKI_DIR / ".chat_history.json"
+INBOX_LOG_FILE     = WIKI_DIR / ".inbox_log.json"
 MAX_HISTORY  = 80
 
 
@@ -1621,6 +1622,22 @@ def inbox():
                            push_key=push_key, base_url=base_url)
 
 
+@app.route("/inbox/log")
+@require_login
+def inbox_log():
+    """Render inbox processing history (full agent turns) in the chat UI."""
+    try:
+        messages = json.loads(INBOX_LOG_FILE.read_text(encoding="utf-8")) if INBOX_LOG_FILE.exists() else []
+    except Exception:
+        messages = []
+    display = [
+        {"role": m["role"], "content": m.get("content", "")}
+        for m in messages
+        if m["role"] in ("user", "assistant") and m.get("content")
+    ]
+    return render_template("chat.html", history=display)
+
+
 @app.route("/inbox/list")
 @require_login
 def inbox_list():
@@ -2366,11 +2383,11 @@ def inbox_process_all():
                     # Append raw messages to history so the full turn is visible in
                     # the chat UI for debugging, even though it won't be used as context.
                     try:
-                        existing = load_history()
+                        existing = json.loads(INBOX_LOG_FILE.read_text(encoding="utf-8")) if INBOX_LOG_FILE.exists() else []
                         combined = existing + [m for m in messages if m.get("role") != "system"]
-                        HISTORY_FILE.write_text(json.dumps(combined, ensure_ascii=False), encoding="utf-8")
+                        INBOX_LOG_FILE.write_text(json.dumps(combined, ensure_ascii=False), encoding="utf-8")
                     except Exception as _he:
-                        log.warning("inbox/process-all: failed to append to history: %s", _he)
+                        log.warning("inbox/process-all: failed to append to inbox log: %s", _he)
 
                 ingested = any(
                     isinstance(m.get("content"), str) and m["content"].startswith("__ingested__:1")

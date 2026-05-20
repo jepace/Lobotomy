@@ -151,6 +151,8 @@ Read the entire file before writing anything. If it is very long (>20,000 words)
 sections sequentially before proceeding.
 
 ### Step 3 — Create a source summary document
+**One source page per ingest, exactly.** Do not create source pages for URLs or articles mentioned inside the raw file — only for the raw file itself. Do not call `create_file` with `type: source` more than once per session.
+
 Call `create_file` with:
 - `path`: `wiki/sources/{source-slug}.md` — always a wiki/ path, never a URL
 - `type`: `source`
