@@ -825,9 +825,10 @@ def _post_process_session() -> None:
 
     all_pages = list(dict.fromkeys(_session_entity_pages + _session_updated_pages))
 
-    # Ensure _current_source_page is in sources: for every entity/concept touched this session.
+    # Ensure _current_source_page is in sources: for pages *created* this session only.
+    # Pre-existing pages that the LLM happened to update should not inherit this source.
     if _current_source_page:
-        for wiki_rel in list(dict.fromkeys(_session_entity_pages + _session_updated_pages)):
+        for wiki_rel in list(dict.fromkeys(_session_entity_pages)):
             ep_path = WIKI_DIR / wiki_rel
             if not ep_path.exists():
                 continue
