@@ -860,6 +860,9 @@ def list_inbox(show_archived: bool = False) -> list:
                 if l.strip() and not l.startswith("#") and not l.startswith("<!--")
                    and "Content could not be fetched" not in l
             ]
+            # fetch_failed is overridden if the user manually pasted content
+            if fetch_failed and lines:
+                fetch_failed = False
             has_content = bool(lines) and not fetch_failed
             if fetch_failed or not lines:
                 excerpt = source_url or ""
@@ -2703,7 +2706,11 @@ def inbox_edit():
         # Preserve the frontmatter block, replace only the body
         m = re.match(r'^---\n.*?\n---\n', existing, re.DOTALL)
         if m:
-            p.write_text(existing[:m.end()] + "\n" + content, encoding="utf-8")
+            fm_block = existing[:m.end()]
+            # If user pasted content, clear fetch_failed so Read/Wikify become available
+            if content.strip():
+                fm_block = re.sub(r'^fetch_failed:.*\n', '', fm_block, flags=re.MULTILINE)
+            p.write_text(fm_block + "\n" + content, encoding="utf-8")
         else:
             p.write_text(content, encoding="utf-8")
     elif p.suffix == ".url":
