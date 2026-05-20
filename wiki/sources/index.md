@@ -15,3 +15,9 @@ and concepts, and describes how it relates to the rest of the wiki.
 See the [Wiki Index](../index.md) for a complete catalog of all source pages.
 
 _No sources ingested yet._
+
+---
+
+## Sources
+
+_No sources pages yet._

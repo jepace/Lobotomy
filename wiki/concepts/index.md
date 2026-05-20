@@ -16,3 +16,9 @@ it is associated with.
 See the [Wiki Index](../index.md) for a complete catalog of all concept pages.
 
 _No concept pages yet._
+
+---
+
+## Concepts
+
+_No concepts pages yet._

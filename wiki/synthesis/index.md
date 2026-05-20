@@ -16,3 +16,9 @@ across multiple sources.
 See the [Wiki Index](../index.md) for a complete catalog of all synthesis pages.
 
 _No synthesis pages yet._
+
+---
+
+## Synthesis
+
+_No synthesis pages yet._

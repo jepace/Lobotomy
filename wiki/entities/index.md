@@ -16,3 +16,9 @@ any contradictions between them.
 See the [Wiki Index](../index.md) for a complete catalog of all entity pages.
 
 _No entity pages yet._
+
+---
+
+## Entities
+
+_No entities pages yet._
