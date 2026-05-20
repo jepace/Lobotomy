@@ -17,6 +17,8 @@ See the [Wiki Index](../index.md) for a complete catalog of all entity pages.
 
 _No entity pages yet._
 
+_Last updated: 2026-05-20_
+
 ---
 
 ## Entities

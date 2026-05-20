@@ -16,6 +16,8 @@ See the [Wiki Index](../index.md) for a complete catalog of all source pages.
 
 _No sources ingested yet._
 
+_Last updated: 2026-05-20_
+
 ---
 
 ## Sources

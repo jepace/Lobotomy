@@ -987,14 +987,24 @@ def _rebuild_index(args: dict) -> str:
             continue
         sub_index = d / "index.md"
         existing_sub = sub_index.read_text(encoding="utf-8") if sub_index.exists() else ""
-        divider_sub = existing_sub.find(f"\n---\n\n## {heading}")
-        if divider_sub != -1:
-            prose_sub = existing_sub[:divider_sub].rstrip()
-        elif existing_sub.strip():
-            prose_sub = existing_sub.rstrip()
+        # Find the generated block by locating the first --- divider or ## heading
+        cut_sub = -1
+        for pat in (f"\n---\n\n## {heading}", f"\n\n---\n\n## {heading}", f"\n## {heading}"):
+            cut_sub = existing_sub.find(pat)
+            if cut_sub != -1:
+                break
+        if cut_sub != -1:
+            prose_sub = existing_sub[:cut_sub].rstrip()
         else:
+            prose_sub = existing_sub.rstrip()
+        # Strip any trailing --- accumulated from prior rebuilds
+        prose_sub = re.sub(r"(\n\s*---\s*)+$", "", prose_sub).strip()
+        if not prose_sub:
             prose_sub = f"# {heading}\n\n_Last updated: {today}_"
-        prose_sub = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose_sub)
+        elif "_Last updated:" in prose_sub:
+            prose_sub = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose_sub)
+        else:
+            prose_sub += f"\n\n_Last updated: {today}_"
         block_local = section_blocks[subdir].replace(f"({subdir}/", "(")
         _atomic_write(sub_index, prose_sub + "\n\n---\n\n" + block_local + "\n")
 
