@@ -239,62 +239,7 @@ Call `done()`.
 
 ---
 
-## 7. Inbox Workflow (Read-It-Later)
-
-**Trigger**: User drops a file into `raw/` and says "process inbox", or points at a
-specific inbox file.
-
-This is the read-it-later workflow. The inbox is a holding area for articles, URLs, and notes
-you want to process but have not gotten to yet.
-
-### Supported inbox file formats
-- `.md` or `.txt` file containing article text (saved from a browser or clipper tool)
-- `.txt` or `.url` file containing a single URL (one URL per line)
-- Any text file with pasted notes or excerpts
-
-### Process inbox — step by step
-
-1. **List inbox contents**: Read all files in `raw/`. Present the list to the user.
-2. **Triage**: Ask which items to process now (or process all if user said "process inbox").
-3. **For each item to process**:
-   - Read the file. Determine if it is a URL, article text, or notes.
-   - **If URL only**: Use `fetch_url` to retrieve the page content, then run the full Ingest
-     Workflow on the fetched text.
-     **If fetch fails or returns no usable content**: stop immediately, tell the user exactly
-     what went wrong, and ask them to paste the article text into the item. Do NOT call `done()`.
-     Do NOT conclude the topic is already covered because a related document exists — a different
-     source on the same topic is still a separate source that warrants its own document.
-   - **If article text or notes**: Assign a slug, run the full Ingest Workflow (Section 5)
-     reading the file from `raw/` in place. **Do NOT move or delete the inbox file.**
-     The article stays in `raw/` permanently.
-4. **Report** to user: items processed, items queued, any issues.
-
----
-
-## 8. `wiki/log.md` Protocol
-
-Append-only operation log. Never delete or modify existing entries. Always prepend new entries at
-the **top** (newest-first ordering).
-
-Ingest log entries are written **automatically** by the server — do not write them yourself.
-
-Use `prepend_log` only for non-ingest operations (e.g. deprecating a page, a manual restructure).
-
-**Entry format for manual operations**:
-```markdown
-## [2026-05-01] manual-edit | Brief description
-
-- **Operation**: manual-edit
-- **Documents updated**: [Overview](overview.md)
-```
-
-Rules:
-- Page references must be markdown links with paths relative to `wiki/` — write `[Title](sources/slug.md)`, not bare paths.
-- Omit any line that has no entries.
-
----
-
-## 9. Handling Contradictions
+## 7. Handling Contradictions
 
 When a new source contradicts an existing document:
 
@@ -314,7 +259,7 @@ When a new source contradicts an existing document:
 
 ---
 
-## 10. Handling Uncertainty
+## 8. Handling Uncertainty
 
 - Reflect hedged claims with appropriate language: "according to [source name]",
   "as of YYYY-MM-DD", "the author suggests but does not confirm"
@@ -324,20 +269,19 @@ When a new source contradicts an existing document:
 
 ---
 
-## 11. Cold-Start Checklist
+## 9. Cold-Start Checklist
 
 If you are a fresh LLM session with no context beyond this file and the wiki directory:
 
 1. Read this file (`LOBOTOMY.md`) completely — you have done so
 2. Read `wiki/log.md` — understand recent operations
 3. Read `wiki/overview.md` — understand the current synthesis
-4. Ask the user what operation to perform: ingest or process inbox
 
 Do not modify any file until the user gives an explicit instruction.
 
 ---
 
-## 12. Do Not Do These Things
+## 10. Do Not Do These Things
 
 - Do not call `list_dir` to verify a file exists before reading it — call `read_file` directly
 - Do not modify, move, or delete anything in `raw/` — it is immutable
@@ -346,10 +290,8 @@ Do not modify any file until the user gives an explicit instruction.
 - Do not write document frontmatter manually — always use `create_file` for new documents
 - Do not write any markdown links in document body text — plain text only
 - Do not resolve contradictions without user instruction
-- Do not delete documents — set `deprecated: true` in frontmatter instead, then note it in the log
 - Do not ingest sources from outside `raw/`
 - Do not invent sources — only cite documents actually present in `raw/`
 - Do not put URLs in document body text — they belong only in `url:` frontmatter on source documents
 - Do not write workflow annotations like "(new)" or "(update)" in document content — these are planning notes only
-- Do not modify existing `wiki/log.md` entries — only prepend new ones at the top
 - Do not save important information only in chat — write it to a document so it persists
