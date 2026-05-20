@@ -485,35 +485,38 @@ def _autolink_sources_if_entity(path: str, is_new: bool = False) -> None:
             srcs = [s for s in sources_dir.glob("*.md") if s.name != "index.md"]
 
             # Build needles (title + aliases) from the new entity's frontmatter,
-            # then use grep -ril to find matching source files in one fast OS call.
-            import re as _re, subprocess as _sp
+            # then scan source files with mmap for a fast case-insensitive match.
+            import re as _re, mmap as _mmap
             entity_text = (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
             fm_m = _re.match(r"^---\s*\n(.*?)\n---", entity_text, _re.DOTALL)
-            needles: list[str] = []
+            needles: list[bytes] = []
             if fm_m:
                 for ln in fm_m.group(1).splitlines():
                     if ln.startswith("title:"):
-                        needles.append(ln.split(":", 1)[1].strip().strip('"'))
+                        needles.append(ln.split(":", 1)[1].strip().strip('"').lower().encode())
                     elif ln.startswith("aliases:"):
                         rest = ln.split(":", 1)[1].strip()
                         if rest.startswith("["):
                             import json as _json
                             try:
-                                needles.extend(a for a in _json.loads(rest) if a)
+                                needles.extend(a.lower().encode() for a in _json.loads(rest) if a)
                             except Exception:
                                 pass
                     elif ln.startswith("- ") and needles:
-                        needles.append(ln[2:].strip().strip('"'))
+                        needles.append(ln[2:].strip().strip('"').lower().encode())
 
-            if needles:
-                # grep -ril: recursive, case-insensitive, filenames only.
-                # -e per needle so any match qualifies (OR logic).
-                grep_args = ["grep", "-ril"] + [arg for n in needles for arg in ("-e", n)] + [str(sources_dir)]
-                result = _sp.run(grep_args, capture_output=True, text=True)
-                hit_paths = {Path(p) for p in result.stdout.splitlines() if p.endswith(".md")}
-                candidates = [s for s in srcs if s in hit_paths]
-            else:
-                candidates = srcs  # can't tell — run all to be safe
+            def _mentions_mmap(src_path: Path) -> bool:
+                if not needles:
+                    return True
+                try:
+                    with open(src_path, "rb") as fh:
+                        with _mmap.mmap(fh.fileno(), 0, access=_mmap.ACCESS_READ) as mm:
+                            low = mm[:].lower()
+                            return any(n in low for n in needles)
+                except (ValueError, OSError):
+                    return True  # empty or unreadable — let autolink decide
+
+            candidates = [s for s in srcs if _mentions_mmap(s)]
             skipped = len(srcs) - len(candidates)
             log.debug(
                 "autolink_sources_if_entity: re-autolinking %d/%d source pages for new %s (%d skipped — title absent)",
