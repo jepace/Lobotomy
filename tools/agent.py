@@ -898,19 +898,26 @@ def _auto_write_ingest_log() -> None:
     lines = [f"## [{today}] ingest | {title}", ""]
     lines.append("- **Operation**: ingest")
     if _current_inbox_path:
-        lines.append(f"- **Source file**: {_current_inbox_path}")
+        raw_link = f"[R] [{_current_inbox_path}](../{_current_inbox_path})"
+        lines.append(f"- **Source file**: {raw_link}")
 
     def _tag(wiki_rel: str) -> str:
         subdir = wiki_rel.split("/")[0] if "/" in wiki_rel else ""
-        letter = {"sources": "S", "entities": "E", "concepts": "C", "synthesis": "X"}.get(subdir, "?")
         p = WIKI_DIR / wiki_rel
         name = wiki_rel.rsplit("/", 1)[-1].removesuffix(".md")
+        pg_type = ""
         if p.exists():
             txt = p.read_text(encoding="utf-8", errors="replace")
             m = _re.search(r'^title:\s*"?([^"\n]+)"?', txt, _re.MULTILINE)
             if m:
                 name = m.group(1).strip()
-        return f"[{letter}] {name}"
+            tm = _re.search(r'^type:\s*(\S+)', txt, _re.MULTILINE)
+            if tm:
+                pg_type = tm.group(1).strip()
+        letter = {"sources": "S", "entities": "E", "concepts": "C", "synthesis": "X"}.get(subdir) \
+            or {"source": "S", "entity": "E", "concept": "C", "synthesis": "X", "overview": "X"}.get(pg_type, "?")
+        link = f"[{name}]({wiki_rel})"
+        return f"[{letter}] {link}"
 
     created = []
     if _current_source_page:
@@ -1601,7 +1608,10 @@ TOOL_FNS = {
     "update_file":      lambda a: _update_file(a["path"], a["content"]),
     "list_dir":         lambda a: _list_dir(a["directory"]),
     "fetch_url":        lambda a: _fetch_url(a["url"]),
-    "prepend_log":      lambda a: _prepend_log(a["entry"]),
+    "prepend_log":      lambda a: (
+        "Error: do not call prepend_log during ingest — the server writes the log entry automatically when done() fires."
+        if _current_inbox_path else _prepend_log(a["entry"])
+    ),
 
 
 
