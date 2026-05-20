@@ -1414,8 +1414,8 @@ def _create_file(args: dict) -> str:
     if pg_type == "source" and not raw_source:
         raw_source = _current_inbox_path
 
-    tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]))
-    src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]))
+    tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]) if t is not None)
+    src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]) if s is not None)
     url_line = f'url: "{url}"\n' if url else ""
     raw_source_line = f'raw_source: "{raw_source}"\n' if raw_source else ""
     frontmatter = (
@@ -2139,9 +2139,13 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
             fn = TOOL_FNS.get(fn_name)
             try:
                 args        = json.loads((tc.get("function") or {}).get("arguments") or "{}")
-                arg_preview = str(list(args.values())[0])[:80] if args else ""
+                arg_preview = str(next(iter(args.values()), ""))[:80]
                 result      = fn(args) if fn else f"Unknown tool: {fn_name}"
-            except (json.JSONDecodeError, TypeError, ValueError, OSError) as e:
+            except json.JSONDecodeError as e:
+                log.error("Tool %s: failed to parse arguments JSON: %s", fn_name, e)
+                arg_preview = ""
+                result      = f"Error: malformed tool arguments: {e}"
+            except (TypeError, ValueError, OSError) as e:
                 arg_preview = ""
                 result      = f"Error: {e}"
 
