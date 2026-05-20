@@ -1403,6 +1403,10 @@ def _create_file(args: dict) -> str:
     if _subdir == "sources" and _current_source_page:
         return (f"Error: create_file refused — a source page ({_current_source_page}) was already "
                 f"created this session. Each ingest produces exactly one source page.")
+    # Entity/concept pages must be created after the source page so sources: is populated.
+    if _subdir in ("entities", "concepts") and _current_inbox_path and not _current_source_page:
+        return (f"Error: create_file refused — create the source page (wiki/sources/...) first, "
+                f"then create entity/concept pages. This ensures sources: frontmatter is populated correctly.")
     if _subdir in ("entities", "concepts"):
         # Always derive sources from the current session source page; ignore LLM-supplied value.
         sources = [_current_source_page] if _current_source_page else []
