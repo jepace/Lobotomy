@@ -2449,6 +2449,8 @@ def inbox_process_all():
                 _agent._current_inbox_path = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
                 _agent._current_inbox_url  = ""
                 _agent._current_source_page = ""
+                _agent._session_entity_pages = []
+                _agent._session_updated_pages = []
                 stripped = file_content.strip()
                 if stripped.startswith("http") and "\n" not in stripped:
                     _agent._current_inbox_url = stripped
@@ -2461,7 +2463,7 @@ def inbox_process_all():
                     {"role": "user",      "content": orientation_message()},
                     {"role": "assistant", "content": "Oriented. Ready."},
                     {"role": "user",      "content": (
-                        f'Ingest raw/{filename}.\n\n'
+                        f'Ingest raw/{inbox_path.name}.\n\n'
                         f'<file path="raw/{inbox_path.name}">\n{file_content}\n</file>'
                     )},
                 ]
