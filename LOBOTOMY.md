@@ -214,13 +214,8 @@ accurately. At minimum update: Current State, Domains Covered, Major Entities, M
 Never write a single long paragraph that runs multiple ideas together. Use flowing prose, not bullet
 lists, for the narrative sections. Aim for something readable at a glance, not a wall of text.
 
-### Step 9 — Append to `wiki/log.md`
-Call `prepend_log` with the new entry text. Do NOT use `write_file` for the log — it would
-overwrite and destroy existing entries. `prepend_log` inserts the entry at the top automatically.
-Follow Section 7 for the entry format.
-
-### Step 10 — Done
-Call `done()`. The server runs health checks automatically — results are visible at `/wiki/lint`.
+### Step 9 — Done
+Call `done()`. The server automatically writes the log entry and runs health checks — results are visible at `/wiki/lint`. Do NOT call `prepend_log` during ingest — the log is written for you.
 
 ---
 

@@ -181,9 +181,12 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
     try:
         p.resolve().relative_to(RAW_DIR.resolve())
         stripped = text.strip()
-        global _current_inbox_url, _current_inbox_path
+        global _current_inbox_url, _current_inbox_path, _session_updated_pages, _session_entity_pages, _current_source_page
         _current_inbox_path = str(p.resolve().relative_to(REPO_ROOT.resolve()))
         _current_inbox_url = ""  # always reset so stale URL from prior ingest isn't inherited
+        _current_source_page = ""
+        _session_entity_pages = []
+        _session_updated_pages = []
         if stripped.startswith("http") and "\n" not in stripped:
             _current_inbox_url = stripped
             with _fetch_cache_lock:
@@ -607,6 +610,10 @@ def _write_file(path: str, content: str) -> str:
                 _session_entity_pages.append(wiki_rel)
 
     is_new = not p.exists()
+    if not is_new:
+        wiki_rel = str(p.relative_to(WIKI_DIR))
+        if wiki_rel not in _session_entity_pages and wiki_rel not in _session_updated_pages:
+            _session_updated_pages.append(wiki_rel)
     # Restore system-owned scalar fields from disk — never trust LLM-supplied values.
     if not is_new:
         _disk_existing = p.read_text(encoding="utf-8", errors="replace")
@@ -648,6 +655,7 @@ _fetch_cache_lock = threading.Lock()
 _title_map_cache: list[tuple[str, str]] | None = None  # (title, wiki_rel_path)
 _current_inbox_url: str = ""
 _current_inbox_path: str = ""
+_session_updated_pages: list = []  # existing wiki pages written (not created) this session
 _current_source_page: str = ""   # wiki/sources/ path created in this session
 _session_entity_pages: list = [] # wiki/entities|concepts/ paths created this session
 
@@ -870,6 +878,42 @@ def _linkify_summary(text: str) -> str:
         url = "/wiki/" + raw.removesuffix(".md")  # e.g. /wiki/sources/foo
         return f"[{raw}]({url})"
     return _WIKI_PATH_RE.sub(_replace, text)
+
+
+def _auto_write_ingest_log() -> None:
+    """Write the ingest log entry automatically when done(ingested=true) fires."""
+    import datetime, re as _re
+    today = datetime.date.today().isoformat()
+
+    # Read article title from the source page frontmatter.
+    title = ""
+    if _current_source_page:
+        src_p = WIKI_DIR / _current_source_page
+        if src_p.exists():
+            text = src_p.read_text(encoding="utf-8", errors="replace")
+            m = _re.search(r"^title:\s*\"?([^\"\\n]+)\"?", text, _re.MULTILINE)
+            if m:
+                title = m.group(1).strip()
+    if not title:
+        title = "unknown"
+
+    lines = [f"## [{today}] ingest | {title}", ""]
+    lines.append("- **Operation**: ingest")
+    if _current_inbox_path:
+        lines.append(f"- **Source file**: {_current_inbox_path}")
+
+    created = []
+    if _current_source_page:
+        created.append(_current_source_page)
+    created.extend(p for p in _session_entity_pages if p != _current_source_page)
+    if created:
+        lines.append(f"- **Documents created**: {', '.join(created)}")
+
+    updated = [p for p in _session_updated_pages if p not in created]
+    if updated:
+        lines.append(f"- **Documents updated**: {', '.join(updated)}")
+
+    _prepend_log("\n".join(lines))
 
 
 def _done(args: dict) -> str:
@@ -1962,6 +2006,8 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                 payload = result[len(_DONE_SENTINEL):]
                 ingested_flag, _, summary = payload.partition("|")
                 log.info("Agent called done() in round %d (ingested=%s): %s", _round, ingested_flag, summary[:120])
+                if ingested_flag == "1":
+                    _auto_write_ingest_log()
                 # Append placeholder responses for any unexecuted tool calls in this batch
                 # so the message history stays consistent (every tool_call must have a response).
                 remaining = tool_calls[i + 1:]
@@ -2202,6 +2248,8 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                 payload = result[len(_DONE_SENTINEL):]
                 ingested_flag, _, summary = payload.partition("|")
                 log.info("Agent called done() in round %d (ingested=%s): %s", _round, ingested_flag, summary[:120])
+                if ingested_flag == "1":
+                    _auto_write_ingest_log()
                 # Append placeholder responses for any unexecuted tool calls in this batch.
                 remaining = tool_calls[i + 1:]
                 if remaining:
