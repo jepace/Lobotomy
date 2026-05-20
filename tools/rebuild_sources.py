@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Rebuild the ## Sources section for one page or all entity/concept pages.
+"""Maintenance utilities — no LLM involved.
 
 Usage:
-  python3 tools/rebuild_sources.py                        # all entities + concepts
-  python3 tools/rebuild_sources.py wiki/entities/foo.md   # one page
+  python3 tools/rebuild_sources.py                        # rebuild ## Sources on all entities + concepts
+  python3 tools/rebuild_sources.py wiki/entities/foo.md   # rebuild ## Sources on one page
+  python3 tools/rebuild_sources.py --index                # regenerate wiki/index.md
 """
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from agent import WIKI_DIR, _inject_sources_section, _atomic_write
+from agent import WIKI_DIR, _inject_sources_section, _atomic_write, _rebuild_index
 
 
-def rebuild(path: Path) -> bool:
+def rebuild_sources(path: Path) -> bool:
     content = path.read_text(encoding="utf-8", errors="replace")
     new = _inject_sources_section(content, path)
     if new != content:
@@ -22,16 +23,18 @@ def rebuild(path: Path) -> bool:
     return False
 
 
-if len(sys.argv) > 1:
+if "--index" in sys.argv:
+    print(_rebuild_index({}))
+elif len(sys.argv) > 1:
     p = Path(sys.argv[1]).resolve()
-    if not p.is_absolute() or not p.exists():
+    if not p.exists():
         p = (WIKI_DIR.parent / sys.argv[1]).resolve()
-    targets = [p]
+    changed = int(rebuild_sources(p))
+    print(f"{changed} page(s) updated.")
 else:
     targets = [
         p for d in ("entities", "concepts")
         for p in (WIKI_DIR / d).glob("*.md")
     ]
-
-changed = sum(rebuild(p) for p in targets)
-print(f"{changed} page(s) updated.")
+    changed = sum(rebuild_sources(p) for p in targets)
+    print(f"{changed} page(s) updated.")

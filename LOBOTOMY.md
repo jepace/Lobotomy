@@ -166,9 +166,10 @@ Required sections:
 - **Context**: how it relates to, extends, supports, or contradicts existing documents
 
 ### Step 4 — Identify affected existing documents
-Call `search_wiki` for each significant entity and concept found in the source. Search uses AND
-logic — all keywords must appear — so search the full name ("Colorado River Compact") rather than
-splitting into individual words. List every existing document that:
+Call `search_wiki` (no `in:sources` — search entities and concepts, not source pages) for each
+significant entity and concept found in the source. Search uses AND logic — all keywords must
+appear — so search the full name ("Colorado River Compact") rather than splitting into individual
+words. List every existing document that:
 - Is mentioned in the new source
 - Overlaps with entities or concepts in the source
 - Could receive new citations or updated claims
@@ -177,25 +178,41 @@ List these explicitly before modifying any of them.
 
 ### Step 5 — Update or create entity documents
 For each significant entity (person, organization, product, project) in the source:
-- **Always call `search_wiki` before calling `create_file`.** You do not know how large the wiki is or what it contains — always search first. Do not create a document until you have confirmed no existing document covers this entity. Search by the entity's full name and any common abbreviations or alternate names.
+- **Always call `search_wiki` (no `in:sources`) before calling `create_file`.** You do not know
+  how large the wiki is or what it contains — always search first. Do not create a document until
+  you have confirmed no existing document covers this entity. Search by the entity's full name and
+  any common abbreviations or alternate names.
 - **If a document exists**, build full context before rewriting it:
   1. Read the existing entity page.
-  2. Call `search_wiki` with `in:sources` and the entity's name to find any additional source pages.
-  3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you just created in Step 3).
-  4. Rewrite the entity page from this complete picture using `update_file`. Do not set `sources:` — it is managed automatically. Preserve the original `created` date.
-- **If the entity is new**, use `create_file` for `wiki/entities/{slug}.md`. Do not set `sources:` — it is injected automatically.
+  2. Only now call `search_wiki in:sources` with the entity's name to find additional source pages
+     beyond what the `sources:` frontmatter already lists.
+  3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you
+     just created in Step 3).
+  4. Rewrite the entity page from this complete picture using `update_file`. Do not set `sources:`
+     — it is managed automatically. Preserve the original `created` date.
+- **If the entity is new**, use `create_file` for `wiki/entities/{slug}.md`. Do not set `sources:`
+  — it is injected automatically. **Do not call `search_wiki in:sources` for new entities** — there
+  are no prior source pages to find.
 - Note any contradictions with existing claims in a `## Contradictions` section.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
 ### Step 6 — Update or create concept documents
 For each significant concept, technique, framework, or term:
-- **Always call `search_wiki` before calling `create_file`.** You do not know how large the wiki is or what it contains — always search first. Do not create a document until you have confirmed no existing document covers this concept. Search by the concept's full name and any common abbreviations or alternate names.
+- **Always call `search_wiki` (no `in:sources`) before calling `create_file`.** You do not know
+  how large the wiki is or what it contains — always search first. Do not create a document until
+  you have confirmed no existing document covers this concept. Search by the concept's full name
+  and any common abbreviations or alternate names.
 - **If a document exists**, build full context before rewriting it:
   1. Read the existing concept page.
-  2. Call `search_wiki` with `in:sources` and the concept's name to find any additional source pages.
-  3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you just created in Step 3).
-  4. Rewrite the concept page from this complete picture using `update_file`. Do not set `sources:` — it is managed automatically. Preserve the original `created` date.
-- **If no document exists** and the concept warrants one, use `create_file` for `wiki/concepts/{slug}.md`. Do not set `sources:` — it is injected automatically.
+  2. Only now call `search_wiki in:sources` with the concept's name to find additional source pages
+     beyond what the `sources:` frontmatter already lists.
+  3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you
+     just created in Step 3).
+  4. Rewrite the concept page from this complete picture using `update_file`. Do not set `sources:`
+     — it is managed automatically. Preserve the original `created` date.
+- **If no document exists** and the concept warrants one, use `create_file` for
+  `wiki/concepts/{slug}.md`. Do not set `sources:` — it is injected automatically. **Do not call
+  `search_wiki in:sources` for new concepts** — there are no prior source pages to find.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
 ### Step 7 — Update synthesis documents
@@ -214,16 +231,21 @@ Call `done()`. The server automatically writes the log entry and runs health che
 
 This workflow rewrites a wiki page from the synthesized source documents already in `wiki/sources/`. **Do not read `raw/` during a regenerate** — raw content has already been synthesized into `wiki/sources/` pages.
 
-### Step 1 — Read the existing page and discover sources
-Call `read_file` on the page to understand its current content and key terms. Then call `search_wiki in:sources` using the page title and key terms (e.g. `"Colorado River Compact in:sources"`) to find all supporting source pages. That search result is your source set.
+**You must read every source page before rewriting. Do not skip this.**
 
-### Step 2 — Read all source pages
-Call `read_file` on every `wiki/sources/*.md` page in your source set. Do not read `raw/` files.
+### Step 1 — Read the existing page
+Call `read_file` on the target page. Note its title and key terms. Also note the `sources:` frontmatter list — these are the files you must read.
 
-### Step 3 — Rewrite the page
-Call `update_file` with the full rewritten content synthesized from all the source pages you read. Do not include `sources:`, `created:`, or `raw_source:` in the frontmatter — these are managed automatically by the system.
+### Step 2 — Discover all source pages
+Call `search_wiki in:sources` using the page title and key terms (e.g. `"Trump Administration in:sources"`) to find any additional source pages not already in the `sources:` list. Combine both sets.
 
-### Step 4 — Done
+### Step 3 — Read every source page
+**You must call `read_file` on every `wiki/sources/*.md` page in your combined source set.** Do not skip any. Do not read `raw/` files. The rewrite is only as good as what you read here — reading one file and skipping others produces an incomplete page.
+
+### Step 4 — Rewrite the page
+Only after reading all source pages: call `update_file` with the full rewritten content synthesized from everything you read. Do not include `sources:`, `created:`, or `raw_source:` in the frontmatter — these are managed automatically by the system.
+
+### Step 5 — Done
 Call `done()`.
 
 ---
