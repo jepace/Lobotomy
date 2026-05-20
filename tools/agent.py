@@ -610,8 +610,11 @@ def _write_file(path: str, content: str) -> str:
                 _session_entity_pages.append(wiki_rel)
 
     is_new = not p.exists()
-    if not is_new:
-        wiki_rel = str(p.relative_to(WIKI_DIR))
+    wiki_rel = str(p.relative_to(WIKI_DIR))
+    if is_new:
+        if wiki_rel not in _session_entity_pages:
+            _session_entity_pages.append(wiki_rel)
+    else:
         if wiki_rel not in _session_entity_pages and wiki_rel not in _session_updated_pages:
             _session_updated_pages.append(wiki_rel)
     # Restore system-owned scalar fields from disk — never trust LLM-supplied values.
@@ -1484,10 +1487,9 @@ def _create_file(args: dict) -> str:
     p.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(p, content)
 
-    if _subdir in ("entities", "concepts"):
-        wiki_rel = str(p.relative_to(WIKI_DIR))
-        if wiki_rel not in _session_entity_pages:
-            _session_entity_pages.append(wiki_rel)
+    wiki_rel = str(p.relative_to(WIKI_DIR))
+    if wiki_rel not in _session_entity_pages:
+        _session_entity_pages.append(wiki_rel)
 
     if _subdir == "sources":
         _current_source_page = str(p.relative_to(WIKI_DIR))
