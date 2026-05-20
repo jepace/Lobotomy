@@ -550,9 +550,19 @@ def _append_display_log(messages: list, source: str) -> None:
 
 
 def load_display_log() -> list:
+    import re as _re
     if DISPLAY_LOG_FILE.exists():
         try:
-            return json.loads(DISPLAY_LOG_FILE.read_text(encoding="utf-8"))
+            entries = json.loads(DISPLAY_LOG_FILE.read_text(encoding="utf-8"))
+            cleaned = []
+            for e in entries:
+                c = e.get("content", "")
+                c = _re.sub(r'\n*<file path="[^"]*">.*?</file>', "", c, flags=_re.DOTALL).strip()
+                c = _re.sub(r'\s*Current wiki state:.*', "", c, flags=_re.DOTALL).strip()
+                if c:
+                    e = dict(e, content=c)
+                    cleaned.append(e)
+            return cleaned
         except Exception:
             pass
     return []
