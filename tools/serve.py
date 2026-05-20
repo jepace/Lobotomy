@@ -1020,6 +1020,8 @@ def chat_send():
             _agent._current_inbox_path = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
             _agent._current_inbox_url = ""      # always reset so stale URL from prior ingest isn't inherited
             _agent._current_source_page = ""    # reset so prior session's source page isn't inherited
+            _agent._session_entity_pages = []   # reset so prior session's created pages aren't inherited
+            _agent._session_updated_pages = []  # reset so prior session's updated pages aren't inherited
             if stripped.startswith("http") and "\n" not in stripped:
                 _agent._current_inbox_url = stripped
             else:
