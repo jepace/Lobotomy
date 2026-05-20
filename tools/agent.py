@@ -900,16 +900,22 @@ def _auto_write_ingest_log() -> None:
     if _current_inbox_path:
         lines.append(f"- **Source file**: {_current_inbox_path}")
 
+    def _tag(wiki_rel: str) -> str:
+        subdir = wiki_rel.split("/")[0] if "/" in wiki_rel else ""
+        letter = {"sources": "S", "entities": "E", "concepts": "C", "synthesis": "X"}.get(subdir, "?")
+        name = wiki_rel.rsplit("/", 1)[-1].removesuffix(".md")
+        return f"[{letter}] {name}"
+
     created = []
     if _current_source_page:
         created.append(_current_source_page)
     created.extend(p for p in _session_entity_pages if p != _current_source_page)
     if created:
-        lines.append(f"- **Documents created**: {', '.join(created)}")
+        lines.append(f"- **Documents created**: {', '.join(_tag(p) for p in created)}")
 
     updated = [p for p in _session_updated_pages if p not in created]
     if updated:
-        lines.append(f"- **Documents updated**: {', '.join(updated)}")
+        lines.append(f"- **Documents updated**: {', '.join(_tag(p) for p in updated)}")
 
     _prepend_log("\n".join(lines))
 
