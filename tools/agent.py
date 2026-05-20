@@ -892,7 +892,7 @@ def _auto_write_log_entry() -> None:
         src_p = WIKI_DIR / _current_source_page
         if src_p.exists():
             text = src_p.read_text(encoding="utf-8", errors="replace")
-            m = _re.search(r"^title:\s*\"?([^\"\\n]+)\"?", text, _re.MULTILINE)
+            m = _re.search(r"^title:\s*\"?([^\"\n]+)\"?", text, _re.MULTILINE)
             if m:
                 title = m.group(1).strip()
     if not title:
