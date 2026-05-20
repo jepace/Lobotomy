@@ -293,7 +293,7 @@ the **top** (newest-first ordering).
 
 Rules:
 - Source file path is repo-relative, no leading slash.
-- Documents created/updated are paths relative to `wiki/` — write `sources/slug.md`, not `wiki/sources/slug.md`.
+- Documents created/updated are **file paths**, not page titles — write `sources/slug.md`, not `"Some Article Title"`. Paths are relative to `wiki/` — write `sources/slug.md`, not `wiki/sources/slug.md`.
 - Use bare paths, not markdown links.
 - Omit any line that has no entries.
 
