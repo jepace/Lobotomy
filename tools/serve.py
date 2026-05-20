@@ -421,7 +421,9 @@ def settings_profile():
 
 HISTORY_FILE       = WIKI_DIR / ".chat_history.json"
 INBOX_LOG_FILE     = WIKI_DIR / ".inbox_log.json"
+DISPLAY_LOG_FILE   = WIKI_DIR / ".chat_display_log.json"
 MAX_HISTORY  = 80
+MAX_DISPLAY_LOG = 500
 
 
 def load_history() -> list:
@@ -502,9 +504,56 @@ def _sanitize_history(messages: list) -> list:
     return clean
 
 
-def save_history(messages: list) -> None:
-    """Clear history after every job so each new task starts with a clean context."""
+def save_history(messages: list, source: str = "chat") -> None:
+    """Append human-readable messages to the display log, then clear AI context."""
+    _append_display_log(messages, source)
     clear_history()
+
+
+def _append_display_log(messages: list, source: str) -> None:
+    """Append user/assistant messages from this job to the persistent display log."""
+    try:
+        existing = []
+        if DISPLAY_LOG_FILE.exists():
+            try:
+                existing = json.loads(DISPLAY_LOG_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                existing = []
+        now = datetime.datetime.now().isoformat(timespec="seconds")
+        new_entries = []
+        for m in messages:
+            if m.get("role") in ("user", "assistant") and m.get("content"):
+                content = m["content"]
+                if isinstance(content, list):
+                    content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
+                if content and content.strip():
+                    new_entries.append({
+                        "role": m["role"],
+                        "content": content,
+                        "ts": now,
+                        "source": source,
+                    })
+        if new_entries:
+            combined = existing + new_entries
+            if len(combined) > MAX_DISPLAY_LOG:
+                combined = combined[-MAX_DISPLAY_LOG:]
+            DISPLAY_LOG_FILE.write_text(json.dumps(combined, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        log.error("Failed to append display log: %s", e)
+
+
+def load_display_log() -> list:
+    if DISPLAY_LOG_FILE.exists():
+        try:
+            return json.loads(DISPLAY_LOG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def clear_display_log() -> None:
+    if DISPLAY_LOG_FILE.exists():
+        DISPLAY_LOG_FILE.unlink()
 
 
 def clear_history() -> None:
@@ -883,12 +932,7 @@ def index():
 @app.route("/chat")
 @require_login
 def chat():
-    history = load_history()
-    display = [
-        {"role": m["role"], "content": m.get("content", "")}
-        for m in history
-        if m["role"] in ("user", "assistant") and m.get("content")
-    ]
+    display = load_display_log()
     return render_template("chat.html", history=display)
 
 
@@ -942,7 +986,7 @@ def chat_send():
     history.append({"role": "user", "content": message})
 
     def on_done(messages):
-        save_history(messages)
+        save_history(messages, source="inbox" if inbox_file else "chat")
         if inbox_file:
             ingested = any(
                 isinstance(m.get("content"), str) and m["content"].startswith("__ingested__:1")
@@ -1117,6 +1161,7 @@ def chat_status():
 @require_login
 def chat_clear():
     clear_history()
+    clear_display_log()
     return {"ok": True}
 
 
@@ -2388,6 +2433,7 @@ def inbox_process_all():
                         INBOX_LOG_FILE.write_text(json.dumps(combined, ensure_ascii=False), encoding="utf-8")
                     except Exception as _he:
                         log.warning("inbox/process-all: failed to append to inbox log: %s", _he)
+                    _append_display_log(messages, source="inbox")
 
                 ingested = any(
                     isinstance(m.get("content"), str) and m["content"].startswith("__ingested__:1")
