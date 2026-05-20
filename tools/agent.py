@@ -1437,6 +1437,9 @@ def _create_file(args: dict) -> str:
     except ValueError:
         return f"Error: create_file only writes inside wiki/. Got: {path}"
 
+    if p.exists():
+        return f"Error: create_file refused — {path} already exists. Use write_file to update existing pages."
+
     _subdir = p.parent.name
     if _subdir in ("entities", "concepts"):
         # Always derive sources from the current session source page; ignore LLM-supplied value.
@@ -1444,22 +1447,8 @@ def _create_file(args: dict) -> str:
     _missing_sources = _subdir in ("entities", "concepts") and not sources
 
     today = datetime.date.today().isoformat()
-    existed = p.exists()
+    created = today
     raw_source = ""
-    if existed:
-        # Preserve original created date, url, and raw_source
-        old = p.read_text(encoding="utf-8", errors="replace")
-        m = re.search(r"created:\s*(\d{4}-\d{2}-\d{2})", old)
-        created = m.group(1) if m else today
-        if not url:
-            mu = re.search(r'^url:\s*["\']?([^"\'\n]+)["\']?', old, re.MULTILINE)
-            if mu:
-                url = mu.group(1).strip()
-        mr = re.search(r'^raw_source:\s*["\']?([^"\'\n]+)["\']?', old, re.MULTILINE)
-        if mr:
-            raw_source = mr.group(1).strip()
-    else:
-        created = today
 
     if pg_type == "source" and not raw_source:
         raw_source = _current_inbox_path
@@ -1510,9 +1499,9 @@ def _create_file(args: dict) -> str:
                 _atomic_write(ep_path, ep_content)
 
     _autolink({"path": path})
-    _autolink_sources_if_entity(path, is_new=not existed)
+    _autolink_sources_if_entity(path, is_new=True)
     _rebuild_index({})
-    action = "Updated" if existed else "Created"
+    action = "Created"
     suffix = " — WARNING: no sources cited, update sources: frontmatter before calling done()" if _missing_sources else ""
     return f"{action} {path} ({len(content)} bytes){suffix}"
 
