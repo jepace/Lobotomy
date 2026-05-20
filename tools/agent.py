@@ -484,34 +484,36 @@ def _autolink_sources_if_entity(path: str, is_new: bool = False) -> None:
         if sources_dir.is_dir():
             srcs = [s for s in sources_dir.glob("*.md") if s.name != "index.md"]
 
-            # Build a set of lowercase needles (title + aliases) from the new entity page
-            # so we can skip source files that can't possibly mention it.
-            import re as _re
+            # Build needles (title + aliases) from the new entity's frontmatter,
+            # then use grep -ril to find matching source files in one fast OS call.
+            import re as _re, subprocess as _sp
             entity_text = (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
             fm_m = _re.match(r"^---\s*\n(.*?)\n---", entity_text, _re.DOTALL)
             needles: list[str] = []
             if fm_m:
                 for ln in fm_m.group(1).splitlines():
                     if ln.startswith("title:"):
-                        needles.append(ln.split(":", 1)[1].strip().strip('"').lower())
+                        needles.append(ln.split(":", 1)[1].strip().strip('"'))
                     elif ln.startswith("aliases:"):
                         rest = ln.split(":", 1)[1].strip()
                         if rest.startswith("["):
                             import json as _json
                             try:
-                                needles.extend(a.lower() for a in _json.loads(rest) if a)
+                                needles.extend(a for a in _json.loads(rest) if a)
                             except Exception:
                                 pass
                     elif ln.startswith("- ") and needles:
-                        needles.append(ln[2:].strip().strip('"').lower())
+                        needles.append(ln[2:].strip().strip('"'))
 
-            def _mentions(src_path: Path) -> bool:
-                if not needles:
-                    return True  # can't tell — run autolink to be safe
-                txt = src_path.read_text(encoding="utf-8", errors="replace").lower()
-                return any(n in txt for n in needles)
-
-            candidates = [s for s in srcs if _mentions(s)]
+            if needles:
+                # grep -ril: recursive, case-insensitive, filenames only.
+                # -e per needle so any match qualifies (OR logic).
+                grep_args = ["grep", "-ril"] + [arg for n in needles for arg in ("-e", n)] + [str(sources_dir)]
+                result = _sp.run(grep_args, capture_output=True, text=True)
+                hit_paths = {Path(p) for p in result.stdout.splitlines() if p.endswith(".md")}
+                candidates = [s for s in srcs if s in hit_paths]
+            else:
+                candidates = srcs  # can't tell — run all to be safe
             skipped = len(srcs) - len(candidates)
             log.debug(
                 "autolink_sources_if_entity: re-autolinking %d/%d source pages for new %s (%d skipped — title absent)",
