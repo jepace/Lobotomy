@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'bookmarklet_macro.html' import bookmarklet_js %}
 {% block title %}Reading List{% endblock %}
 
 {% block head %}
@@ -626,66 +627,6 @@ async function wikifyAll() {
   allBtn.textContent = `All Done ✓`;
 }
 
-{% if push_key %}
-// ── Bookmarklet + iOS Shortcut ────────────────────────────────────────────────
-function _buildBookmarklet(base, key) {
-  function _bm(base, key) {
-    var STYLE = 'position:fixed;top:16px;right:16px;max-width:320px;background:#1c1c1e;' +
-                'color:#f2f2f7;border-radius:12px;padding:14px 18px;z-index:2147483647;' +
-                'font:600 14px -apple-system,BlinkMacSystemFont,sans-serif;' +
-                'box-shadow:0 4px 24px rgba(0,0,0,.7);cursor:pointer;transition:opacity .3s;';
-    var el = document.createElement('div');
-    el.setAttribute('style', STYLE);
-    el.textContent = 'Saving…';
-    el.title = 'Click to dismiss';
-    el.onclick = function() { el.remove(); };
-    document.body.appendChild(el);
-    function show(msg, isError) {
-      el.textContent = msg;
-      if (isError) {
-        el.style.background = '#4a1010';
-      } else {
-        setTimeout(function() {
-          el.style.opacity = '0';
-          setTimeout(function() { if (el.parentNode) el.remove(); }, 300);
-        }, 3000);
-      }
-    }
-    fetch(base + '/api/push', {
-      method: 'POST',
-      headers: {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'},
-      body: JSON.stringify({url: location.href, title: document.title, source: 'bookmarklet'})
-    })
-    .then(function(r) {
-      if (!r.ok) {
-        return r.json().catch(function() { return {}; }).then(function(d) {
-          throw new Error(d.error || ('Server error ' + r.status));
-        });
-      }
-      return r.json();
-    })
-    .then(function(d) {
-      if (d.duplicate) { show('Already in Reading List ✓'); }
-      else if (d.fetch_failed) { show('Saved – content fetched on wikify ✓'); }
-      else { show('Saved: ' + (d.title || 'Article') + ' ✓'); }
-    })
-    .catch(function(e) {
-      var msg = e && e.message ? e.message : String(e);
-      if (msg === 'Failed to fetch') msg = 'Could not reach Lobotomy — is it running?';
-      show('⚠ ' + msg, true);
-    });
-  }
-  var src = _bm.toString().replace(/\/\/[^\n]*/g, '').replace(/\s+/g, ' ').trim();
-  return 'javascript:(' + src + ')(' + JSON.stringify(base) + ',' + JSON.stringify(key) + ');void 0';
-}
-(function() {
-  var base = {{ base_url | tojson }};
-  var key  = {{ push_key | tojson }};
-  var bmLink = document.getElementById('bookmarklet-link');
-  if (bmLink) bmLink.href = _buildBookmarklet(base, key);
-  var scEl = document.getElementById('shortcut-url');
-  if (scEl) scEl.textContent = base + '/api/push';
-})();
-{% endif %}
+{{ bookmarklet_js(base_url, push_key) }}
 </script>
 {% endblock %}
