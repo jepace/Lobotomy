@@ -607,11 +607,6 @@ def _update_file(path: str, content: str) -> str:
                 f"sources: [{merged_str}]",
                 content, flags=_re.MULTILINE,
             )
-        if _current_source_page:
-            wiki_rel = str(p.relative_to(WIKI_DIR))
-            if wiki_rel not in _session_entity_pages:
-                _session_entity_pages.append(wiki_rel)
-
     is_new = False  # update_file is update-only; create_file handles new pages
     assert not is_new, "update_file invariant violated: is_new should never be True here"
     wiki_rel = str(p.relative_to(WIKI_DIR))
@@ -905,16 +900,28 @@ def _auto_write_ingest_log() -> None:
     if _current_inbox_path:
         lines.append(f"- **Source file**: {_current_inbox_path}")
 
+    def _tag(wiki_rel: str) -> str:
+        subdir = wiki_rel.split("/")[0] if "/" in wiki_rel else ""
+        letter = {"sources": "S", "entities": "E", "concepts": "C", "synthesis": "X"}.get(subdir, "?")
+        p = WIKI_DIR / wiki_rel
+        name = wiki_rel.rsplit("/", 1)[-1].removesuffix(".md")
+        if p.exists():
+            txt = p.read_text(encoding="utf-8", errors="replace")
+            m = _re.search(r'^title:\s*"?([^"\n]+)"?', txt, _re.MULTILINE)
+            if m:
+                name = m.group(1).strip()
+        return f"[{letter}] {name}"
+
     created = []
     if _current_source_page:
         created.append(_current_source_page)
     created.extend(p for p in _session_entity_pages if p != _current_source_page)
     if created:
-        lines.append(f"- **Documents created**: {', '.join(created)}")
+        lines.append(f"- **Documents created**: {', '.join(_tag(p) for p in created)}")
 
     updated = [p for p in _session_updated_pages if p not in created]
     if updated:
-        lines.append(f"- **Documents updated**: {', '.join(updated)}")
+        lines.append(f"- **Documents updated**: {', '.join(_tag(p) for p in updated)}")
 
     _prepend_log("\n".join(lines))
 
