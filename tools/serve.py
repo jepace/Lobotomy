@@ -2362,6 +2362,15 @@ def inbox_process_all():
                 except Exception as e:
                     log.error("inbox/process-all: agent error for %s: %s", filename, e, exc_info=True)
                     continue
+                finally:
+                    # Append raw messages to history so the full turn is visible in
+                    # the chat UI for debugging, even though it won't be used as context.
+                    try:
+                        existing = load_history()
+                        combined = existing + [m for m in messages if m.get("role") != "system"]
+                        HISTORY_FILE.write_text(json.dumps(combined, ensure_ascii=False), encoding="utf-8")
+                    except Exception as _he:
+                        log.warning("inbox/process-all: failed to append to history: %s", _he)
 
                 ingested = any(
                     isinstance(m.get("content"), str) and m["content"].startswith("__ingested__:1")
