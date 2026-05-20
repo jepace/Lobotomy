@@ -526,13 +526,20 @@ def _append_display_log(messages: list, source: str) -> None:
                 content = m["content"]
                 if isinstance(content, list):
                     content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
-                if content and content.strip():
-                    new_entries.append({
-                        "role": m["role"],
-                        "content": content,
-                        "ts": now,
-                        "source": source,
-                    })
+                if not (content and content.strip()):
+                    continue
+                # Strip injected file blobs and the wiki-state orientation dump before display.
+                import re as _re
+                display_content = _re.sub(r'\n*<file path="[^"]*">.*?</file>', "", content, flags=_re.DOTALL).strip()
+                display_content = _re.sub(r'\s*Current wiki state:.*', "", display_content, flags=_re.DOTALL).strip()
+                if not display_content:
+                    continue
+                new_entries.append({
+                    "role": m["role"],
+                    "content": display_content,
+                    "ts": now,
+                    "source": source,
+                })
         if new_entries:
             combined = existing + new_entries
             if len(combined) > MAX_DISPLAY_LOG:
