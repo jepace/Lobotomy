@@ -479,14 +479,15 @@ def _autolink_sources_if_entity(path: str, is_new: bool = False) -> None:
         return
     parts = Path(path).parts
     if len(parts) >= 2 and parts[-2] in ("entities", "concepts"):
-        # Backfill BEFORE autolink: only capture links the LLM wrote intentionally,
-        # not links the autolinker is about to insert into source pages.
         _backfill_entity_sources(path)
         sources_dir = WIKI_DIR / "sources"
         if sources_dir.is_dir():
-            for src in sources_dir.glob("*.md"):
-                if src.name != "index.md":
-                    _autolink({"path": str(src.relative_to(REPO_ROOT))})
+            srcs = [s for s in sources_dir.glob("*.md") if s.name != "index.md"]
+            log.debug("autolink_sources_if_entity: re-autolinking %d source pages for new %s", len(srcs), path)
+            t0 = time.time()
+            for src in srcs:
+                _autolink({"path": str(src.relative_to(REPO_ROOT))})
+            log.debug("autolink_sources_if_entity: done in %.1fs", time.time() - t0)
 
 
 def _atomic_write(p: Path, content: str) -> None:
@@ -826,6 +827,7 @@ def _done(args: dict) -> str:
 def _rebuild_index(args: dict) -> str:
     """Rebuild wiki/index.md, subdirectory indexes, and raw/index.md."""
     import re
+    _t0_rebuild = time.time()
 
     def parse_title_updated(text: str) -> tuple[str, str]:
         m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
@@ -945,6 +947,7 @@ def _rebuild_index(args: dict) -> str:
         for _, s in sections if (WIKI_DIR / s).is_dir()
     )
     raw_total = len(raw_entries)
+    log.debug("rebuild_index: done in %.1fs (%d wiki pages, %d raw files)", time.time() - _t0_rebuild, total, raw_total)
     return (f"Rebuilt wiki/index.md ({total} pages), subdirectory indexes, "
             f"and raw/index.md ({raw_total} raw files).")
 
@@ -1009,6 +1012,7 @@ def _autolink(args: dict) -> str:
         target_p.resolve().relative_to(WIKI_DIR.resolve())
     except ValueError:
         return "Error: autolink only works on wiki/ pages."
+    _t0_autolink = time.time()
 
     # Build title -> relative-link-path map
     # Iterate non-source subdirs first so entity/concept pages take priority over
@@ -1109,9 +1113,12 @@ def _autolink(args: dict) -> str:
     result = body
 
     new_content = frontmatter + result
+    elapsed = time.time() - _t0_autolink
     if new_content == content:
+        log.debug("autolink: no changes in %s (%.1fs, %d titles)", target_str, elapsed, len(title_map))
         return f"Autolink: no changes in {target_str}."
     _atomic_write(target_p, new_content)
+    log.debug("autolink: linked %d title(s) in %s (%.1fs, %d titles checked)", linked, target_str, elapsed, len(title_map))
     return f"Autolinked {linked} title(s) in {target_str}."
 
 
