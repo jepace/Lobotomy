@@ -181,12 +181,13 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
     try:
         p.resolve().relative_to(RAW_DIR.resolve())
         stripped = text.strip()
-        global _current_inbox_url, _current_inbox_path, _session_updated_pages, _session_entity_pages, _current_source_page
+        global _current_inbox_url, _current_inbox_path, _session_updated_pages, _session_entity_pages, _current_source_page, _session_read_pages
         _current_inbox_path = str(p.resolve().relative_to(REPO_ROOT.resolve()))
         _current_inbox_url = ""  # always reset so stale URL from prior ingest isn't inherited
         _current_source_page = ""
         _session_entity_pages = []
         _session_updated_pages = []
+        _session_read_pages = set()
         if stripped.startswith("http") and "\n" not in stripped:
             _current_inbox_url = stripped
             with _fetch_cache_lock:
@@ -228,6 +229,11 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
         text = text[:limit] + f"\n\n[TRUNCATED — showing chars {offset}–{offset+limit} of {total} total. Call read_file with offset={offset+limit} to continue.]"
     elif offset:
         text = text + f"\n\n[END OF FILE — read chars {offset}–{total} of {total} total.]"
+    try:
+        p.resolve().relative_to(WIKI_DIR.resolve())
+        _session_read_pages.add(str(p.resolve().relative_to(WIKI_DIR.resolve())))
+    except (ValueError, NameError):
+        pass
     return text
 
 
@@ -454,8 +460,19 @@ def _update_file(path: str, content: str) -> str:
 
     assert p.exists(), f"update_file invariant violated: {path} must exist"
 
-    # Reject partial writes — update_file requires the complete file content.
+    # Enforce read-before-update: the LLM must have read this file this session.
     import re as _re
+    try:
+        _wiki_rel_check = str(p.resolve().relative_to(WIKI_DIR.resolve()))
+        if _wiki_rel_check not in _session_read_pages:
+            return (
+                f"Error: update_file refused — you have not read {path} yet this session. "
+                f"Call read_file on it first, then resend the complete updated content."
+            )
+    except ValueError:
+        pass
+
+    # Reject partial writes — update_file requires the complete file content.
     if not content.lstrip().startswith("---"):
         existing = p.read_text(encoding="utf-8", errors="replace")
         if _re.match(r"^---\s*\n", existing):
@@ -538,6 +555,7 @@ _current_inbox_path: str = ""
 _session_updated_pages: list = []  # existing wiki pages written (not created) this session
 _current_source_page: str = ""   # wiki/sources/ path created in this session
 _session_entity_pages: list = [] # wiki/entities|concepts/ paths created this session
+_session_read_pages: set = set()  # wiki pages read this session (enforces read-before-update)
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -1575,7 +1593,7 @@ TOOL_DEFS = [
         "type": "function",
         "function": {
             "name":        "update_file",
-            "description": "Update an existing wiki page. Requires the complete file content. Fails if the file does not exist — use create_file for new pages.",
+            "description": "Update an existing wiki page. You MUST call read_file on the page first — update_file will be refused if you have not read it this session. Requires the complete file content. Fails if the file does not exist — use create_file for new pages.",
             "parameters":  {
                 "type": "object",
                 "properties": {
@@ -1723,7 +1741,7 @@ def system_prompt() -> str:
         "| Tool | When to use |\n"
         "|------|-------------|\n"
         "| read_file | Read any repo file. Raw sources truncated at 60k chars, wiki pages at 20k. |\n"
-        "| update_file | Update an existing wiki page (must already exist; raw/ is blocked). |\n"
+        "| update_file | Update an existing wiki page (must already exist; raw/ is blocked). **Must read_file first** — refused otherwise. |\n"
         "| create_file | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
         "| search_raw | Search raw source files by keyword — use when retroactively reviewing old articles for a newly prominent entity. |\n"
