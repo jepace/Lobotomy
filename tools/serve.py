@@ -511,7 +511,18 @@ def save_history(messages: list, source: str = "chat") -> None:
 
 
 def _append_display_log(messages: list, source: str) -> None:
-    """Append user/assistant messages from this job to the persistent display log."""
+    """Append conversation turns from this job to the persistent display log.
+
+    Each turn is stored as one entry with the user message, the ordered list of
+    tool calls made during that turn, and the final assistant reply.
+    """
+    import re as _re
+
+    def _clean(text: str) -> str:
+        text = _re.sub(r'\n*<file path="[^"]*">.*?</file>', "", text, flags=_re.DOTALL)
+        text = _re.sub(r'\s*Current wiki state:.*', "", text, flags=_re.DOTALL)
+        return text.strip()
+
     try:
         existing = []
         if DISPLAY_LOG_FILE.exists():
@@ -520,28 +531,47 @@ def _append_display_log(messages: list, source: str) -> None:
             except Exception:
                 existing = []
         now = datetime.datetime.now().isoformat(timespec="seconds")
-        new_entries = []
+
+        # Walk the message list and group into turns: each user message starts
+        # a new turn; tool calls and the final assistant reply belong to it.
+        turns = []
+        current: dict | None = None
         for m in messages:
-            if m.get("role") in ("user", "assistant") and m.get("content"):
-                content = m["content"]
+            role = m.get("role")
+            if role == "user":
+                content = m.get("content", "")
                 if isinstance(content, list):
                     content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
-                if not (content and content.strip()):
+                content = _clean(content)
+                if not content:
                     continue
-                # Strip injected file blobs and the wiki-state orientation dump before display.
-                import re as _re
-                display_content = _re.sub(r'\n*<file path="[^"]*">.*?</file>', "", content, flags=_re.DOTALL).strip()
-                display_content = _re.sub(r'\s*Current wiki state:.*', "", display_content, flags=_re.DOTALL).strip()
-                if not display_content:
-                    continue
-                new_entries.append({
-                    "role": m["role"],
-                    "content": display_content,
-                    "ts": now,
-                    "source": source,
-                })
-        if new_entries:
-            combined = existing + new_entries
+                if current:
+                    turns.append(current)
+                current = {"role": "user", "content": content, "tools": [], "reply": "", "ts": now, "source": source}
+            elif role == "assistant" and current is not None:
+                # Collect tool calls from this assistant message.
+                for tc in (m.get("tool_calls") or []):
+                    fn = (tc.get("function") or {}).get("name", "")
+                    try:
+                        args = json.loads((tc.get("function") or {}).get("arguments") or "{}")
+                    except Exception:
+                        args = {}
+                    # Build a short readable arg preview (path, query, url, title).
+                    arg = args.get("path") or args.get("query") or args.get("url") or args.get("title") or ""
+                    if fn and fn not in ("done",):
+                        current["tools"].append(f"{fn}  {arg}".strip())
+                # Capture the final text reply.
+                content = m.get("content") or ""
+                if isinstance(content, list):
+                    content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
+                content = _clean(content)
+                if content:
+                    current["reply"] = content
+        if current:
+            turns.append(current)
+
+        if turns:
+            combined = existing + turns
             if len(combined) > MAX_DISPLAY_LOG:
                 combined = combined[-MAX_DISPLAY_LOG:]
             DISPLAY_LOG_FILE.write_text(json.dumps(combined, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -550,9 +580,19 @@ def _append_display_log(messages: list, source: str) -> None:
 
 
 def load_display_log() -> list:
+    import re as _re
     if DISPLAY_LOG_FILE.exists():
         try:
-            return json.loads(DISPLAY_LOG_FILE.read_text(encoding="utf-8"))
+            entries = json.loads(DISPLAY_LOG_FILE.read_text(encoding="utf-8"))
+            cleaned = []
+            for e in entries:
+                c = e.get("content", "")
+                c = _re.sub(r'\n*<file path="[^"]*">.*?</file>', "", c, flags=_re.DOTALL).strip()
+                c = _re.sub(r'\s*Current wiki state:.*', "", c, flags=_re.DOTALL).strip()
+                if c:
+                    e = dict(e, content=c)
+                    cleaned.append(e)
+            return cleaned
         except Exception:
             pass
     return []
@@ -980,6 +1020,8 @@ def chat_send():
             _agent._current_inbox_path = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
             _agent._current_inbox_url = ""      # always reset so stale URL from prior ingest isn't inherited
             _agent._current_source_page = ""    # reset so prior session's source page isn't inherited
+            _agent._session_entity_pages = []   # reset so prior session's created pages aren't inherited
+            _agent._session_updated_pages = []  # reset so prior session's updated pages aren't inherited
             if stripped.startswith("http") and "\n" not in stripped:
                 _agent._current_inbox_url = stripped
             else:
@@ -2703,7 +2745,11 @@ def inbox_edit():
         # Preserve the frontmatter block, replace only the body
         m = re.match(r'^---\n.*?\n---\n', existing, re.DOTALL)
         if m:
-            p.write_text(existing[:m.end()] + "\n" + content, encoding="utf-8")
+            fm_block = existing[:m.end()]
+            # If user pasted content, clear fetch_failed so Read/Wikify become available
+            if content.strip():
+                fm_block = re.sub(r'^fetch_failed:.*\n', '', fm_block, flags=re.MULTILINE)
+            p.write_text(fm_block + "\n" + content, encoding="utf-8")
         else:
             p.write_text(content, encoding="utf-8")
     elif p.suffix == ".url":
