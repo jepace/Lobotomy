@@ -607,11 +607,6 @@ def _update_file(path: str, content: str) -> str:
                 f"sources: [{merged_str}]",
                 content, flags=_re.MULTILINE,
             )
-        if _current_source_page:
-            wiki_rel = str(p.relative_to(WIKI_DIR))
-            if wiki_rel not in _session_entity_pages:
-                _session_entity_pages.append(wiki_rel)
-
     is_new = False  # update_file is update-only; create_file handles new pages
     assert not is_new, "update_file invariant violated: is_new should never be True here"
     wiki_rel = str(p.relative_to(WIKI_DIR))
