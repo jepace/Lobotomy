@@ -210,14 +210,13 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
             limit = _WIKI_READ_LIMIT
         except ValueError:
             limit = _RAW_READ_LIMIT
-    # Strip system-owned frontmatter fields before exposing to LLM.
-    # These are maintained exclusively by code; the LLM must never write them.
-    # The rendered ## Sources section in the body is still returned.
+    # Strip system-owned frontmatter fields the LLM has no use for.
+    # sources: is intentionally kept — the LLM needs it to iterate source pages.
     import re as _re2
     _fm = _re2.match(r'^(---\s*\n)(.*?\n)(---\s*\n)', text, _re2.DOTALL)
     if _fm:
         _stripped_fm = _re2.sub(
-            r'^(sources|created|raw_source):[ \t]*.*\n?', '', _fm.group(2), flags=_re2.MULTILINE
+            r'^(created|raw_source):[ \t]*.*\n?', '', _fm.group(2), flags=_re2.MULTILINE
         )
         text = _fm.group(1) + _stripped_fm + _fm.group(3) + text[_fm.end():]
 
