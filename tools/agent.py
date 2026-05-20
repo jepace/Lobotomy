@@ -825,9 +825,9 @@ def _post_process_session() -> None:
 
     all_pages = list(dict.fromkeys(_session_entity_pages + _session_updated_pages))
 
-    # Ensure _current_source_page is in sources: for every entity/concept created this session.
+    # Ensure _current_source_page is in sources: for every entity/concept touched this session.
     if _current_source_page:
-        for wiki_rel in _session_entity_pages:
+        for wiki_rel in list(dict.fromkeys(_session_entity_pages + _session_updated_pages)):
             ep_path = WIKI_DIR / wiki_rel
             if not ep_path.exists():
                 continue
@@ -836,13 +836,19 @@ def _post_process_session() -> None:
             except OSError:
                 continue
             src_m = _re.search(r"^sources:\s*\[([^\]]*)\]", ep_content, _re.MULTILINE)
-            if not src_m:
-                continue
-            existing = [s.strip().strip('"').strip("'") for s in src_m.group(1).split(",") if s.strip().strip('"').strip("'")]
-            if _current_source_page in existing:
-                continue
-            new_src_str = ", ".join(f'"{s}"' for s in [_current_source_page] + existing)
-            ep_content = _re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{new_src_str}]", ep_content, flags=_re.MULTILINE)
+            if src_m:
+                existing = [s.strip().strip('"').strip("'") for s in src_m.group(1).split(",") if s.strip().strip('"').strip("'")]
+                if _current_source_page in existing:
+                    continue
+                new_src_str = ", ".join(f'"{s}"' for s in [_current_source_page] + existing)
+                ep_content = _re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{new_src_str}]", ep_content, flags=_re.MULTILINE)
+            else:
+                # sources: field missing entirely — insert before the closing --- of frontmatter
+                fm_match = _re.match(r"^---\s*\n.*?\n(---\s*\n)", ep_content, _re.DOTALL)
+                if not fm_match:
+                    continue
+                insert_at = fm_match.start(1)
+                ep_content = ep_content[:insert_at] + f'sources: ["{_current_source_page}"]\n' + ep_content[insert_at:]
             ep_content = ep_content.replace("<!-- WARNING: no sources cited — update sources: frontmatter -->\n\n", "")
             _atomic_write(ep_path, ep_content)
             log.debug("post_process: added %s to sources: of %s", _current_source_page, wiki_rel)
@@ -851,8 +857,8 @@ def _post_process_session() -> None:
     for wiki_rel in all_pages:
         _autolink({"path": f"wiki/{wiki_rel}"})
 
-    # Re-inject ## Sources on entity/concept pages now that sources: is final.
-    for wiki_rel in _session_entity_pages:
+    # Re-inject ## Sources on all entity/concept pages touched this session.
+    for wiki_rel in list(dict.fromkeys(_session_entity_pages + _session_updated_pages)):
         ep_path = WIKI_DIR / wiki_rel
         if not ep_path.exists():
             continue
@@ -1408,8 +1414,8 @@ def _create_file(args: dict) -> str:
     if pg_type == "source" and not raw_source:
         raw_source = _current_inbox_path
 
-    tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]))
-    src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]))
+    tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]) if t is not None)
+    src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]) if s is not None)
     url_line = f'url: "{url}"\n' if url else ""
     raw_source_line = f'raw_source: "{raw_source}"\n' if raw_source else ""
     frontmatter = (
@@ -2133,9 +2139,13 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
             fn = TOOL_FNS.get(fn_name)
             try:
                 args        = json.loads((tc.get("function") or {}).get("arguments") or "{}")
-                arg_preview = str(list(args.values())[0])[:80] if args else ""
+                arg_preview = str(next(iter(args.values()), ""))[:80]
                 result      = fn(args) if fn else f"Unknown tool: {fn_name}"
-            except (json.JSONDecodeError, TypeError, ValueError, OSError) as e:
+            except json.JSONDecodeError as e:
+                log.error("Tool %s: failed to parse arguments JSON: %s", fn_name, e)
+                arg_preview = ""
+                result      = f"Error: malformed tool arguments: {e}"
+            except (TypeError, ValueError, OSError) as e:
                 arg_preview = ""
                 result      = f"Error: {e}"
 
