@@ -903,7 +903,13 @@ def _auto_write_ingest_log() -> None:
     def _tag(wiki_rel: str) -> str:
         subdir = wiki_rel.split("/")[0] if "/" in wiki_rel else ""
         letter = {"sources": "S", "entities": "E", "concepts": "C", "synthesis": "X"}.get(subdir, "?")
+        p = WIKI_DIR / wiki_rel
         name = wiki_rel.rsplit("/", 1)[-1].removesuffix(".md")
+        if p.exists():
+            txt = p.read_text(encoding="utf-8", errors="replace")
+            m = _re.search(r'^title:\s*"?([^"\n]+)"?', txt, _re.MULTILINE)
+            if m:
+                name = m.group(1).strip()
         return f"[{letter}] {name}"
 
     created = []
