@@ -293,6 +293,7 @@ Do not modify any file until the user gives an explicit instruction.
 ## 10. Do Not Do These Things
 
 - Do not call `list_dir` to verify a file exists before reading it — call `read_file` directly
+- Do not start a bullet list immediately after a prose paragraph without a blank line between them — markdown requires a blank line before a list or it will not render as a list
 - Do not modify, move, or delete anything in `raw/` — it is immutable
 - Do not modify `LOBOTOMY.md` unless the user explicitly asks you to update the schema
 - Do not read or edit `wiki/index.md` — it is auto-generated on every page write
