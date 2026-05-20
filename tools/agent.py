@@ -412,128 +412,6 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
     return fm_text + body + "\n".join(lines) + "\n"
 
 
-def _backfill_entity_sources(entity_path: str) -> None:
-    """Scan source pages for links to this entity and add them to its sources: frontmatter."""
-    import re
-    p = REPO_ROOT / entity_path
-    if not p.exists():
-        return
-    # Relative path from wiki/ root, e.g. "entities/coinbase.md"
-    try:
-        wiki_rel = str(p.resolve().relative_to(WIKI_DIR.resolve()))
-    except ValueError:
-        return
-
-    content = p.read_text(encoding="utf-8", errors="replace")
-    fm_match = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
-    if not fm_match:
-        return
-
-    # Collect source pages that contain a markdown link pointing at this entity
-    sources_dir = WIKI_DIR / "sources"
-    if not sources_dir.is_dir():
-        return
-
-    linked_by = []
-    for src in sorted(sources_dir.glob("*.md")):
-        if src.name == "index.md":
-            continue
-        src_text = src.read_text(encoding="utf-8", errors="replace")
-        # A link from sources/ to entities/ looks like: (../entities/coinbase.md)
-        src_wiki_rel = str(src.resolve().relative_to(WIKI_DIR.resolve()))  # e.g. sources/foo.md
-        # Compute how the entity path looks relative to this source page
-        entity_p = WIKI_DIR / wiki_rel
-        try:
-            rel_link = str(entity_p.relative_to(src.parent))  # e.g. ../entities/coinbase.md
-        except ValueError:
-            rel_link = None
-        if rel_link and re.search(r'\]\(' + re.escape(rel_link) + r'\)', src_text):
-            linked_by.append(src_wiki_rel)
-
-    if not linked_by:
-        return
-
-    # Parse existing sources: frontmatter
-    fm_text = fm_match.group(1)
-    src_m = re.search(r"^sources:\s*\[([^\]]*)\]", fm_text, re.MULTILINE)
-    existing = set()
-    if src_m and src_m.group(1).strip():
-        for s in src_m.group(1).split(","):
-            s = s.strip().strip('"').strip("'")
-            if s:
-                existing.add(s)
-
-    new_sources = existing | set(linked_by)
-    if new_sources == existing:
-        return
-
-    src_str = ", ".join(f'"{s}"' for s in sorted(new_sources))
-    new_fm = re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{src_str}]", fm_text, flags=re.MULTILINE)
-    updated = new_fm + content[len(fm_text):]
-    updated = _inject_sources_section(updated, p)
-    _atomic_write(p, updated)
-
-
-def _autolink_sources_if_entity(path: str, is_new: bool = False) -> None:
-    """When a NEW entity or concept page is written, re-autolink all source pages so
-    links that couldn't resolve at source-creation time are wired up now.
-    Skipped for updates to existing pages — the title hasn't changed."""
-    if not is_new:
-        return
-    parts = Path(path).parts
-    if len(parts) >= 2 and parts[-2] in ("entities", "concepts"):
-        sources_dir = WIKI_DIR / "sources"
-        if sources_dir.is_dir():
-            srcs = [s for s in sources_dir.glob("*.md") if s.name != "index.md"]
-
-            # Build a single regex from title + aliases and scan source files
-            # sequentially. Files are small and likely already in the OS page
-            # cache from the preceding autolink pass, so this is fast in practice.
-            import re as _re
-            entity_text = (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
-            fm_m = _re.match(r"^---\s*\n(.*?)\n---", entity_text, _re.DOTALL)
-            needle_strs: list[str] = []
-            if fm_m:
-                for ln in fm_m.group(1).splitlines():
-                    if ln.startswith("title:"):
-                        needle_strs.append(ln.split(":", 1)[1].strip().strip('"'))
-                    elif ln.startswith("aliases:"):
-                        rest = ln.split(":", 1)[1].strip()
-                        if rest.startswith("["):
-                            import json as _json
-                            try:
-                                needle_strs.extend(a for a in _json.loads(rest) if a)
-                            except Exception:
-                                pass
-                    elif ln.startswith("- ") and needle_strs:
-                        needle_strs.append(ln[2:].strip().strip('"'))
-
-            if needle_strs:
-                pat = _re.compile(
-                    "|".join(_re.escape(n) for n in needle_strs),
-                    _re.IGNORECASE,
-                )
-                def _mentions(src_path: Path) -> bool:
-                    try:
-                        return bool(pat.search(src_path.read_text(encoding="utf-8", errors="replace")))
-                    except OSError:
-                        return True
-                candidates = [s for s in srcs if _mentions(s)]
-            else:
-                candidates = srcs
-            skipped = len(srcs) - len(candidates)
-            log.debug(
-                "autolink_sources_if_entity: re-autolinking %d/%d source pages for new %s (%d skipped — title absent)",
-                len(candidates), len(srcs), path, skipped,
-            )
-            t0 = time.time()
-            for src in candidates:
-                _autolink({"path": str(src.relative_to(REPO_ROOT))})
-            log.debug("autolink_sources_if_entity: done in %.1fs", time.time() - t0)
-        # Run backfill AFTER autolink so source pages already have their links
-        _backfill_entity_sources(path)
-
-
 def _atomic_write(p: Path, content: str) -> None:
     """Write content to p atomically: write to a sibling .tmp file, then rename."""
     global _title_map_cache
@@ -626,9 +504,6 @@ def _update_file(path: str, content: str) -> str:
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
-    _autolink({"path": path})
-    _autolink_sources_if_entity(path, is_new=is_new)
-    _rebuild_index({})
     return f"Written {len(content)} bytes to {path}"
 
 
@@ -941,6 +816,55 @@ def _auto_write_log_entry() -> None:
         lines.append(f"- **Documents updated**: {', '.join(_tag(p) for p in updated)}")
 
     _prepend_log("\n".join(lines))
+
+
+def _post_process_session() -> None:
+    """Run once when done() is called: patch sources: frontmatter, autolink all
+    created/updated pages, re-inject ## Sources sections, rebuild index."""
+    import re as _re
+
+    all_pages = list(dict.fromkeys(_session_entity_pages + _session_updated_pages))
+
+    # Ensure _current_source_page is in sources: for every entity/concept created this session.
+    if _current_source_page:
+        for wiki_rel in _session_entity_pages:
+            ep_path = WIKI_DIR / wiki_rel
+            if not ep_path.exists():
+                continue
+            try:
+                ep_content = ep_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            src_m = _re.search(r"^sources:\s*\[([^\]]*)\]", ep_content, _re.MULTILINE)
+            if not src_m:
+                continue
+            existing = [s.strip().strip('"').strip("'") for s in src_m.group(1).split(",") if s.strip().strip('"').strip("'")]
+            if _current_source_page in existing:
+                continue
+            new_src_str = ", ".join(f'"{s}"' for s in [_current_source_page] + existing)
+            ep_content = _re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{new_src_str}]", ep_content, flags=_re.MULTILINE)
+            ep_content = ep_content.replace("<!-- WARNING: no sources cited — update sources: frontmatter -->\n\n", "")
+            _atomic_write(ep_path, ep_content)
+            log.debug("post_process: added %s to sources: of %s", _current_source_page, wiki_rel)
+
+    # Autolink all pages touched this session (all entities now exist, so all titles resolve).
+    for wiki_rel in all_pages:
+        _autolink({"path": f"wiki/{wiki_rel}"})
+
+    # Re-inject ## Sources on entity/concept pages now that sources: is final.
+    for wiki_rel in _session_entity_pages:
+        ep_path = WIKI_DIR / wiki_rel
+        if not ep_path.exists():
+            continue
+        try:
+            ep_content = ep_path.read_text(encoding="utf-8", errors="replace")
+            new_content = _inject_sources_section(ep_content, ep_path)
+            if new_content != ep_content:
+                _atomic_write(ep_path, new_content)
+        except OSError:
+            continue
+
+    _rebuild_index({})
 
 
 def _done(args: dict) -> str:
@@ -1513,27 +1437,7 @@ def _create_file(args: dict) -> str:
 
     if _subdir == "sources":
         _current_source_page = str(p.relative_to(WIKI_DIR))
-        # Backfill any entity/concept pages created earlier this session.
-        for ep in _session_entity_pages:
-            ep_path = WIKI_DIR / ep
-            if not ep_path.exists():
-                continue
-            ep_content = ep_path.read_text(encoding="utf-8", errors="replace")
-            src_m = re.search(r"^sources:\s*\[([^\]]*)\]", ep_content, re.MULTILINE)
-            existing = []
-            if src_m and src_m.group(1).strip():
-                existing = [s.strip().strip('"').strip("'") for s in src_m.group(1).split(",") if s.strip()]
-            if _current_source_page not in existing:
-                new_src_str = ", ".join(f'"{s}"' for s in [_current_source_page] + existing)
-                ep_content = re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{new_src_str}]", ep_content, flags=re.MULTILINE)
-                # Remove any WARNING comment inserted due to missing sources
-                ep_content = ep_content.replace("<!-- WARNING: no sources cited — update sources: frontmatter -->\n\n", "")
-                ep_content = _inject_sources_section(ep_content, ep_path)
-                _atomic_write(ep_path, ep_content)
 
-    _autolink({"path": path})
-    _autolink_sources_if_entity(path, is_new=True)
-    _rebuild_index({})
     action = "Created"
     suffix = " — WARNING: no sources cited, update sources: frontmatter before calling done()" if _missing_sources else ""
     return f"{action} {path} ({len(content)} bytes){suffix}"
@@ -2002,6 +1906,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                 payload = result[len(_DONE_SENTINEL):]
                 ingested_flag, _, summary = payload.partition("|")
                 log.info("Agent called done() in round %d (ingested=%s): %s", _round, ingested_flag, summary[:120])
+                _post_process_session()
                 _auto_write_log_entry()
                 # Append placeholder responses for any unexecuted tool calls in this batch
                 # so the message history stays consistent (every tool_call must have a response).
@@ -2243,6 +2148,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                 payload = result[len(_DONE_SENTINEL):]
                 ingested_flag, _, summary = payload.partition("|")
                 log.info("Agent called done() in round %d (ingested=%s): %s", _round, ingested_flag, summary[:120])
+                _post_process_session()
                 _auto_write_log_entry()
                 # Append placeholder responses for any unexecuted tool calls in this batch.
                 remaining = tool_calls[i + 1:]
