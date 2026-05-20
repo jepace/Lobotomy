@@ -483,9 +483,42 @@ def _autolink_sources_if_entity(path: str, is_new: bool = False) -> None:
         sources_dir = WIKI_DIR / "sources"
         if sources_dir.is_dir():
             srcs = [s for s in sources_dir.glob("*.md") if s.name != "index.md"]
-            log.debug("autolink_sources_if_entity: re-autolinking %d source pages for new %s", len(srcs), path)
+
+            # Build a set of lowercase needles (title + aliases) from the new entity page
+            # so we can skip source files that can't possibly mention it.
+            import re as _re
+            entity_text = (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
+            fm_m = _re.match(r"^---\s*\n(.*?)\n---", entity_text, _re.DOTALL)
+            needles: list[str] = []
+            if fm_m:
+                for ln in fm_m.group(1).splitlines():
+                    if ln.startswith("title:"):
+                        needles.append(ln.split(":", 1)[1].strip().strip('"').lower())
+                    elif ln.startswith("aliases:"):
+                        rest = ln.split(":", 1)[1].strip()
+                        if rest.startswith("["):
+                            import json as _json
+                            try:
+                                needles.extend(a.lower() for a in _json.loads(rest) if a)
+                            except Exception:
+                                pass
+                    elif ln.startswith("- ") and needles:
+                        needles.append(ln[2:].strip().strip('"').lower())
+
+            def _mentions(src_path: Path) -> bool:
+                if not needles:
+                    return True  # can't tell — run autolink to be safe
+                txt = src_path.read_text(encoding="utf-8", errors="replace").lower()
+                return any(n in txt for n in needles)
+
+            candidates = [s for s in srcs if _mentions(s)]
+            skipped = len(srcs) - len(candidates)
+            log.debug(
+                "autolink_sources_if_entity: re-autolinking %d/%d source pages for new %s (%d skipped — title absent)",
+                len(candidates), len(srcs), path, skipped,
+            )
             t0 = time.time()
-            for src in srcs:
+            for src in candidates:
                 _autolink({"path": str(src.relative_to(REPO_ROOT))})
             log.debug("autolink_sources_if_entity: done in %.1fs", time.time() - t0)
 
