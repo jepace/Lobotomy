@@ -1323,7 +1323,7 @@ def _search_wiki(args: dict) -> str:
             if patterns and any(p.search(line) for p in patterns):
                 snippet = line.strip()[:120]
                 break
-        rel = str(f.relative_to(WIKI_DIR))
+        rel = "wiki/" + str(f.relative_to(WIKI_DIR))
         results.append((score, title, rel, snippet))
 
     results.sort(key=lambda x: -x[0])
