@@ -825,9 +825,9 @@ def _post_process_session() -> None:
 
     all_pages = list(dict.fromkeys(_session_entity_pages + _session_updated_pages))
 
-    # Ensure _current_source_page is in sources: for every entity/concept created this session.
+    # Ensure _current_source_page is in sources: for every entity/concept touched this session.
     if _current_source_page:
-        for wiki_rel in _session_entity_pages:
+        for wiki_rel in list(dict.fromkeys(_session_entity_pages + _session_updated_pages)):
             ep_path = WIKI_DIR / wiki_rel
             if not ep_path.exists():
                 continue
@@ -851,8 +851,8 @@ def _post_process_session() -> None:
     for wiki_rel in all_pages:
         _autolink({"path": f"wiki/{wiki_rel}"})
 
-    # Re-inject ## Sources on entity/concept pages now that sources: is final.
-    for wiki_rel in _session_entity_pages:
+    # Re-inject ## Sources on all entity/concept pages touched this session.
+    for wiki_rel in list(dict.fromkeys(_session_entity_pages + _session_updated_pages)):
         ep_path = WIKI_DIR / wiki_rel
         if not ep_path.exists():
             continue
