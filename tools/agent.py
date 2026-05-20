@@ -1465,6 +1465,23 @@ def _create_file(args: dict) -> str:
     if p.exists():
         return f"Error: create_file refused — {path} already exists. Use update_file to update existing pages."
 
+    # For source pages, block duplicates by URL — the LLM sometimes picks a different
+    # slug for an article that was already ingested in a prior session.
+    if _subdir == "sources" and url:
+        sources_dir = WIKI_DIR / "sources"
+        if sources_dir.is_dir():
+            import re as _re2
+            for _sf in sources_dir.glob("*.md"):
+                try:
+                    _st = _sf.read_text(encoding="utf-8", errors="replace")
+                    _um = _re2.search(r'^url:\s*"?([^"\n]+)"?', _st, _re2.MULTILINE)
+                    if _um and _um.group(1).strip().rstrip("/") == url.strip().rstrip("/"):
+                        existing_rel = str(_sf.relative_to(WIKI_DIR))
+                        return (f"Error: create_file refused — a source page for {url} already exists "
+                                f"at {existing_rel}. Use update_file to add information to it.")
+                except OSError:
+                    pass
+
     _subdir = p.parent.name
     if _subdir in ("entities", "concepts"):
         # Always derive sources from the current session source page; ignore LLM-supplied value.
