@@ -951,7 +951,6 @@ def wiki_sections() -> list:
     pages = []
     for name, label in [
         ("index.md",        "Index"),
-        ("overview.md",     "Overview"),
         ("log.md",          "Log"),
     ]:
         if (WIKI_DIR / name).exists():
