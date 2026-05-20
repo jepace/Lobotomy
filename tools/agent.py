@@ -486,6 +486,12 @@ def _update_file(path: str, content: str) -> str:
                 f"sources: [{merged_str}]",
                 content, flags=_re.MULTILINE,
             )
+        elif _current_source_page:
+            # sources: field missing entirely — insert it before closing --- of frontmatter
+            _fm_match = _re.match(r"^---\s*\n.*?\n(---\s*\n)", content, _re.DOTALL)
+            if _fm_match:
+                _insert_at = _fm_match.start(1)
+                content = content[:_insert_at] + f'sources: ["{_current_source_page}"]\n' + content[_insert_at:]
     is_new = False  # update_file is update-only; create_file handles new pages
     assert not is_new, "update_file invariant violated: is_new should never be True here"
     wiki_rel = str(p.relative_to(WIKI_DIR))
@@ -825,10 +831,9 @@ def _post_process_session() -> None:
 
     all_pages = list(dict.fromkeys(_session_entity_pages + _session_updated_pages))
 
-    # Ensure _current_source_page is in sources: for pages *created* this session only.
-    # Pre-existing pages that the LLM happened to update should not inherit this source.
+    # Ensure _current_source_page is in sources: for all entity/concept pages touched this session.
     if _current_source_page:
-        for wiki_rel in list(dict.fromkeys(_session_entity_pages)):
+        for wiki_rel in list(dict.fromkeys(_session_entity_pages + _session_updated_pages)):
             ep_path = WIKI_DIR / wiki_rel
             if not ep_path.exists():
                 continue
