@@ -86,7 +86,7 @@ logging.getLogger("werkzeug").addFilter(_SuppressPollingPaths())
 from config import cfg_get, cfg_bool, cfg_int, validate_config
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
-                   stream_agent_turn, system_prompt,
+                   stream_agent_turn, run_agent_turn, system_prompt,
                    _fix_wiki_links, _rebuild_index, _validate_ingest,
                    heal_index_if_stale, _atomic_write)
 
@@ -2300,6 +2300,97 @@ def inbox_delete():
     return {"ok": True}
 
 
+@app.route("/inbox/process-all", methods=["POST"])
+@require_login
+def inbox_process_all():
+    """Process all unprocessed inbox files sequentially in a background thread."""
+    global _inbox_processing
+    with _inbox_processing_lock:
+        if _inbox_processing:
+            return {"error": "already running"}, 400
+        # Collect unprocessed items before spawning the thread
+        unprocessed = [
+            item for item in list_inbox()
+            if not item.get("wikified") and not item.get("archived")
+        ]
+        if not unprocessed:
+            return {"queued": 0}
+        _inbox_processing = True
+
+    def _process_all():
+        global _inbox_processing
+        try:
+            client, model, error = get_client_and_model()
+            if error:
+                log.error("inbox/process-all: cannot get client: %s", error)
+                return
+            sys_prompt = system_prompt()
+            for item in unprocessed:
+                filename = item["filename"]
+                inbox_path = RAW_DIR / Path(filename).name
+                try:
+                    file_content = inbox_path.read_text(encoding="utf-8", errors="replace")
+                except OSError as e:
+                    log.warning("inbox/process-all: cannot read %s: %s", filename, e)
+                    continue
+
+                import re as _re
+                import agent as _agent
+                _agent._current_inbox_path = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
+                _agent._current_inbox_url  = ""
+                _agent._current_source_page = ""
+                stripped = file_content.strip()
+                if stripped.startswith("http") and "\n" not in stripped:
+                    _agent._current_inbox_url = stripped
+                else:
+                    _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', file_content, _re.MULTILINE)
+                    if _m:
+                        _agent._current_inbox_url = _m.group(1).strip()
+
+                history = [
+                    {"role": "user",      "content": orientation_message()},
+                    {"role": "assistant", "content": "Oriented. Ready."},
+                    {"role": "user",      "content": (
+                        f'Ingest raw/{filename}.\n\n'
+                        f'<file path="raw/{inbox_path.name}">\n{file_content}\n</file>'
+                    )},
+                ]
+
+                log.info("inbox/process-all: ingesting %s", filename)
+                try:
+                    messages = run_agent_turn(client, model, history, sys_prompt)
+                except Exception as e:
+                    log.error("inbox/process-all: agent error for %s: %s", filename, e, exc_info=True)
+                    continue
+
+                ingested = any(
+                    isinstance(m.get("content"), str) and m["content"].startswith("__ingested__:1")
+                    for m in messages
+                    if m.get("role") == "system"
+                )
+                if ingested:
+                    raw_path = RAW_DIR / Path(filename).name
+                    try:
+                        raw_fm, _ = _parse_frontmatter(raw_path.read_text(encoding="utf-8"))
+                        if raw_fm.get("fetch_failed"):
+                            log.warning("inbox/process-all: refusing to mark wikified — fetch_failed=true in %s", filename)
+                            ingested = False
+                    except Exception:
+                        pass
+                if ingested:
+                    _mark_inbox_wikified(filename)
+                    log.info("inbox/process-all: marked wikified %s", filename)
+                else:
+                    log.warning("inbox/process-all: no __ingested__:1 for %s — not marking wikified", filename)
+        finally:
+            with _inbox_processing_lock:
+                _inbox_processing = False
+            log.info("inbox/process-all: finished")
+
+    _threading.Thread(target=_process_all, daemon=True, name="inbox-process-all").start()
+    return {"queued": len(unprocessed)}
+
+
 @app.route("/inbox/view/<path:filename>")
 @require_login
 def inbox_view(filename):
@@ -2763,6 +2854,13 @@ def _daily_email_loop() -> None:
 
 import threading as _threading
 _threading.Thread(target=_daily_email_loop, daemon=True, name="daily-email").start()
+
+# ---------------------------------------------------------------------------
+# Inbox process-all state
+# ---------------------------------------------------------------------------
+
+_inbox_processing      = False
+_inbox_processing_lock = _threading.Lock()
 
 
 # ---------------------------------------------------------------------------
