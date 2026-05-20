@@ -965,10 +965,13 @@ def _rebuild_index(args: dict) -> str:
 
     index_path = WIKI_DIR / "index.md"
     existing   = index_path.read_text(encoding="utf-8") if index_path.exists() else ""
-    cut = existing.find("\n## ")
-    prose = (existing[:cut].rstrip() if cut != -1 else existing.rstrip())
-    # Strip leading/trailing horizontal rules so they don't accumulate across rebuilds
-    prose = re.sub(r"^(\s*---\s*\n?)+", "", prose)
+    # Separate YAML frontmatter (if any) from the prose body.
+    fm_match = re.match(r"^(---\s*\n.*?\n---\s*\n)", existing, re.DOTALL)
+    frontmatter = fm_match.group(1) if fm_match else ""
+    body = existing[len(frontmatter):]
+    cut = body.find("\n## ")
+    prose = (body[:cut].rstrip() if cut != -1 else body.rstrip())
+    # Strip trailing horizontal rules that accumulate across rebuilds
     prose = re.sub(r"(\n\s*---\s*)+$", "", prose).strip()
     # Update or inject the Last updated timestamp in prose
     if "_Last updated:" in prose:
@@ -977,7 +980,7 @@ def _rebuild_index(args: dict) -> str:
         prose += f"\n\n_Last updated: {today}_"
     else:
         prose = f"# Wiki Index\n\n_Last updated: {today}_"
-    _atomic_write(index_path, prose + "\n\n---\n\n" + "\n\n---\n\n".join(blocks) + "\n")
+    _atomic_write(index_path, frontmatter + prose + "\n\n---\n\n" + "\n\n---\n\n".join(blocks) + "\n")
 
     # Per-subdirectory wiki index files
     section_blocks = dict(zip([s for _, s in sections], blocks))
