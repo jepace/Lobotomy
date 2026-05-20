@@ -210,14 +210,13 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
             limit = _WIKI_READ_LIMIT
         except ValueError:
             limit = _RAW_READ_LIMIT
-    # Strip system-owned frontmatter fields before exposing to LLM.
-    # These are maintained exclusively by code; the LLM must never write them.
-    # The rendered ## Sources section in the body is still returned.
+    # Strip system-owned frontmatter fields the LLM has no use for.
+    # sources: is intentionally kept — the LLM needs it to iterate source pages.
     import re as _re2
     _fm = _re2.match(r'^(---\s*\n)(.*?\n)(---\s*\n)', text, _re2.DOTALL)
     if _fm:
         _stripped_fm = _re2.sub(
-            r'^(sources|created|raw_source):[ \t]*.*\n?', '', _fm.group(2), flags=_re2.MULTILINE
+            r'^(created|raw_source):[ \t]*.*\n?', '', _fm.group(2), flags=_re2.MULTILINE
         )
         text = _fm.group(1) + _stripped_fm + _fm.group(3) + text[_fm.end():]
 
@@ -1323,7 +1322,7 @@ def _search_wiki(args: dict) -> str:
             if patterns and any(p.search(line) for p in patterns):
                 snippet = line.strip()[:120]
                 break
-        rel = str(f.relative_to(WIKI_DIR))
+        rel = "wiki/" + str(f.relative_to(WIKI_DIR))
         results.append((score, title, rel, snippet))
 
     results.sort(key=lambda x: -x[0])
@@ -1927,9 +1926,21 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
 
         for i, tc in enumerate(tool_calls):
             fn_name = (tc.get("function") or {}).get("name") or ""
+            # Tolerate LLM hallucinating scope tokens in the tool name
+            # e.g. "search_wiki in:sources" → tool=search_wiki, query prepended with "in:sources"
+            _scope_in_name = ""
+            if fn_name not in TOOL_FNS and " " in fn_name:
+                _base, _rest = fn_name.split(" ", 1)
+                if _base in TOOL_FNS:
+                    fn_name = _base
+                    _scope_in_name = _rest
             fn = TOOL_FNS.get(fn_name)
             try:
                 args   = json.loads((tc.get("function") or {}).get("arguments") or "{}")
+                if _scope_in_name and "query" in args:
+                    args["query"] = args["query"] + " " + _scope_in_name
+                elif _scope_in_name:
+                    args["query"] = _scope_in_name
                 result = fn(args) if fn else f"Unknown tool: {fn_name}"
             except (json.JSONDecodeError, TypeError, ValueError, OSError) as e:
                 result = f"Error: {e}"
@@ -2165,9 +2176,21 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
         _tools_since_last_continuation += len(tool_calls)
         for i, tc in enumerate(tool_calls):
             fn_name = (tc.get("function") or {}).get("name") or ""
+            # Tolerate LLM hallucinating scope tokens in the tool name
+            # e.g. "search_wiki in:sources" → tool=search_wiki, query prepended with "in:sources"
+            _scope_in_name = ""
+            if fn_name not in TOOL_FNS and " " in fn_name:
+                _base, _rest = fn_name.split(" ", 1)
+                if _base in TOOL_FNS:
+                    fn_name = _base
+                    _scope_in_name = _rest
             fn = TOOL_FNS.get(fn_name)
             try:
                 args        = json.loads((tc.get("function") or {}).get("arguments") or "{}")
+                if _scope_in_name and "query" in args:
+                    args["query"] = args["query"] + " " + _scope_in_name
+                elif _scope_in_name:
+                    args["query"] = _scope_in_name
                 arg_preview = str(next(iter(args.values()), ""))[:80]
                 result      = fn(args) if fn else f"Unknown tool: {fn_name}"
             except json.JSONDecodeError as e:
