@@ -1927,9 +1927,21 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
 
         for i, tc in enumerate(tool_calls):
             fn_name = (tc.get("function") or {}).get("name") or ""
+            # Tolerate LLM hallucinating scope tokens in the tool name
+            # e.g. "search_wiki in:sources" → tool=search_wiki, query prepended with "in:sources"
+            _scope_in_name = ""
+            if fn_name not in TOOL_FNS and " " in fn_name:
+                _base, _rest = fn_name.split(" ", 1)
+                if _base in TOOL_FNS:
+                    fn_name = _base
+                    _scope_in_name = _rest
             fn = TOOL_FNS.get(fn_name)
             try:
                 args   = json.loads((tc.get("function") or {}).get("arguments") or "{}")
+                if _scope_in_name and "query" in args:
+                    args["query"] = args["query"] + " " + _scope_in_name
+                elif _scope_in_name:
+                    args["query"] = _scope_in_name
                 result = fn(args) if fn else f"Unknown tool: {fn_name}"
             except (json.JSONDecodeError, TypeError, ValueError, OSError) as e:
                 result = f"Error: {e}"
@@ -2165,9 +2177,21 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
         _tools_since_last_continuation += len(tool_calls)
         for i, tc in enumerate(tool_calls):
             fn_name = (tc.get("function") or {}).get("name") or ""
+            # Tolerate LLM hallucinating scope tokens in the tool name
+            # e.g. "search_wiki in:sources" → tool=search_wiki, query prepended with "in:sources"
+            _scope_in_name = ""
+            if fn_name not in TOOL_FNS and " " in fn_name:
+                _base, _rest = fn_name.split(" ", 1)
+                if _base in TOOL_FNS:
+                    fn_name = _base
+                    _scope_in_name = _rest
             fn = TOOL_FNS.get(fn_name)
             try:
                 args        = json.loads((tc.get("function") or {}).get("arguments") or "{}")
+                if _scope_in_name and "query" in args:
+                    args["query"] = args["query"] + " " + _scope_in_name
+                elif _scope_in_name:
+                    args["query"] = _scope_in_name
                 arg_preview = str(next(iter(args.values()), ""))[:80]
                 result      = fn(args) if fn else f"Unknown tool: {fn_name}"
             except json.JSONDecodeError as e:

@@ -78,7 +78,7 @@ url: "https://original-article-url"   # source documents only; omit on all other
 | `tags` | list of strings | lowercase, hyphenated, no spaces |
 | `created` | YYYY-MM-DD | Date first created. **System-managed — never supply or modify.** |
 | `updated` | YYYY-MM-DD | Date of most recent edit. Update on every write. |
-| `sources` | list of strings | Paths from `wiki/` to supporting source documents. **System-managed — never supply or modify.** Use `search_wiki in:sources` to discover source pages instead of reading this field. |
+| `sources` | list of strings | Paths from `wiki/` to supporting source documents. **System-managed — never supply or modify.** Use `search_wiki` with `in:sources` in the query to discover source pages instead of reading this field. |
 | `url` | string (quoted) | Original article URL. Source documents only. **System-managed — never supply or modify.** |
 | `raw_source` | string (quoted) | Repo-relative path to the raw inbox file. Source documents only. **System-managed — never supply or modify.** |
 | `aliases` | list of strings | Extra names the autolinker should match and link to this page (e.g. common abbreviations or alternate spellings). Human-set only — do not supply during ingest. Example: `aliases: ["FBI", "bureau"]` |
@@ -184,14 +184,14 @@ For each significant entity (person, organization, product, project) in the sour
   any common abbreviations or alternate names.
 - **If a document exists**, build full context before rewriting it:
   1. Read the existing entity page.
-  2. Only now call `search_wiki in:sources` with the entity's name to find additional source pages
+  2. Only now call `search_wiki` with query `"<entity name> in:sources"` to find additional source pages
      beyond what the `sources:` frontmatter already lists.
   3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you
      just created in Step 3).
   4. Rewrite the entity page from this complete picture using `update_file`. Do not set `sources:`
      — it is managed automatically. Preserve the original `created` date.
 - **If the entity is new**, use `create_file` for `wiki/entities/{slug}.md`. Do not set `sources:`
-  — it is injected automatically. **Do not call `search_wiki in:sources` for new entities** — there
+  — it is injected automatically. **Do not call `search_wiki` with `in:sources` in the query for new entities** — there
   are no prior source pages to find.
 - Note any contradictions with existing claims in a `## Contradictions` section.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
@@ -204,7 +204,7 @@ For each significant concept, technique, framework, or term:
   and any common abbreviations or alternate names.
 - **If a document exists**, build full context before rewriting it:
   1. Read the existing concept page.
-  2. Only now call `search_wiki in:sources` with the concept's name to find additional source pages
+  2. Only now call `search_wiki` with query `"<concept name> in:sources"` to find additional source pages
      beyond what the `sources:` frontmatter already lists.
   3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you
      just created in Step 3).
@@ -212,7 +212,7 @@ For each significant concept, technique, framework, or term:
      — it is managed automatically. Preserve the original `created` date.
 - **If no document exists** and the concept warrants one, use `create_file` for
   `wiki/concepts/{slug}.md`. Do not set `sources:` — it is injected automatically. **Do not call
-  `search_wiki in:sources` for new concepts** — there are no prior source pages to find.
+  `search_wiki` with `in:sources` in the query for new concepts** — there are no prior source pages to find.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
 ### Step 7 — Update synthesis documents
@@ -237,7 +237,7 @@ This workflow rewrites a wiki page from the synthesized source documents already
 Call `read_file` on the target page. Note its title and key terms. Also note the `sources:` frontmatter list — these are the files you must read.
 
 ### Step 2 — Discover all source pages
-Call `search_wiki in:sources` using the page title and key terms (e.g. `"Trump Administration in:sources"`) to find any additional source pages not already in the `sources:` list. Combine both sets.
+Call `search_wiki` with `in:sources` in the query using the page title and key terms (e.g. `"Trump Administration in:sources"`) to find any additional source pages not already in the `sources:` list. Combine both sets.
 
 ### Step 3 — Read every source page
 **You must call `read_file` on every `wiki/sources/*.md` page in your combined source set.** Do not skip any. Do not read `raw/` files. The rewrite is only as good as what you read here — reading one file and skipping others produces an incomplete page.
