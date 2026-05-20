@@ -1,0 +1,95 @@
+{% macro bookmarklet_js(base_url, push_key) %}
+{% if push_key %}
+(function() {
+  function _buildBookmarklet(base, key) {
+    // _bm is the function that runs inside the bookmarklet on the target page.
+    // It is serialised to a string, minified, and embedded in a javascript: URI.
+    function _bm(base, key) {
+      var STYLE = 'position:fixed;top:16px;right:16px;max-width:320px;' +
+                  'background:#1c1c1e;color:#f2f2f7;border-radius:12px;' +
+                  'padding:14px 18px;z-index:2147483647;' +
+                  'font:600 14px -apple-system,BlinkMacSystemFont,sans-serif;' +
+                  'box-shadow:0 4px 24px rgba(0,0,0,.7);cursor:pointer;' +
+                  'transition:opacity .3s;';
+      var el = document.createElement('div');
+      el.setAttribute('style', STYLE);
+      el.textContent = 'Saving…';
+      el.title = 'Click to dismiss';
+      el.onclick = function() { el.remove(); };
+      document.body.appendChild(el);
+
+      function show(msg, isError) {
+        el.textContent = msg;
+        if (isError) {
+          el.style.background = '#4a1010';
+        } else {
+          setTimeout(function() {
+            el.style.opacity = '0';
+            setTimeout(function() { if (el.parentNode) el.remove(); }, 300);
+          }, 3000);
+        }
+      }
+
+      var ctrl = new AbortController();
+      var timer = setTimeout(function() { ctrl.abort(); }, 10000);
+
+      fetch(base + '/api/push', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: location.href, title: document.title, source: 'bookmarklet' }),
+        signal: ctrl.signal
+      })
+      .then(function(r) {
+        clearTimeout(timer);
+        if (!r.ok) {
+          return r.json().catch(function() { return {}; }).then(function(d) {
+            throw new Error(d.error || ('Server error ' + r.status));
+          });
+        }
+        return r.json();
+      })
+      .then(function(d) {
+        if (d.duplicate) {
+          show('Already in Reading List ✓');
+        } else if (d.fetch_failed) {
+          show('Saved – content fetched on wikify ✓');
+        } else {
+          show('Saved: ' + (d.title || 'Article') + ' ✓');
+        }
+      })
+      .catch(function(e) {
+        clearTimeout(timer);
+        var msg = (e && e.message) ? e.message : String(e);
+        if (e && e.name === 'AbortError') msg = 'Timed out — is Lobotomy running?';
+        else if (msg === 'Failed to fetch') msg = 'Could not reach Lobotomy — is it running?';
+        show('⚠ ' + msg, true);
+      });
+    }
+
+    // Strip block comments (/* ... */), then strip line comments, then collapse whitespace.
+    // We do NOT use /\/\/[^\n]*/g directly because it would corrupt strings containing "//".
+    // Instead we strip line comments only when preceded by whitespace or a statement-ending
+    // character, which is safe for this function body (no string literals contain "//").
+    var src = _bm.toString()
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[;,{}()\s])\/\/[^\n]*/gm, '$1')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return 'javascript:(' + src + ')(' + JSON.stringify(base) + ',' + JSON.stringify(key) + ');void 0';
+  }
+
+  var base = {{ base_url | tojson }};
+  var key  = {{ push_key | tojson }};
+  var js   = _buildBookmarklet(base, key);
+
+  var bmLink = document.getElementById('bookmarklet-link') || document.getElementById('bm-link');
+  if (bmLink) bmLink.href = js;
+
+  var bmCode = document.getElementById('bm-code');
+  if (bmCode) bmCode.textContent = js;
+
+  var scEl = document.getElementById('shortcut-url');
+  if (scEl) scEl.textContent = base + '/api/push';
+})();
+{% endif %}
+{% endmacro %}

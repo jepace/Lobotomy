@@ -557,7 +557,7 @@ def _atomic_write(p: Path, content: str) -> None:
         raise
 
 
-def _write_file(path: str, content: str) -> str:
+def _update_file(path: str, content: str) -> str:
     p = REPO_ROOT / path
     try:
         p.resolve().relative_to(WIKI_DIR.resolve())
@@ -567,24 +567,25 @@ def _write_file(path: str, content: str) -> str:
             f"raw/ is immutable. Got: {path}"
         )
     if p.resolve() == (WIKI_DIR / "log.md").resolve():
-        return "Error: write_file refused on wiki/log.md — use prepend_log to add entries."
+        return "Error: update_file refused on wiki/log.md — use prepend_log to add entries."
     if p.resolve() == (WIKI_DIR / "index.md").resolve():
-        return "Error: write_file refused on wiki/index.md — it is auto-generated; use rebuild_index if needed."
+        return "Error: update_file refused on wiki/index.md — it is auto-generated; use rebuild_index if needed."
     if not p.exists():
-        return f"Error: write_file refused — {path} does not exist. Use create_file to create new pages."
+        return f"Error: update_file refused — {path} does not exist. Use create_file to create new pages."
 
-    # Reject partial writes — write_file requires the complete file content.
-    if p.exists() and not content.lstrip().startswith("---"):
+    assert p.exists(), f"update_file invariant violated: {path} must exist"
+
+    # Reject partial writes — update_file requires the complete file content.
+    import re as _re
+    if not content.lstrip().startswith("---"):
         existing = p.read_text(encoding="utf-8", errors="replace")
-        import re as _re
         if _re.match(r"^---\s*\n", existing):
             return (
-                f"Error: write_file requires the complete file content including frontmatter. "
+                f"Error: update_file requires the complete file content including frontmatter. "
                 f"You sent a fragment without frontmatter. Read {path} first, then resend the "
                 f"full file with your changes incorporated."
             )
 
-    import re as _re
     _subdir = p.parent.name
     if _subdir in ("entities", "concepts"):
         # Always preserve sources already on disk — the LLM must never shrink this list.
@@ -611,7 +612,8 @@ def _write_file(path: str, content: str) -> str:
             if wiki_rel not in _session_entity_pages:
                 _session_entity_pages.append(wiki_rel)
 
-    is_new = False  # write_file is update-only; create_file handles new pages
+    is_new = False  # update_file is update-only; create_file handles new pages
+    assert not is_new, "update_file invariant violated: is_new should never be True here"
     wiki_rel = str(p.relative_to(WIKI_DIR))
     if wiki_rel not in _session_entity_pages and wiki_rel not in _session_updated_pages:
         _session_updated_pages.append(wiki_rel)
@@ -1437,6 +1439,9 @@ def _create_file(args: dict) -> str:
     except ValueError:
         return f"Error: create_file only writes inside wiki/. Got: {path}"
 
+    if p.exists():
+        return f"Error: create_file refused — {path} already exists. Use update_file to update existing pages."
+
     _subdir = p.parent.name
     if _subdir in ("entities", "concepts"):
         # Always derive sources from the current session source page; ignore LLM-supplied value.
@@ -1444,22 +1449,8 @@ def _create_file(args: dict) -> str:
     _missing_sources = _subdir in ("entities", "concepts") and not sources
 
     today = datetime.date.today().isoformat()
-    existed = p.exists()
+    created = today
     raw_source = ""
-    if existed:
-        # Preserve original created date, url, and raw_source
-        old = p.read_text(encoding="utf-8", errors="replace")
-        m = re.search(r"created:\s*(\d{4}-\d{2}-\d{2})", old)
-        created = m.group(1) if m else today
-        if not url:
-            mu = re.search(r'^url:\s*["\']?([^"\'\n]+)["\']?', old, re.MULTILINE)
-            if mu:
-                url = mu.group(1).strip()
-        mr = re.search(r'^raw_source:\s*["\']?([^"\'\n]+)["\']?', old, re.MULTILINE)
-        if mr:
-            raw_source = mr.group(1).strip()
-    else:
-        created = today
 
     if pg_type == "source" and not raw_source:
         raw_source = _current_inbox_path
@@ -1483,7 +1474,9 @@ def _create_file(args: dict) -> str:
     content = frontmatter + _strip_broken_wiki_links(body_text, p)
     content = _inject_sources_section(content, p)
     p.parent.mkdir(parents=True, exist_ok=True)
+    assert not p.exists(), f"create_file invariant violated: {path} must not exist before write"
     _atomic_write(p, content)
+    assert p.exists(), f"create_file invariant violated: {path} must exist after write"
 
     wiki_rel = str(p.relative_to(WIKI_DIR))
     if wiki_rel not in _session_entity_pages:
@@ -1510,9 +1503,9 @@ def _create_file(args: dict) -> str:
                 _atomic_write(ep_path, ep_content)
 
     _autolink({"path": path})
-    _autolink_sources_if_entity(path, is_new=not existed)
+    _autolink_sources_if_entity(path, is_new=True)
     _rebuild_index({})
-    action = "Updated" if existed else "Created"
+    action = "Created"
     suffix = " — WARNING: no sources cited, update sources: frontmatter before calling done()" if _missing_sources else ""
     return f"{action} {path} ({len(content)} bytes){suffix}"
 
@@ -1598,7 +1591,7 @@ def _validate_ingest(args: dict) -> str:
 
 TOOL_FNS = {
     "read_file":       lambda a: _read_file(a["path"], int(a.get("offset", 0))),
-    "write_file":       lambda a: _write_file(a["path"], a["content"]),
+    "update_file":      lambda a: _update_file(a["path"], a["content"]),
     "list_dir":         lambda a: _list_dir(a["directory"]),
     "fetch_url":        lambda a: _fetch_url(a["url"]),
     "prepend_log":      lambda a: _prepend_log(a["entry"]),
@@ -1635,8 +1628,8 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
-            "name":        "write_file",
-            "description": "Write or overwrite a file. Only wiki/ is writable; raw/ is immutable.",
+            "name":        "update_file",
+            "description": "Update an existing wiki page. Requires the complete file content. Fails if the file does not exist — use create_file for new pages.",
             "parameters":  {
                 "type": "object",
                 "properties": {
@@ -1676,7 +1669,7 @@ TOOL_DEFS = [
         "function": {
             "name":        "prepend_log",
             "description": (
-                "Add a new entry to wiki/log.md. Always use this instead of write_file for log updates — "
+                "Add a new entry to wiki/log.md. Always use this instead of update_file for log updates — "
                 "it preserves all existing entries. Use this for Step 10 of the ingest workflow. "
                 "Pages created/updated must be markdown links: [Title](sources/slug.md) — "
                 "never plain text or paths starting with wiki/."
@@ -1771,7 +1764,7 @@ TOOL_DEFS = [
             "name":        "create_file",
             "description": (
                 "Write a new wiki page with auto-populated frontmatter (created/updated dates "
-                "filled automatically). Preferred over write_file for new wiki pages — "
+                "filled automatically). Preferred over update_file for new wiki pages — "
                 "eliminates frontmatter errors. Pass the page body without frontmatter."
             ),
             "parameters":  {
@@ -1806,11 +1799,11 @@ def system_prompt() -> str:
         "| Tool | When to use |\n"
         "|------|-------------|\n"
         "| read_file | Read any repo file. Raw sources truncated at 60k chars, wiki pages at 20k. |\n"
-        "| write_file | Write wiki pages (raw/ is blocked). Use create_file for new pages instead. |\n"
+        "| update_file | Update an existing wiki page (must already exist; raw/ is blocked). |\n"
         "| create_file | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
         "| search_raw | Search raw source files by keyword — use when retroactively reviewing old articles for a newly prominent entity. |\n"
-        "| prepend_log | Add entry to wiki/log.md. Never use write_file for the log. |\n"
+        "| prepend_log | Add entry to wiki/log.md. Never use update_file for the log. |\n"
         "| list_dir | List directory contents. |\n"
         "| fetch_url | Fetch a web page for inbox processing. |\n"
         "| done | **Required** — signal task complete. Never stop without calling done(). |\n\n"
@@ -2164,7 +2157,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                             except Exception:
                                 args = {}
                             path = args.get("path", "")
-                            if fn == "write_file" and path:
+                            if fn == "update_file" and path:
                                 written.append(path)
                             elif fn == "read_file" and path:
                                 read_files.append(path)

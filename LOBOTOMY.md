@@ -183,7 +183,7 @@ For each significant entity (person, organization, product, project) in the sour
   1. Read the existing entity page.
   2. Call `search_wiki` with `in:sources` and the entity's name to find any additional source pages.
   3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you just created in Step 3).
-  4. Rewrite the entity page from this complete picture using `write_file`. Do not set `sources:` — it is managed automatically. Preserve the original `created` date.
+  4. Rewrite the entity page from this complete picture using `update_file`. Do not set `sources:` — it is managed automatically. Preserve the original `created` date.
 - **If the entity is new**, use `create_file` for `wiki/entities/{slug}.md`. Do not set `sources:` — it is injected automatically.
 - Note any contradictions with existing claims in a `## Contradictions` section.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
@@ -197,7 +197,7 @@ For each significant concept, technique, framework, or term:
   1. Read the existing concept page.
   2. Call `search_wiki` with `in:sources` and the concept's name to find any additional source pages.
   3. Read every `wiki/sources/*.md` page in the union of both sets (including the source page you just created in Step 3).
-  4. Rewrite the concept page from this complete picture using `write_file`. Do not set `sources:` — it is managed automatically. Preserve the original `created` date.
+  4. Rewrite the concept page from this complete picture using `update_file`. Do not set `sources:` — it is managed automatically. Preserve the original `created` date.
 - **If no document exists** and the concept warrants one, use `create_file` for `wiki/concepts/{slug}.md`. Do not set `sources:` — it is injected automatically.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
@@ -232,7 +232,7 @@ Call `read_file` on the page to understand its current content and key terms. Th
 Call `read_file` on every `wiki/sources/*.md` page in your source set. Do not read `raw/` files.
 
 ### Step 3 — Rewrite the page
-Call `write_file` with the full rewritten content synthesized from all the source pages you read. Do not include `sources:`, `created:`, or `raw_source:` in the frontmatter — these are managed automatically by the system.
+Call `update_file` with the full rewritten content synthesized from all the source pages you read. Do not include `sources:`, `created:`, or `raw_source:` in the frontmatter — these are managed automatically by the system.
 
 ### Step 4 — Done
 Call `done()`.
