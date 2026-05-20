@@ -1686,10 +1686,10 @@ TOOL_DEFS = [
         "function": {
             "name":        "prepend_log",
             "description": (
-                "Add a new entry to wiki/log.md. Always use this instead of update_file for log updates — "
-                "it preserves all existing entries. Use this for Step 10 of the ingest workflow. "
-                "Pages created/updated must be markdown links: [Title](sources/slug.md) — "
-                "never plain text or paths starting with wiki/."
+                "Add a new entry to wiki/log.md for non-ingest operations (e.g. deprecating a page, "
+                "manual restructuring). Ingest log entries are written automatically — do not call this "
+                "during ingest. Page references must be markdown links: [Title](sources/slug.md), "
+                "never bare paths."
             ),
             "parameters":  {
                 "type": "object",

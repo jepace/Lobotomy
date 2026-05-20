@@ -215,7 +215,7 @@ Never write a single long paragraph that runs multiple ideas together. Use flowi
 lists, for the narrative sections. Aim for something readable at a glance, not a wall of text.
 
 ### Step 9 — Done
-Call `done()`. The server automatically writes the log entry and runs health checks — results are visible at `/wiki/lint`. Do NOT call `prepend_log` during ingest — the log is written for you.
+Call `done()`. The server automatically writes the log entry and runs health checks — results are visible at `/wiki/lint`.
 
 ---
 
@@ -276,20 +276,20 @@ you want to process but have not gotten to yet.
 Append-only operation log. Never delete or modify existing entries. Always prepend new entries at
 the **top** (newest-first ordering).
 
-**Entry format**:
-```markdown
-## [2026-05-01] ingest | Some Article Title
+Ingest log entries are written **automatically** by the server — do not write them yourself.
 
-- **Operation**: ingest
-- **Source file**: raw/some-article-slug.txt
-- **Documents created**: sources/some-article-slug.md, entities/jane-smith.md
-- **Documents updated**: overview.md
+Use `prepend_log` only for non-ingest operations (e.g. deprecating a page, a manual restructure).
+
+**Entry format for manual operations**:
+```markdown
+## [2026-05-01] manual-edit | Brief description
+
+- **Operation**: manual-edit
+- **Documents updated**: [Overview](overview.md)
 ```
 
 Rules:
-- Source file path is repo-relative, no leading slash.
-- Documents created/updated are **file paths**, not page titles — write `sources/slug.md`, not `"Some Article Title"`. Paths are relative to `wiki/` — write `sources/slug.md`, not `wiki/sources/slug.md`.
-- Use bare paths, not markdown links.
+- Page references must be markdown links with paths relative to `wiki/` — write `[Title](sources/slug.md)`, not bare paths.
 - Omit any line that has no entries.
 
 ---
