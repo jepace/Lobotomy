@@ -836,13 +836,19 @@ def _post_process_session() -> None:
             except OSError:
                 continue
             src_m = _re.search(r"^sources:\s*\[([^\]]*)\]", ep_content, _re.MULTILINE)
-            if not src_m:
-                continue
-            existing = [s.strip().strip('"').strip("'") for s in src_m.group(1).split(",") if s.strip().strip('"').strip("'")]
-            if _current_source_page in existing:
-                continue
-            new_src_str = ", ".join(f'"{s}"' for s in [_current_source_page] + existing)
-            ep_content = _re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{new_src_str}]", ep_content, flags=_re.MULTILINE)
+            if src_m:
+                existing = [s.strip().strip('"').strip("'") for s in src_m.group(1).split(",") if s.strip().strip('"').strip("'")]
+                if _current_source_page in existing:
+                    continue
+                new_src_str = ", ".join(f'"{s}"' for s in [_current_source_page] + existing)
+                ep_content = _re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{new_src_str}]", ep_content, flags=_re.MULTILINE)
+            else:
+                # sources: field missing entirely — insert before the closing --- of frontmatter
+                fm_match = _re.match(r"^---\s*\n.*?\n(---\s*\n)", ep_content, _re.DOTALL)
+                if not fm_match:
+                    continue
+                insert_at = fm_match.start(1)
+                ep_content = ep_content[:insert_at] + f'sources: ["{_current_source_page}"]\n' + ep_content[insert_at:]
             ep_content = ep_content.replace("<!-- WARNING: no sources cited — update sources: frontmatter -->\n\n", "")
             _atomic_write(ep_path, ep_content)
             log.debug("post_process: added %s to sources: of %s", _current_source_page, wiki_rel)
