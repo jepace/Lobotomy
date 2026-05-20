@@ -2413,104 +2413,89 @@ def inbox_delete():
 @app.route("/inbox/process-all", methods=["POST"])
 @require_login
 def inbox_process_all():
-    """Process all unprocessed inbox files sequentially in a background thread."""
-    global _inbox_processing
-    with _inbox_processing_lock:
-        if _inbox_processing:
-            return {"error": "already running"}, 400
-        # Collect unprocessed items before spawning the thread
-        unprocessed = [
-            item for item in list_inbox()
-            if not item.get("wikified") and not item.get("archived")
-        ]
-        if not unprocessed:
-            return {"queued": 0}
-        _inbox_processing = True
+    """Queue all unprocessed inbox files into the job queue, one job per item."""
+    unprocessed = [
+        item for item in list_inbox()
+        if not item.get("wikified") and not item.get("archived")
+    ]
+    if not unprocessed:
+        return {"queued": 0}
 
-    def _process_all():
-        global _inbox_processing
+    client, model, error = get_client_and_model()
+    if error:
+        return {"error": error}, 503
+
+    import re as _re
+    import agent as _agent
+    sys_prompt = system_prompt()
+    job_ids = []
+
+    for item in unprocessed:
+        filename = item["filename"]
+        inbox_path = RAW_DIR / Path(filename).name
         try:
-            client, model, error = get_client_and_model()
-            if error:
-                log.error("inbox/process-all: cannot get client: %s", error)
-                return
-            sys_prompt = system_prompt()
-            for item in unprocessed:
-                filename = item["filename"]
-                inbox_path = RAW_DIR / Path(filename).name
-                try:
-                    file_content = inbox_path.read_text(encoding="utf-8", errors="replace")
-                except OSError as e:
-                    log.warning("inbox/process-all: cannot read %s: %s", filename, e)
-                    continue
+            file_content = inbox_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            log.warning("inbox/process-all: cannot read %s: %s", filename, e)
+            continue
 
-                import re as _re
-                import agent as _agent
-                _agent._current_inbox_path = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
-                _agent._current_inbox_url  = ""
-                _agent._current_source_page = ""
-                _agent._session_entity_pages = []
-                _agent._session_updated_pages = []
-                stripped = file_content.strip()
-                if stripped.startswith("http") and "\n" not in stripped:
-                    _agent._current_inbox_url = stripped
-                else:
-                    _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', file_content, _re.MULTILINE)
-                    if _m:
-                        _agent._current_inbox_url = _m.group(1).strip()
+        # Set agent globals now (before submit) so each job captures its own values
+        # via closure — job_queue runs them sequentially so no races.
+        inbox_path_str = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
+        inbox_url = ""
+        stripped = file_content.strip()
+        if stripped.startswith("http") and "\n" not in stripped:
+            inbox_url = stripped
+        else:
+            _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', file_content, _re.MULTILINE)
+            if _m:
+                inbox_url = _m.group(1).strip()
 
-                history = [
-                    {"role": "user",      "content": orientation_message()},
-                    {"role": "assistant", "content": "Oriented. Ready."},
-                    {"role": "user",      "content": (
-                        f'Ingest raw/{inbox_path.name}.\n\n'
-                        f'<file path="raw/{inbox_path.name}">\n{file_content}\n</file>'
-                    )},
-                ]
+        history = [
+            {"role": "user",      "content": orientation_message()},
+            {"role": "assistant", "content": "Oriented. Ready."},
+            {"role": "user",      "content": (
+                f'Ingest raw/{inbox_path.name}.\n\n'
+                f'<file path="raw/{inbox_path.name}">\n{file_content}\n</file>'
+            )},
+        ]
 
-                log.info("inbox/process-all: ingesting %s", filename)
-                try:
-                    messages = run_agent_turn(client, model, history, sys_prompt)
-                except Exception as e:
-                    log.error("inbox/process-all: agent error for %s: %s", filename, e, exc_info=True)
-                    continue
-                finally:
-                    # Append raw messages to history so the full turn is visible in
-                    # the chat UI for debugging, even though it won't be used as context.
-                    try:
-                        existing = json.loads(INBOX_LOG_FILE.read_text(encoding="utf-8")) if INBOX_LOG_FILE.exists() else []
-                        combined = existing + [m for m in messages if m.get("role") != "system"]
-                        INBOX_LOG_FILE.write_text(json.dumps(combined, ensure_ascii=False), encoding="utf-8")
-                    except Exception as _he:
-                        log.warning("inbox/process-all: failed to append to inbox log: %s", _he)
-                    _append_display_log(messages, source="inbox")
-
+        def make_on_done(fname, ipath_str, iurl):
+            def on_done(messages):
+                import agent as _a
+                _a._current_inbox_path   = ipath_str
+                _a._current_inbox_url    = iurl
+                _a._current_source_page  = ""
+                _a._session_entity_pages  = []
+                _a._session_updated_pages = []
+                save_history(messages, source="inbox")
                 ingested = any(
                     isinstance(m.get("content"), str) and m["content"].startswith("__ingested__:1")
                     for m in messages
                     if m.get("role") == "system"
                 )
                 if ingested:
-                    raw_path = RAW_DIR / Path(filename).name
+                    raw_path = RAW_DIR / Path(fname).name
                     try:
                         raw_fm, _ = _parse_frontmatter(raw_path.read_text(encoding="utf-8"))
                         if raw_fm.get("fetch_failed"):
-                            log.warning("inbox/process-all: refusing to mark wikified — fetch_failed=true in %s", filename)
+                            log.warning("inbox/process-all: refusing to mark wikified — fetch_failed=true in %s", fname)
                             ingested = False
                     except Exception:
                         pass
                 if ingested:
-                    _mark_inbox_wikified(filename)
-                    log.info("inbox/process-all: marked wikified %s", filename)
+                    _mark_inbox_wikified(fname)
+                    log.info("inbox/process-all: marked wikified %s", fname)
                 else:
-                    log.warning("inbox/process-all: no __ingested__:1 for %s — not marking wikified", filename)
-        finally:
-            with _inbox_processing_lock:
-                _inbox_processing = False
-            log.info("inbox/process-all: finished")
+                    log.warning("inbox/process-all: no __ingested__:1 for %s — not marking wikified", fname)
+            return on_done
 
-    _threading.Thread(target=_process_all, daemon=True, name="inbox-process-all").start()
-    return {"queued": len(unprocessed)}
+        job_id = job_queue.submit(client, model, history, sys_prompt,
+                                  on_done=make_on_done(filename, inbox_path_str, inbox_url))
+        job_ids.append(job_id)
+        log.info("inbox/process-all: queued %s as job %s", filename, job_id)
+
+    return {"queued": len(job_ids), "job_ids": job_ids}
 
 
 @app.route("/inbox/view/<path:filename>")
@@ -2985,8 +2970,6 @@ _threading.Thread(target=_daily_email_loop, daemon=True, name="daily-email").sta
 # Inbox process-all state
 # ---------------------------------------------------------------------------
 
-_inbox_processing      = False
-_inbox_processing_lock = _threading.Lock()
 
 
 # ---------------------------------------------------------------------------
