@@ -484,11 +484,10 @@ def _autolink_sources_if_entity(path: str, is_new: bool = False) -> None:
         if sources_dir.is_dir():
             srcs = [s for s in sources_dir.glob("*.md") if s.name != "index.md"]
 
-            # Build a regex from title + aliases, then parallel-scan source files.
-            # Thread pool parallelizes I/O (GIL releases on read); one compiled
-            # pattern shared across threads avoids per-file regex compilation.
+            # Build a single regex from title + aliases and scan source files
+            # sequentially. Files are small and likely already in the OS page
+            # cache from the preceding autolink pass, so this is fast in practice.
             import re as _re
-            from concurrent.futures import ThreadPoolExecutor as _TPE
             entity_text = (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
             fm_m = _re.match(r"^---\s*\n(.*?)\n---", entity_text, _re.DOTALL)
             needle_strs: list[str] = []
@@ -514,12 +513,10 @@ def _autolink_sources_if_entity(path: str, is_new: bool = False) -> None:
                 )
                 def _mentions(src_path: Path) -> bool:
                     try:
-                        return bool(pat.search(src_path.read_bytes().decode("utf-8", errors="replace")))
+                        return bool(pat.search(src_path.read_text(encoding="utf-8", errors="replace")))
                     except OSError:
                         return True
-                with _TPE(max_workers=8) as pool:
-                    results = list(pool.map(_mentions, srcs))
-                candidates = [s for s, hit in zip(srcs, results) if hit]
+                candidates = [s for s in srcs if _mentions(s)]
             else:
                 candidates = srcs
             skipped = len(srcs) - len(candidates)
