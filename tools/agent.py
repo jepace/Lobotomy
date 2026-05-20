@@ -484,39 +484,44 @@ def _autolink_sources_if_entity(path: str, is_new: bool = False) -> None:
         if sources_dir.is_dir():
             srcs = [s for s in sources_dir.glob("*.md") if s.name != "index.md"]
 
-            # Build needles (title + aliases) from the new entity's frontmatter,
-            # then scan source files with mmap for a fast case-insensitive match.
-            import re as _re, mmap as _mmap
+            # Build a regex from title + aliases, then parallel-scan source files.
+            # Thread pool parallelizes I/O (GIL releases on read); one compiled
+            # pattern shared across threads avoids per-file regex compilation.
+            import re as _re
+            from concurrent.futures import ThreadPoolExecutor as _TPE
             entity_text = (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
             fm_m = _re.match(r"^---\s*\n(.*?)\n---", entity_text, _re.DOTALL)
-            needles: list[bytes] = []
+            needle_strs: list[str] = []
             if fm_m:
                 for ln in fm_m.group(1).splitlines():
                     if ln.startswith("title:"):
-                        needles.append(ln.split(":", 1)[1].strip().strip('"').lower().encode())
+                        needle_strs.append(ln.split(":", 1)[1].strip().strip('"'))
                     elif ln.startswith("aliases:"):
                         rest = ln.split(":", 1)[1].strip()
                         if rest.startswith("["):
                             import json as _json
                             try:
-                                needles.extend(a.lower().encode() for a in _json.loads(rest) if a)
+                                needle_strs.extend(a for a in _json.loads(rest) if a)
                             except Exception:
                                 pass
-                    elif ln.startswith("- ") and needles:
-                        needles.append(ln[2:].strip().strip('"').lower().encode())
+                    elif ln.startswith("- ") and needle_strs:
+                        needle_strs.append(ln[2:].strip().strip('"'))
 
-            def _mentions_mmap(src_path: Path) -> bool:
-                if not needles:
-                    return True
-                try:
-                    with open(src_path, "rb") as fh:
-                        with _mmap.mmap(fh.fileno(), 0, access=_mmap.ACCESS_READ) as mm:
-                            low = mm[:].lower()
-                            return any(n in low for n in needles)
-                except (ValueError, OSError):
-                    return True  # empty or unreadable — let autolink decide
-
-            candidates = [s for s in srcs if _mentions_mmap(s)]
+            if needle_strs:
+                pat = _re.compile(
+                    "|".join(_re.escape(n) for n in needle_strs),
+                    _re.IGNORECASE,
+                )
+                def _mentions(src_path: Path) -> bool:
+                    try:
+                        return bool(pat.search(src_path.read_bytes().decode("utf-8", errors="replace")))
+                    except OSError:
+                        return True
+                with _TPE(max_workers=8) as pool:
+                    results = list(pool.map(_mentions, srcs))
+                candidates = [s for s, hit in zip(srcs, results) if hit]
+            else:
+                candidates = srcs
             skipped = len(srcs) - len(candidates)
             log.debug(
                 "autolink_sources_if_entity: re-autolinking %d/%d source pages for new %s (%d skipped — title absent)",
