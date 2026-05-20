@@ -878,10 +878,13 @@ def _linkify_summary(text: str) -> str:
     return _WIKI_PATH_RE.sub(_replace, text)
 
 
-def _auto_write_ingest_log() -> None:
-    """Write the ingest log entry automatically when done(ingested=true) fires."""
+def _auto_write_log_entry() -> None:
+    """Write a log entry automatically when done() fires and files were touched."""
     import datetime, re as _re
     today = datetime.date.today().isoformat()
+
+    # Determine operation type
+    operation = "ingest" if _current_inbox_path else "edit"
 
     # Read article title from the source page frontmatter.
     title = ""
@@ -895,31 +898,44 @@ def _auto_write_ingest_log() -> None:
     if not title:
         title = "unknown"
 
-    lines = [f"## [{today}] ingest | {title}", ""]
-    lines.append("- **Operation**: ingest")
-    if _current_inbox_path:
-        lines.append(f"- **Source file**: {_current_inbox_path}")
-
     def _tag(wiki_rel: str) -> str:
         subdir = wiki_rel.split("/")[0] if "/" in wiki_rel else ""
-        letter = {"sources": "S", "entities": "E", "concepts": "C", "synthesis": "X"}.get(subdir, "?")
         p = WIKI_DIR / wiki_rel
         name = wiki_rel.rsplit("/", 1)[-1].removesuffix(".md")
+        pg_type = ""
         if p.exists():
             txt = p.read_text(encoding="utf-8", errors="replace")
             m = _re.search(r'^title:\s*"?([^"\n]+)"?', txt, _re.MULTILINE)
             if m:
                 name = m.group(1).strip()
-        return f"[{letter}] {name}"
+            tm = _re.search(r'^type:\s*(\S+)', txt, _re.MULTILINE)
+            if tm:
+                pg_type = tm.group(1).strip()
+        letter = {"sources": "S", "entities": "E", "concepts": "C", "synthesis": "X"}.get(subdir) \
+            or {"source": "S", "entity": "E", "concept": "C", "synthesis": "X", "overview": "X"}.get(pg_type, "?")
+        link = f"[{name}]({wiki_rel})"
+        return f"[{letter}] {link}"
 
     created = []
     if _current_source_page:
         created.append(_current_source_page)
     created.extend(p for p in _session_entity_pages if p != _current_source_page)
+
+    updated = [p for p in _session_updated_pages if p not in created]
+
+    # Skip if nothing was touched
+    if not created and not updated:
+        return
+
+    lines = [f"## [{today}] {operation} | {title}", ""]
+    lines.append(f"- **Operation**: {operation}")
+    if _current_inbox_path:
+        raw_link = f"[R] [{_current_inbox_path}](../{_current_inbox_path})"
+        lines.append(f"- **Source file**: {raw_link}")
+
     if created:
         lines.append(f"- **Documents created**: {', '.join(_tag(p) for p in created)}")
 
-    updated = [p for p in _session_updated_pages if p not in created]
     if updated:
         lines.append(f"- **Documents updated**: {', '.join(_tag(p) for p in updated)}")
 
@@ -1601,9 +1617,6 @@ TOOL_FNS = {
     "update_file":      lambda a: _update_file(a["path"], a["content"]),
     "list_dir":         lambda a: _list_dir(a["directory"]),
     "fetch_url":        lambda a: _fetch_url(a["url"]),
-    "prepend_log":      lambda a: _prepend_log(a["entry"]),
-
-
 
     "search_wiki":      _search_wiki,
     "search_raw":       _search_raw,
@@ -1668,28 +1681,6 @@ TOOL_DEFS = [
                 "type": "object",
                 "properties": {"url": {"type": "string", "description": "Full URL to fetch"}},
                 "required": ["url"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name":        "prepend_log",
-            "description": (
-                "Add a new entry to wiki/log.md. Always use this instead of update_file for log updates — "
-                "it preserves all existing entries. Use this for Step 10 of the ingest workflow. "
-                "Pages created/updated must be markdown links: [Title](sources/slug.md) — "
-                "never plain text or paths starting with wiki/."
-            ),
-            "parameters":  {
-                "type": "object",
-                "properties": {
-                    "entry": {
-                        "type":        "string",
-                        "description": "Complete log entry. Page refs must be markdown links with paths relative to wiki/, e.g. [Title](sources/slug.md).",
-                    },
-                },
-                "required": ["entry"],
             },
         },
     },
@@ -1810,7 +1801,6 @@ def system_prompt() -> str:
         "| create_file | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
         "| search_raw | Search raw source files by keyword — use when retroactively reviewing old articles for a newly prominent entity. |\n"
-        "| prepend_log | Add entry to wiki/log.md. Never use update_file for the log. |\n"
         "| list_dir | List directory contents. |\n"
         "| fetch_url | Fetch a web page for inbox processing. |\n"
         "| done | **Required** — signal task complete. Never stop without calling done(). |\n\n"
@@ -2006,8 +1996,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                 payload = result[len(_DONE_SENTINEL):]
                 ingested_flag, _, summary = payload.partition("|")
                 log.info("Agent called done() in round %d (ingested=%s): %s", _round, ingested_flag, summary[:120])
-                if ingested_flag == "1":
-                    _auto_write_ingest_log()
+                _auto_write_log_entry()
                 # Append placeholder responses for any unexecuted tool calls in this batch
                 # so the message history stays consistent (every tool_call must have a response).
                 remaining = tool_calls[i + 1:]
@@ -2248,8 +2237,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                 payload = result[len(_DONE_SENTINEL):]
                 ingested_flag, _, summary = payload.partition("|")
                 log.info("Agent called done() in round %d (ingested=%s): %s", _round, ingested_flag, summary[:120])
-                if ingested_flag == "1":
-                    _auto_write_ingest_log()
+                _auto_write_log_entry()
                 # Append placeholder responses for any unexecuted tool calls in this batch.
                 remaining = tool_calls[i + 1:]
                 if remaining:
