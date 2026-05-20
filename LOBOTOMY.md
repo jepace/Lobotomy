@@ -41,7 +41,6 @@ raw/assets/            Binary attachments (images, PDFs) referenced by raw sourc
 wiki/                  All LLM-generated content lives here.
 wiki/index.md          Master catalog. Auto-generated — do not read or edit directly.
 wiki/log.md            Append-only operation log. Never delete entries.
-wiki/overview.md       High-level synthesis. Updated after every ingest.
 wiki/sources/          One summary document per ingested source.
 wiki/entities/         People, organizations, products, projects, codebases.
 wiki/concepts/         Ideas, techniques, frameworks, algorithms, terms.
@@ -52,12 +51,12 @@ wiki/synthesis/        Cross-source analyses, comparisons, timelines, open quest
 
 ## 3. Document Format
 
-Every document (sources, entities, concepts, synthesis, overview) uses this structure:
+Every document (sources, entities, concepts, synthesis) uses this structure:
 
 ```markdown
 ---
 title: "Human Readable Title"
-type: source | entity | concept | synthesis | overview
+type: source | entity | concept | synthesis
 tags: [tag1, tag2]
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
@@ -75,7 +74,7 @@ url: "https://original-article-url"   # source documents only; omit on all other
 | Field | Type | Rules |
 |-------|------|-------|
 | `title` | string (quoted) | Title-case, human readable |
-| `type` | enum | One of: `source`, `entity`, `concept`, `synthesis`, `overview` |
+| `type` | enum | One of: `source`, `entity`, `concept`, `synthesis` |
 | `tags` | list of strings | lowercase, hyphenated, no spaces |
 | `created` | YYYY-MM-DD | Date first created. **System-managed — never supply or modify.** |
 | `updated` | YYYY-MM-DD | Date of most recent edit. Update on every write. |
@@ -204,15 +203,7 @@ Determine whether the new source warrants:
 - A new synthesis document in `wiki/synthesis/` (a comparison, timeline, or emerging pattern)
 - Updates to an existing synthesis document
 
-### Step 8 — Update `wiki/overview.md`
-Update to reflect the new source. The overview must always represent the current state of the knowledge base
-accurately. At minimum update: Current State, Domains Covered, Major Entities, Major Concepts.
-
-**Prose style**: Write in short, focused paragraphs — one idea per paragraph, 2–4 sentences each.
-Never write a single long paragraph that runs multiple ideas together. Use flowing prose, not bullet
-lists, for the narrative sections. Aim for something readable at a glance, not a wall of text.
-
-### Step 9 — Done
+### Step 8 — Done
 Call `done()`. The server automatically writes the log entry and runs health checks — results are visible at `/wiki/lint`.
 
 ---
@@ -273,8 +264,6 @@ If you are a fresh LLM session with no context beyond this file and the wiki dir
 
 1. Read this file (`LOBOTOMY.md`) completely — you have done so
 2. Read `wiki/log.md` — understand recent operations
-3. Read `wiki/overview.md` — understand the current synthesis
-
 Do not modify any file until the user gives an explicit instruction.
 
 ---

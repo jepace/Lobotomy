@@ -788,7 +788,7 @@ def _auto_write_log_entry() -> None:
             if tm:
                 pg_type = tm.group(1).strip()
         letter = {"sources": "S", "entities": "E", "concepts": "C", "synthesis": "X"}.get(subdir) \
-            or {"source": "S", "entity": "E", "concept": "C", "synthesis": "X", "overview": "X"}.get(pg_type, "?")
+            or {"source": "S", "entity": "E", "concept": "C", "synthesis": "X"}.get(pg_type, "?")
         link = f"[{name}]({wiki_rel})"
         return f"[{letter}] {link}"
 
@@ -1250,7 +1250,7 @@ def _search_wiki(args: dict) -> str:
         search_root = WIKI_DIR
         exclude_sources = True  # sources excluded unless in:sources requested
 
-    _META_STEMS = {"log", "overview", "index", "lint"}
+    _META_STEMS = {"log", "index", "lint"}
     results = []
     for f in sorted(search_root.rglob("*.md")):
         if exclude_sources and f.is_relative_to(WIKI_DIR / "sources"):
@@ -1473,7 +1473,7 @@ def _validate_ingest(args: dict) -> str:
     broken_links, missing_fm, not_indexed = [], [], []
 
     for f in all_pages:
-        if f.name in ("index.md", "log.md", "overview.md", "reading-list.md", "tasks.md", "tasks-archive.md"):
+        if f.name in ("index.md", "log.md", "reading-list.md", "tasks.md", "tasks-archive.md"):
             continue
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
@@ -1736,7 +1736,6 @@ def orientation_message() -> str:
     for rel, max_lines in [
         ("wiki/index.md",    None),
         ("wiki/log.md",      60),
-        ("wiki/overview.md", None),
     ]:
         p = REPO_ROOT / rel
         if p.exists():
