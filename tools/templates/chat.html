@@ -72,6 +72,13 @@
   .bubble table { border-collapse: collapse; font-size: 13px; margin-bottom: 8px; }
   .bubble th, .bubble td { border: 1px solid rgba(0,0,0,0.2); padding: 4px 8px; }
 
+  .msg-meta {
+    font-size: 11px;
+    color: var(--text2);
+    margin-bottom: 2px;
+    padding: 0 4px;
+  }
+
   /* tool activity */
   .tool-list {
     margin-top: 5px;
@@ -181,6 +188,9 @@
 
     {% for msg in history %}
     <div class="msg {{ msg.role }}">
+      {% if msg.source == 'inbox' %}
+      <div class="msg-meta">from inbox{% if msg.ts %} · {{ msg.ts[:10] }}{% endif %}</div>
+      {% endif %}
       <div class="bubble" {% if msg.role == 'assistant' %}id="bubble-static-{{ loop.index }}"{% endif %}>
         {% if msg.role == 'assistant' %}
           <span class="md-content">{{ msg.content }}</span>
