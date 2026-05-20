@@ -570,6 +570,8 @@ def _write_file(path: str, content: str) -> str:
         return "Error: write_file refused on wiki/log.md — use prepend_log to add entries."
     if p.resolve() == (WIKI_DIR / "index.md").resolve():
         return "Error: write_file refused on wiki/index.md — it is auto-generated; use rebuild_index if needed."
+    if not p.exists():
+        return f"Error: write_file refused — {path} does not exist. Use create_file to create new pages."
 
     # Reject partial writes — write_file requires the complete file content.
     if p.exists() and not content.lstrip().startswith("---"):
@@ -609,14 +611,10 @@ def _write_file(path: str, content: str) -> str:
             if wiki_rel not in _session_entity_pages:
                 _session_entity_pages.append(wiki_rel)
 
-    is_new = not p.exists()
+    is_new = False  # write_file is update-only; create_file handles new pages
     wiki_rel = str(p.relative_to(WIKI_DIR))
-    if is_new:
-        if wiki_rel not in _session_entity_pages:
-            _session_entity_pages.append(wiki_rel)
-    else:
-        if wiki_rel not in _session_entity_pages and wiki_rel not in _session_updated_pages:
-            _session_updated_pages.append(wiki_rel)
+    if wiki_rel not in _session_entity_pages and wiki_rel not in _session_updated_pages:
+        _session_updated_pages.append(wiki_rel)
     # Restore system-owned scalar fields from disk — never trust LLM-supplied values.
     if not is_new:
         _disk_existing = p.read_text(encoding="utf-8", errors="replace")
