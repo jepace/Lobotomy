@@ -967,7 +967,16 @@ def _rebuild_index(args: dict) -> str:
     existing   = index_path.read_text(encoding="utf-8") if index_path.exists() else ""
     cut = existing.find("\n## ")
     prose = (existing[:cut].rstrip() if cut != -1 else existing.rstrip())
-    prose = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose)
+    # Strip leading/trailing horizontal rules so they don't accumulate across rebuilds
+    prose = re.sub(r"^(\s*---\s*\n?)+", "", prose)
+    prose = re.sub(r"(\n\s*---\s*)+$", "", prose).strip()
+    # Update or inject the Last updated timestamp in prose
+    if "_Last updated:" in prose:
+        prose = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose)
+    elif prose:
+        prose += f"\n\n_Last updated: {today}_"
+    else:
+        prose = f"# Wiki Index\n\n_Last updated: {today}_"
     _atomic_write(index_path, prose + "\n\n---\n\n" + "\n\n---\n\n".join(blocks) + "\n")
 
     # Per-subdirectory wiki index files
