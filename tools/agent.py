@@ -965,10 +965,22 @@ def _rebuild_index(args: dict) -> str:
 
     index_path = WIKI_DIR / "index.md"
     existing   = index_path.read_text(encoding="utf-8") if index_path.exists() else ""
-    cut = existing.find("\n## ")
-    prose = (existing[:cut].rstrip() if cut != -1 else existing.rstrip())
-    prose = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose)
-    _atomic_write(index_path, prose + "\n\n---\n\n" + "\n\n---\n\n".join(blocks) + "\n")
+    # Separate YAML frontmatter (if any) from the prose body.
+    fm_match = re.match(r"^(---\s*\n.*?\n---\s*\n)", existing, re.DOTALL)
+    frontmatter = fm_match.group(1) if fm_match else ""
+    body = existing[len(frontmatter):]
+    cut = body.find("\n## ")
+    prose = (body[:cut].rstrip() if cut != -1 else body.rstrip())
+    # Strip trailing horizontal rules that accumulate across rebuilds
+    prose = re.sub(r"(\n\s*---\s*)+$", "", prose).strip()
+    # Update or inject the Last updated timestamp in prose
+    if "_Last updated:" in prose:
+        prose = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose)
+    elif prose:
+        prose += f"\n\n_Last updated: {today}_"
+    else:
+        prose = f"# Wiki Index\n\n_Last updated: {today}_"
+    _atomic_write(index_path, frontmatter + prose + "\n\n---\n\n" + "\n\n---\n\n".join(blocks) + "\n")
 
     # Per-subdirectory wiki index files
     section_blocks = dict(zip([s for _, s in sections], blocks))
@@ -978,14 +990,24 @@ def _rebuild_index(args: dict) -> str:
             continue
         sub_index = d / "index.md"
         existing_sub = sub_index.read_text(encoding="utf-8") if sub_index.exists() else ""
-        divider_sub = existing_sub.find(f"\n---\n\n## {heading}")
-        if divider_sub != -1:
-            prose_sub = existing_sub[:divider_sub].rstrip()
-        elif existing_sub.strip():
-            prose_sub = existing_sub.rstrip()
+        # Find the generated block by locating the first --- divider or ## heading
+        cut_sub = -1
+        for pat in (f"\n---\n\n## {heading}", f"\n\n---\n\n## {heading}", f"\n## {heading}"):
+            cut_sub = existing_sub.find(pat)
+            if cut_sub != -1:
+                break
+        if cut_sub != -1:
+            prose_sub = existing_sub[:cut_sub].rstrip()
         else:
+            prose_sub = existing_sub.rstrip()
+        # Strip any trailing --- accumulated from prior rebuilds
+        prose_sub = re.sub(r"(\n\s*---\s*)+$", "", prose_sub).strip()
+        if not prose_sub:
             prose_sub = f"# {heading}\n\n_Last updated: {today}_"
-        prose_sub = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose_sub)
+        elif "_Last updated:" in prose_sub:
+            prose_sub = re.sub(r"_Last updated: \d{4}-\d{2}-\d{2}_", f"_Last updated: {today}_", prose_sub)
+        else:
+            prose_sub += f"\n\n_Last updated: {today}_"
         block_local = section_blocks[subdir].replace(f"({subdir}/", "(")
         _atomic_write(sub_index, prose_sub + "\n\n---\n\n" + block_local + "\n")
 

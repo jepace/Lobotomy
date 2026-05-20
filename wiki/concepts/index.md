@@ -16,3 +16,11 @@ it is associated with.
 See the [Wiki Index](../index.md) for a complete catalog of all concept pages.
 
 _No concept pages yet._
+
+_Last updated: 2026-05-20_
+
+---
+
+## Concepts
+
+_No concepts pages yet._
