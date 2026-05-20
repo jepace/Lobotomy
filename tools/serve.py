@@ -860,9 +860,6 @@ def list_inbox(show_archived: bool = False) -> list:
                 if l.strip() and not l.startswith("#") and not l.startswith("<!--")
                    and "Content could not be fetched" not in l
             ]
-            # fetch_failed is overridden if the user manually pasted content
-            if fetch_failed and lines:
-                fetch_failed = False
             has_content = bool(lines) and not fetch_failed
             if fetch_failed or not lines:
                 excerpt = source_url or ""
