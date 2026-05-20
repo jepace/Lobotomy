@@ -486,6 +486,12 @@ def _update_file(path: str, content: str) -> str:
                 f"sources: [{merged_str}]",
                 content, flags=_re.MULTILINE,
             )
+        elif _current_source_page:
+            # sources: field missing entirely — insert it before closing --- of frontmatter
+            _fm_match = _re.match(r"^---\s*\n.*?\n(---\s*\n)", content, _re.DOTALL)
+            if _fm_match:
+                _insert_at = _fm_match.start(1)
+                content = content[:_insert_at] + f'sources: ["{_current_source_page}"]\n' + content[_insert_at:]
     is_new = False  # update_file is update-only; create_file handles new pages
     assert not is_new, "update_file invariant violated: is_new should never be True here"
     wiki_rel = str(p.relative_to(WIKI_DIR))
@@ -788,7 +794,7 @@ def _auto_write_log_entry() -> None:
             if tm:
                 pg_type = tm.group(1).strip()
         letter = {"sources": "S", "entities": "E", "concepts": "C", "synthesis": "X"}.get(subdir) \
-            or {"source": "S", "entity": "E", "concept": "C", "synthesis": "X", "overview": "X"}.get(pg_type, "?")
+            or {"source": "S", "entity": "E", "concept": "C", "synthesis": "X"}.get(pg_type, "?")
         link = f"[{name}]({wiki_rel})"
         return f"[{letter}] {link}"
 
@@ -825,10 +831,9 @@ def _post_process_session() -> None:
 
     all_pages = list(dict.fromkeys(_session_entity_pages + _session_updated_pages))
 
-    # Ensure _current_source_page is in sources: for pages *created* this session only.
-    # Pre-existing pages that the LLM happened to update should not inherit this source.
+    # Ensure _current_source_page is in sources: for all entity/concept pages touched this session.
     if _current_source_page:
-        for wiki_rel in list(dict.fromkeys(_session_entity_pages)):
+        for wiki_rel in list(dict.fromkeys(_session_entity_pages + _session_updated_pages)):
             ep_path = WIKI_DIR / wiki_rel
             if not ep_path.exists():
                 continue
@@ -1250,7 +1255,7 @@ def _search_wiki(args: dict) -> str:
         search_root = WIKI_DIR
         exclude_sources = True  # sources excluded unless in:sources requested
 
-    _META_STEMS = {"log", "overview", "index", "lint"}
+    _META_STEMS = {"log", "index", "lint"}
     results = []
     for f in sorted(search_root.rglob("*.md")):
         if exclude_sources and f.is_relative_to(WIKI_DIR / "sources"):
@@ -1473,7 +1478,7 @@ def _validate_ingest(args: dict) -> str:
     broken_links, missing_fm, not_indexed = [], [], []
 
     for f in all_pages:
-        if f.name in ("index.md", "log.md", "overview.md", "reading-list.md", "tasks.md", "tasks-archive.md"):
+        if f.name in ("index.md", "log.md", "reading-list.md", "tasks.md", "tasks-archive.md"):
             continue
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
@@ -1736,7 +1741,6 @@ def orientation_message() -> str:
     for rel, max_lines in [
         ("wiki/index.md",    None),
         ("wiki/log.md",      60),
-        ("wiki/overview.md", None),
     ]:
         p = REPO_ROOT / rel
         if p.exists():
