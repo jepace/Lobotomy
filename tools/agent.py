@@ -1462,6 +1462,8 @@ def _create_file(args: dict) -> str:
     except ValueError:
         return f"Error: create_file only writes inside wiki/. Got: {path}"
 
+    _subdir = p.parent.name
+
     if p.exists():
         return f"Error: create_file refused — {path} already exists. Use update_file to update existing pages."
 
@@ -1469,8 +1471,6 @@ def _create_file(args: dict) -> str:
     if _subdir == "sources" and _current_source_page:
         return (f"Error: create_file refused — a source page ({_current_source_page}) was already "
                 f"created this session. Each ingest produces exactly one source page.")
-
-    _subdir = p.parent.name
     if _subdir in ("entities", "concepts"):
         # Always derive sources from the current session source page; ignore LLM-supplied value.
         sources = [_current_source_page] if _current_source_page else []
