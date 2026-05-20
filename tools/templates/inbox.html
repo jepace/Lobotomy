@@ -525,7 +525,7 @@ async function wikifyItem(name, idx) {
   try {
     const sendResp = await fetch('/chat/send', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: 'Ingest raw/inbox/' + name + ' — do not list_dir, the path is confirmed.', inbox_file: name}),
+      body: JSON.stringify({message: 'Ingest raw/inbox/' + name, inbox_file: name}),
     });
     if (!sendResp.ok) {
       const err = await sendResp.json().catch(() => ({}));
