@@ -532,12 +532,20 @@ def _autolink_sources_if_entity(path: str, is_new: bool = False) -> None:
 
 def _atomic_write(p: Path, content: str) -> None:
     """Write content to p atomically: write to a sibling .tmp file, then rename."""
+    global _title_map_cache
     p.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
         os.replace(tmp_path, p)
+        # Invalidate the title map cache whenever a wiki page changes so the
+        # next autolink call rebuilds it with the new page included.
+        try:
+            p.resolve().relative_to(WIKI_DIR.resolve())
+            _title_map_cache = None
+        except ValueError:
+            pass
     except Exception:
         try:
             os.unlink(tmp_path)
@@ -633,6 +641,11 @@ def _list_dir(directory: str) -> str:
 
 _fetch_cache: dict[str, str] = {}
 _fetch_cache_lock = threading.Lock()
+
+# Cache for the autolinker title map.  Stores (title, wiki-relative-path) pairs
+# built by scanning all wiki page frontmatter.  Invalidated whenever any wiki
+# page is written so it is rebuilt at most once per batch of autolink calls.
+_title_map_cache: list[tuple[str, str]] | None = None  # (title, wiki_rel_path)
 _current_inbox_url: str = ""
 _current_inbox_path: str = ""
 _current_source_page: str = ""   # wiki/sources/ path created in this session
@@ -1054,70 +1067,75 @@ def _autolink(args: dict) -> str:
         return "Error: autolink only works on wiki/ pages."
     _t0_autolink = time.time()
 
-    # Build title -> relative-link-path map
-    # Iterate non-source subdirs first so entity/concept pages take priority over
-    # source pages when both share a title — links should point to distilled knowledge.
-    title_map: list[tuple[str, str]] = []
-    seen_titles: set[str] = set()
-    for subdir in ("entities", "concepts", "synthesis", "sources"):
-        d = WIKI_DIR / subdir
-        if not d.is_dir():
-            continue
-        for f in d.glob("*.md"):
-            if f.name == "index.md" or f.resolve() == target_p.resolve():
+    # Build (or reuse) the cached title map.  The cache stores wiki-root-relative
+    # paths; we convert to target-relative below.  Invalidated by _atomic_write.
+    global _title_map_cache
+    if _title_map_cache is None:
+        raw: list[tuple[str, str]] = []   # (title_or_alias, wiki_rel_path_str)
+        seen: set[str] = set()
+        for subdir in ("entities", "concepts", "synthesis", "sources"):
+            d = WIKI_DIR / subdir
+            if not d.is_dir():
                 continue
-            text = f.read_text(encoding="utf-8", errors="replace")
-            m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
-            if not m:
-                continue
-            fm_lines = m.group(1).splitlines()
-            title = None
-            aliases = []
-            no_autolink = False
-            i = 0
-            while i < len(fm_lines):
-                line = fm_lines[i]
-                if line.startswith("title:"):
-                    title = line.split(":", 1)[1].strip().strip('"')
-                elif line.startswith("no_autolink:"):
-                    val = line.split(":", 1)[1].strip().lower()
-                    no_autolink = val in ("true", "yes", "1")
-                elif line.startswith("aliases:"):
-                    rest = line.split(":", 1)[1].strip()
-                    if rest.startswith("["):
-                        # inline list: aliases: ["foo", "bar"]
-                        import json
-                        try:
-                            aliases = json.loads(rest)
-                        except Exception:
-                            pass
-                    else:
-                        # block list: next lines start with "- "
-                        j = i + 1
-                        while j < len(fm_lines) and fm_lines[j].startswith("- "):
-                            aliases.append(fm_lines[j][2:].strip().strip('"'))
-                            j += 1
-                i += 1
-            if title and not no_autolink:
-                rel = f.relative_to(WIKI_DIR)
-                up_parts = target_p.parent.relative_to(WIKI_DIR).parts
-                prefix = "../" * len(up_parts)
-                link_path = f"{prefix}{rel}"
-                key = title.lower()
-                if key not in seen_titles:
-                    seen_titles.add(key)
-                    title_map.append((title, link_path))
-                for alias in aliases:
-                    if alias:
-                        akey = alias.lower()
-                        if akey not in seen_titles:
-                            seen_titles.add(akey)
-                            title_map.append((alias, link_path))
+            for f in d.glob("*.md"):
+                if f.name == "index.md":
+                    continue
+                text = f.read_text(encoding="utf-8", errors="replace")
+                m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+                if not m:
+                    continue
+                fm_lines = m.group(1).splitlines()
+                title = None
+                aliases: list[str] = []
+                no_autolink = False
+                i = 0
+                while i < len(fm_lines):
+                    line = fm_lines[i]
+                    if line.startswith("title:"):
+                        title = line.split(":", 1)[1].strip().strip('"')
+                    elif line.startswith("no_autolink:"):
+                        val = line.split(":", 1)[1].strip().lower()
+                        no_autolink = val in ("true", "yes", "1")
+                    elif line.startswith("aliases:"):
+                        rest = line.split(":", 1)[1].strip()
+                        if rest.startswith("["):
+                            import json
+                            try:
+                                aliases = json.loads(rest)
+                            except Exception:
+                                pass
+                        else:
+                            j = i + 1
+                            while j < len(fm_lines) and fm_lines[j].startswith("- "):
+                                aliases.append(fm_lines[j][2:].strip().strip('"'))
+                                j += 1
+                    i += 1
+                if title and not no_autolink:
+                    wiki_rel = str(f.relative_to(WIKI_DIR))
+                    key = title.lower()
+                    if key not in seen:
+                        seen.add(key)
+                        raw.append((title, wiki_rel))
+                    for alias in aliases:
+                        if alias:
+                            akey = alias.lower()
+                            if akey not in seen:
+                                seen.add(akey)
+                                raw.append((alias, wiki_rel))
+        raw.sort(key=lambda x: -len(x[0]))
+        _title_map_cache = raw
+        log.debug("autolink: built title map with %d entries", len(raw))
+
+    # Convert cached wiki-relative paths to paths relative to this target file.
+    prefix = "../" * len(target_p.parent.relative_to(WIKI_DIR).parts)
+    title_map = [
+        (title, prefix + wiki_rel)
+        for title, wiki_rel in _title_map_cache
+        if WIKI_DIR / wiki_rel != target_p
+    ]
 
     if not title_map:
         return "No other wiki pages found to link."
-
-    title_map.sort(key=lambda x: -len(x[0]))  # longest first — avoids partial matches
 
     content  = target_p.read_text(encoding="utf-8", errors="replace")
     fm_match = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
