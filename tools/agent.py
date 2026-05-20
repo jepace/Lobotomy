@@ -1203,9 +1203,12 @@ def _search_wiki(args: dict) -> str:
             page_tags = [t.strip().strip('"').lower() for t in tags_line.split(":", 1)[-1].strip().strip("[]").split(",") if t.strip().strip('"')]
             if required_tag not in page_tags:
                 continue
-        # Strip link URLs from text before scoring so path tokens don't create false matches.
-        # E.g. "[foo](entities/colorado-river.md)" should not match a search for "Colorado".
-        searchable = re.sub(r'\]\([^)]*\)', ']()', text)
+        # Strip system-owned frontmatter fields and link URLs before scoring.
+        # Prevents filenames embedded in sources: from creating false matches,
+        # and stops system metadata from leaking into snippets shown to the LLM.
+        _sys_fields = re.compile(r'^(sources|created|raw_source):[ \t].*', re.MULTILINE)
+        searchable = _sys_fields.sub('', text)
+        searchable = re.sub(r'\]\([^)]*\)', ']()', searchable)
         # AND logic: every keyword must appear at least once.
         if patterns and not all(p.search(searchable) for p in patterns):
             continue
@@ -1219,9 +1222,12 @@ def _search_wiki(args: dict) -> str:
                 if line.startswith("title:"):
                     title = line.split(":", 1)[1].strip().strip('"')
                     break
-        # Find first matching line for snippet
+        # Find first matching line for snippet — skip system-owned frontmatter lines
+        _skip_snippet = re.compile(r'^(sources|created|raw_source):')
         snippet = ""
         for line in text.splitlines():
+            if _skip_snippet.match(line.strip()):
+                continue
             if patterns and any(p.search(line) for p in patterns):
                 snippet = line.strip()[:120]
                 break
