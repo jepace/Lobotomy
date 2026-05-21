@@ -611,7 +611,7 @@ def clear_history() -> None:
 # Markdown rendering
 # ---------------------------------------------------------------------------
 
-_MD_EXTENSIONS = ["tables", "toc", "fenced_code", "attr_list"]
+_MD_EXTENSIONS = ["tables", "toc", "fenced_code", "attr_list", "sane_lists"]
 
 
 def _rewrite_md_link(href: str, from_page: Path) -> str:
