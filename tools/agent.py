@@ -1687,7 +1687,9 @@ TOOL_DEFS = [
                 "Keyword search across wiki pages. Returns matching page titles, paths, and "
                 "a snippet of the matching line. Use this to check whether an entity or concept "
                 "already has a page before creating one. By default excludes wiki/sources/ pages "
-                "(use 'in:sources' scope token to search sources explicitly, e.g. 'california in:sources')."
+                "(use 'in:sources' scope token to search sources explicitly, e.g. 'california in:sources'). "
+                "Use 'tag:<tagname>' to filter by tag (e.g. 'tag:trump-administration' or "
+                "'immigration tag:trump-administration')."
             ),
             "parameters":  {
                 "type": "object",
@@ -1766,7 +1768,7 @@ def system_prompt() -> str:
         "| read_file | Read any repo file. Raw sources truncated at 60k chars, wiki pages at 20k. |\n"
         "| update_file | Update an existing wiki page (must already exist; raw/ is blocked). **Must read_file first** — refused otherwise. |\n"
         "| create_file | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
-        "| search_wiki | Check if an entity/concept page exists before creating one. |\n"
+        "| search_wiki | Check if an entity/concept page exists before creating one. Supports scope tokens: 'in:sources', 'in:entities', 'in:concepts'. Supports tag filter: 'tag:<tagname>' (e.g. 'tag:trump-administration'). |\n"
         "| search_raw | Search raw source files by keyword — use when retroactively reviewing old articles for a newly prominent entity. |\n"
         "| list_dir | List directory contents. |\n"
         "| fetch_url | Fetch a web page for inbox processing. |\n"
