@@ -75,7 +75,7 @@ url: "https://original-article-url"   # source documents only; omit on all other
 |-------|------|-------|
 | `title` | string (quoted) | Title-case, human readable |
 | `type` | enum | One of: `source`, `entity`, `concept`, `synthesis` |
-| `tags` | list of strings | lowercase, hyphenated, no spaces |
+| `tags` | list of strings | lowercase, hyphenated, no spaces. Prefer tags from the list in the orientation message; introduce new tags only when no existing tag fits. |
 | `created` | YYYY-MM-DD | Date first created. **System-managed — never supply or modify.** |
 | `updated` | YYYY-MM-DD | Date of most recent edit. Update on every write. |
 | `sources` | list of strings | Paths from `wiki/` to supporting source documents. **System-managed — never supply or modify.** Use `search_wiki` with `in:sources` in the query to discover source pages instead of reading this field. |

@@ -1775,6 +1775,34 @@ def system_prompt() -> str:
     )
 
 
+def _collect_tags() -> list[str]:
+    """Return a sorted deduplicated list of all tags currently in the wiki."""
+    import re as _re
+    seen: set[str] = set()
+    for subdir in ("entities", "concepts", "synthesis", "sources"):
+        d = WIKI_DIR / subdir
+        if not d.is_dir():
+            continue
+        for f in d.glob("*.md"):
+            if f.name == "index.md":
+                continue
+            try:
+                text = f.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            m = _re.match(r"^---\s*\n(.*?)\n---", text, _re.DOTALL)
+            if not m:
+                continue
+            for line in m.group(1).splitlines():
+                if line.startswith("tags:"):
+                    raw = line.split(":", 1)[1].strip().strip("[]")
+                    for t in raw.split(","):
+                        tag = t.strip().strip('"\'')
+                        if tag:
+                            seen.add(tag)
+    return sorted(seen)
+
+
 def orientation_message() -> str:
     import datetime
     today = datetime.date.today().isoformat()
@@ -1789,6 +1817,14 @@ def orientation_message() -> str:
             if max_lines:
                 text = "\n".join(text.splitlines()[:max_lines])
             snippets.append(f'<file path="{rel}">\n{text}\n</file>')
+    tags = _collect_tags()
+    if tags:
+        snippets.append(
+            "## Existing tags in this wiki\n"
+            "Prefer tags from this list where appropriate. "
+            "Introduce a new tag only if none of the existing ones fit.\n\n"
+            + ", ".join(tags)
+        )
     return "Current wiki state:\n\n" + "\n\n".join(snippets)
 
 # ---------------------------------------------------------------------------
