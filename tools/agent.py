@@ -457,6 +457,17 @@ def _update_file(path: str, content: str) -> str:
     if not p.exists():
         return f"Error: update_file refused — {path} does not exist. Use create_file to create new pages."
 
+    # Sources pages are immutable after creation — each ingestion creates a new source page.
+    try:
+        p.resolve().relative_to((WIKI_DIR / "sources").resolve())
+        return (
+            f"Error: update_file refused — wiki/sources/ pages are immutable. "
+            f"Source pages represent a snapshot of a raw source; do not modify them after creation. "
+            f"If you need to add information, create a new source page or update the relevant entity/concept pages."
+        )
+    except ValueError:
+        pass
+
     assert p.exists(), f"update_file invariant violated: {path} must exist"
 
     # Enforce read-before-update: the LLM must have read this file this session.
