@@ -2251,7 +2251,18 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                     args["query"] = args["query"] + " " + _scope_in_name
                 elif _scope_in_name:
                     args["query"] = _scope_in_name
-                arg_preview = str(next(iter(args.values()), ""))[:80]
+                if fn_name in ("create_file", "update_file", "read_file"):
+                    arg_preview = str(args.get("path", next(iter(args.values()), "")))[:80]
+                elif fn_name == "search_wiki":
+                    arg_preview = str(args.get("query", ""))[:80]
+                elif fn_name == "fetch_url":
+                    arg_preview = str(args.get("url", ""))[:80]
+                elif fn_name == "prepend_log":
+                    arg_preview = str(args.get("entry", ""))[:80]
+                elif fn_name == "done":
+                    arg_preview = str(args.get("summary", ""))[:80]
+                else:
+                    arg_preview = str(next(iter(args.values()), ""))[:80]
                 result      = fn(args) if fn else f"Unknown tool: {fn_name}"
             except json.JSONDecodeError as e:
                 log.error("Tool %s: failed to parse arguments JSON: %s", fn_name, e)
@@ -2282,6 +2293,8 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                                      "name": rname, "content": "Skipped — done() called in same batch."})
                 if summary:
                     yield json.dumps({"type": "text", "content": _linkify_summary(summary)}) + "\n"
+                else:
+                    yield json.dumps({"type": "text", "content": "Done."}) + "\n"
                 # Stamp ingested flag into messages so on_done() callbacks can check it.
                 messages.append({"role": "system", "content": f"__ingested__:{ingested_flag}"})
                 yield json.dumps({"type": "done", "ingested": ingested_flag == "1"}) + "\n"

@@ -2413,7 +2413,7 @@ def inbox_delete():
 @app.route("/inbox/process-all", methods=["POST"])
 @require_login
 def inbox_process_all():
-    """Queue all unprocessed inbox files into the job queue, one job per item."""
+    """Process all unprocessed inbox items sequentially via the job queue."""
     unprocessed = [
         item for item in list_inbox()
         if not item.get("wikified") and not item.get("archived")
@@ -2427,20 +2427,21 @@ def inbox_process_all():
 
     import re as _re
     import agent as _agent
-    sys_prompt = system_prompt()
-    job_ids = []
 
-    for item in unprocessed:
+    def _submit_item(items, index):
+        """Submit one item; on_done sets globals then submits the next."""
+        if index >= len(items):
+            return
+        item = items[index]
         filename = item["filename"]
         inbox_path = RAW_DIR / Path(filename).name
         try:
             file_content = inbox_path.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
             log.warning("inbox/process-all: cannot read %s: %s", filename, e)
-            continue
+            _submit_item(items, index + 1)
+            return
 
-        # Set agent globals now (before submit) so each job captures its own values
-        # via closure — job_queue runs them sequentially so no races.
         inbox_path_str = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
         inbox_url = ""
         stripped = file_content.strip()
@@ -2451,6 +2452,13 @@ def inbox_process_all():
             if _m:
                 inbox_url = _m.group(1).strip()
 
+        # Set globals immediately before submitting so they're correct when the worker runs.
+        _agent._current_inbox_path    = inbox_path_str
+        _agent._current_inbox_url     = inbox_url
+        _agent._current_source_page   = ""
+        _agent._session_entity_pages  = []
+        _agent._session_updated_pages = []
+
         history = [
             {"role": "user",      "content": orientation_message()},
             {"role": "assistant", "content": "Oriented. Ready."},
@@ -2460,42 +2468,35 @@ def inbox_process_all():
             )},
         ]
 
-        def make_on_done(fname, ipath_str, iurl):
-            def on_done(messages):
-                import agent as _a
-                _a._current_inbox_path   = ipath_str
-                _a._current_inbox_url    = iurl
-                _a._current_source_page  = ""
-                _a._session_entity_pages  = []
-                _a._session_updated_pages = []
-                save_history(messages, source="inbox")
-                ingested = any(
-                    isinstance(m.get("content"), str) and m["content"].startswith("__ingested__:1")
-                    for m in messages
-                    if m.get("role") == "system"
-                )
-                if ingested:
-                    raw_path = RAW_DIR / Path(fname).name
-                    try:
-                        raw_fm, _ = _parse_frontmatter(raw_path.read_text(encoding="utf-8"))
-                        if raw_fm.get("fetch_failed"):
-                            log.warning("inbox/process-all: refusing to mark wikified — fetch_failed=true in %s", fname)
-                            ingested = False
-                    except Exception:
-                        pass
-                if ingested:
-                    _mark_inbox_wikified(fname)
-                    log.info("inbox/process-all: marked wikified %s", fname)
-                else:
-                    log.warning("inbox/process-all: no __ingested__:1 for %s — not marking wikified", fname)
-            return on_done
+        def on_done(messages, _fname=filename):
+            save_history(messages, source="inbox")
+            ingested = any(
+                isinstance(m.get("content"), str) and m["content"].startswith("__ingested__:1")
+                for m in messages
+                if m.get("role") == "system"
+            )
+            if ingested:
+                raw_path = RAW_DIR / Path(_fname).name
+                try:
+                    raw_fm, _ = _parse_frontmatter(raw_path.read_text(encoding="utf-8"))
+                    if raw_fm.get("fetch_failed"):
+                        log.warning("inbox/process-all: refusing to mark wikified — fetch_failed=true in %s", _fname)
+                        ingested = False
+                except Exception:
+                    pass
+            if ingested:
+                _mark_inbox_wikified(_fname)
+                log.info("inbox/process-all: marked wikified %s", _fname)
+            else:
+                log.warning("inbox/process-all: no __ingested__:1 for %s — not marking wikified", _fname)
+            # Submit the next item now that this one is done.
+            _submit_item(items, index + 1)
 
-        job_id = job_queue.submit(client, model, history, sys_prompt,
-                                  on_done=make_on_done(filename, inbox_path_str, inbox_url))
-        job_ids.append(job_id)
-        log.info("inbox/process-all: queued %s as job %s", filename, job_id)
+        job_id = job_queue.submit(client, model, history, system_prompt(), on_done=on_done)
+        log.info("inbox/process-all: submitted %s as job %s", filename, job_id)
 
-    return {"queued": len(job_ids), "job_ids": job_ids}
+    _submit_item(unprocessed, 0)
+    return {"queued": len(unprocessed)}
 
 
 @app.route("/inbox/view/<path:filename>")
