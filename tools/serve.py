@@ -1003,6 +1003,7 @@ def chat_send():
             {"role": "assistant", "content": "Oriented. Ready."},
         ]
     # Pre-load inbox file so the AI skips its read_file round-trip.
+    _inbox_setup = None
     if inbox_file:
         inbox_path = RAW_DIR / Path(inbox_file).name
         try:
@@ -1015,21 +1016,19 @@ def chat_send():
             # Without this, the LLM skips read_file (content already injected) so the
             # globals never get set and frontmatter ends up missing both fields.
             import agent as _agent
+            import re as _re
             stripped = file_content.strip()
-            _agent._current_inbox_path = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
-            _agent._current_inbox_url = ""      # always reset so stale URL from prior ingest isn't inherited
-            _agent._current_source_page = ""    # reset so prior session's source page isn't inherited
-            _agent._session_entity_pages = []   # reset so prior session's created pages aren't inherited
-            _agent._session_updated_pages = []  # reset so prior session's updated pages aren't inherited
+            _inbox_path_str = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
+            _inbox_url = ""
             if stripped.startswith("http") and "\n" not in stripped:
-                _agent._current_inbox_url = stripped
+                _inbox_url = stripped
             else:
-                import re as _re
                 _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', file_content, _re.MULTILINE)
                 if _m:
-                    _agent._current_inbox_url = _m.group(1).strip()
+                    _inbox_url = _m.group(1).strip()
+            _inbox_setup = lambda _p=_inbox_path_str, _u=_inbox_url: _agent.init_session(inbox_path=_p, inbox_url=_u)
         except OSError:
-            pass  # file unreadable — AI will fall back to read_file normally
+            _inbox_setup = None  # file unreadable — AI will fall back to read_file normally
 
     history.append({"role": "user", "content": message})
 
@@ -1058,7 +1057,7 @@ def chat_send():
                 log.warning("on_done: inbox_file=%s but no __ingested__:1 in messages — not marking wikified", inbox_file)
 
     log.info("Chat send: model=%s history_len=%d", model, len(history))
-    job_id = job_queue.submit(client, model, history, sys_prompt, on_done=on_done)
+    job_id = job_queue.submit(client, model, history, sys_prompt, on_done=on_done, setup=_inbox_setup)
     return {"job_id": job_id}
 
 
@@ -2467,12 +2466,8 @@ def inbox_process_all():
             if _m:
                 inbox_url = _m.group(1).strip()
 
-        # Set globals immediately before submitting so they're correct when the worker runs.
-        _agent._current_inbox_path    = inbox_path_str
-        _agent._current_inbox_url     = inbox_url
-        _agent._current_source_page   = ""
-        _agent._session_entity_pages  = []
-        _agent._session_updated_pages = []
+        def _setup(_p=inbox_path_str, _u=inbox_url):
+            _agent.init_session(inbox_path=_p, inbox_url=_u)
 
         history = [
             {"role": "user",      "content": orientation_message()},
@@ -2509,7 +2504,7 @@ def inbox_process_all():
             # Submit the next item now that this one is done.
             _submit_item(items, index + 1)
 
-        job_id = job_queue.submit(client, model, history, system_prompt(), on_done=on_done)
+        job_id = job_queue.submit(client, model, history, system_prompt(), on_done=on_done, setup=_setup)
         log.info("inbox/process-all: submitted %s as job %s", filename, job_id)
 
     try:

@@ -181,24 +181,21 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
     try:
         p.resolve().relative_to(RAW_DIR.resolve())
         stripped = text.strip()
-        global _current_inbox_url, _current_inbox_path, _session_updated_pages, _session_entity_pages, _current_source_page, _session_read_pages
-        _current_inbox_path = str(p.resolve().relative_to(REPO_ROOT.resolve()))
-        _current_inbox_url = ""  # always reset so stale URL from prior ingest isn't inherited
-        _current_source_page = ""
-        _session_entity_pages = []
-        _session_updated_pages = []
-        _session_read_pages = set()
+        _inbox_path_str = str(p.resolve().relative_to(REPO_ROOT.resolve()))
+        _inbox_url = ""
         if stripped.startswith("http") and "\n" not in stripped:
-            _current_inbox_url = stripped
-            with _fetch_cache_lock:
-                if stripped in _fetch_cache:
-                    return _fetch_cache[stripped]
+            _inbox_url = stripped
         else:
             # Raw item with frontmatter — extract url: field
             import re as _re
             _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', text, _re.MULTILINE)
             if _m:
-                _current_inbox_url = _m.group(1).strip()
+                _inbox_url = _m.group(1).strip()
+        init_session(inbox_path=_inbox_path_str, inbox_url=_inbox_url)
+        if stripped.startswith("http") and "\n" not in stripped:
+            with _fetch_cache_lock:
+                if stripped in _fetch_cache:
+                    return _fetch_cache[stripped]
     except ValueError:
         pass
     try:
@@ -230,7 +227,7 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
         text = text + f"\n\n[END OF FILE — read chars {offset}–{total} of {total} total.]"
     try:
         p.resolve().relative_to(WIKI_DIR.resolve())
-        _session_read_pages.add(str(p.resolve().relative_to(WIKI_DIR.resolve())))
+        _ctx()._session_read_pages.add(str(p.resolve().relative_to(WIKI_DIR.resolve())))
     except (ValueError, NameError):
         pass
     return text
@@ -474,7 +471,7 @@ def _update_file(path: str, content: str) -> str:
     import re as _re
     try:
         _wiki_rel_check = str(p.resolve().relative_to(WIKI_DIR.resolve()))
-        if _wiki_rel_check not in _session_read_pages:
+        if _wiki_rel_check not in _ctx()._session_read_pages:
             return (
                 f"Error: update_file refused — you have not read {path} yet this session. "
                 f"Call read_file on it first, then resend the complete updated content."
@@ -505,8 +502,8 @@ def _update_file(path: str, content: str) -> str:
                     _s = _s.strip().strip('"').strip("'")
                     if _s and _s not in existing_sources:
                         existing_sources.append(_s)
-        if _current_source_page and _current_source_page not in existing_sources:
-            existing_sources.append(_current_source_page)
+        if _ctx()._current_source_page and _ctx()._current_source_page not in existing_sources:
+            existing_sources.append(_ctx()._current_source_page)
         merged_str = ", ".join(f'"{s}"' for s in existing_sources)
         if _re.search(r"^sources:\s*\[", content, _re.MULTILINE):
             # LLM included a sources: field — replace it with the merged list.
@@ -524,8 +521,8 @@ def _update_file(path: str, content: str) -> str:
     is_new = False  # update_file is update-only; create_file handles new pages
     assert not is_new, "update_file invariant violated: is_new should never be True here"
     wiki_rel = str(p.relative_to(WIKI_DIR))
-    if wiki_rel not in _session_entity_pages and wiki_rel not in _session_updated_pages:
-        _session_updated_pages.append(wiki_rel)
+    if wiki_rel not in _ctx()._session_entity_pages and wiki_rel not in _ctx()._session_updated_pages:
+        _ctx()._session_updated_pages.append(wiki_rel)
     # Restore system-owned scalar fields from disk — never trust LLM-supplied values.
     if not is_new:
         _disk_existing = p.read_text(encoding="utf-8", errors="replace")
@@ -562,12 +559,37 @@ _fetch_cache_lock = threading.Lock()
 # built by scanning all wiki page frontmatter.  Invalidated whenever any wiki
 # page is written so it is rebuilt at most once per batch of autolink calls.
 _title_map_cache: list[tuple[str, str]] | None = None  # (title, wiki_rel_path)
-_current_inbox_url: str = ""
-_current_inbox_path: str = ""
-_session_updated_pages: list = []  # existing wiki pages written (not created) this session
-_current_source_page: str = ""   # wiki/sources/ path created in this session
-_session_entity_pages: list = [] # wiki/entities|concepts/ paths created this session
-_session_read_pages: set = set()  # wiki pages read this session (enforces read-before-update)
+
+# ---------------------------------------------------------------------------
+# Thread-local per-job session state — replaces the old module-level globals.
+# Each worker thread gets its own isolated copy; Flask request threads never
+# share state with the background worker.
+# ---------------------------------------------------------------------------
+_tl = threading.local()
+
+
+def _ctx():
+    """Return thread-local session context, initializing if needed."""
+    t = _tl
+    if not hasattr(t, '_current_inbox_path'):
+        t._current_inbox_path = ""
+        t._current_inbox_url = ""
+        t._current_source_page = ""
+        t._session_entity_pages = []
+        t._session_updated_pages = []
+        t._session_read_pages = set()
+    return t
+
+
+def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
+    """Reset per-job session state on the current thread. Call this in the worker thread before each job."""
+    t = _tl
+    t._current_inbox_path = inbox_path
+    t._current_inbox_url = inbox_url
+    t._current_source_page = ""
+    t._session_entity_pages = []
+    t._session_updated_pages = []
+    t._session_read_pages = set()
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -796,12 +818,12 @@ def _auto_write_log_entry() -> None:
     today = datetime.date.today().isoformat()
 
     # Determine operation type
-    operation = "ingest" if _current_inbox_path else "edit"
+    operation = "ingest" if _ctx()._current_inbox_path else "edit"
 
     # Read article title from the source page frontmatter.
     title = ""
-    if _current_source_page:
-        src_p = WIKI_DIR / _current_source_page
+    if _ctx()._current_source_page:
+        src_p = WIKI_DIR / _ctx()._current_source_page
         if src_p.exists():
             text = src_p.read_text(encoding="utf-8", errors="replace")
             m = _re.search(r"^title:\s*\"?([^\"\n]+)\"?", text, _re.MULTILINE)
@@ -829,11 +851,11 @@ def _auto_write_log_entry() -> None:
         return f"[{letter}] {link}"
 
     created = []
-    if _current_source_page:
-        created.append(_current_source_page)
-    created.extend(p for p in _session_entity_pages if p != _current_source_page)
+    if _ctx()._current_source_page:
+        created.append(_ctx()._current_source_page)
+    created.extend(p for p in _ctx()._session_entity_pages if p != _ctx()._current_source_page)
 
-    updated = [p for p in _session_updated_pages if p not in created]
+    updated = [p for p in _ctx()._session_updated_pages if p not in created]
 
     # Skip if nothing was touched
     if not created and not updated:
@@ -841,8 +863,8 @@ def _auto_write_log_entry() -> None:
 
     lines = [f"## [{today}] {operation} | {title}", ""]
     lines.append(f"- **Operation**: {operation}")
-    if _current_inbox_path:
-        raw_link = f"[R] [{_current_inbox_path}](../{_current_inbox_path})"
+    if _ctx()._current_inbox_path:
+        raw_link = f"[R] [{_ctx()._current_inbox_path}](../{_ctx()._current_inbox_path})"
         lines.append(f"- **Source file**: {raw_link}")
 
     if created:
@@ -859,11 +881,11 @@ def _post_process_session() -> None:
     created/updated pages, re-inject ## Sources sections, rebuild index."""
     import re as _re
 
-    all_pages = list(dict.fromkeys(_session_entity_pages + _session_updated_pages))
+    all_pages = list(dict.fromkeys(_ctx()._session_entity_pages + _ctx()._session_updated_pages))
 
     # Ensure _current_source_page is in sources: for all entity/concept pages touched this session.
-    if _current_source_page:
-        for wiki_rel in list(dict.fromkeys(_session_entity_pages + _session_updated_pages)):
+    if _ctx()._current_source_page:
+        for wiki_rel in list(dict.fromkeys(_ctx()._session_entity_pages + _ctx()._session_updated_pages)):
             ep_path = WIKI_DIR / wiki_rel
             if not ep_path.exists():
                 continue
@@ -874,9 +896,9 @@ def _post_process_session() -> None:
             src_m = _re.search(r"^sources:\s*\[([^\]]*)\]", ep_content, _re.MULTILINE)
             if src_m:
                 existing = [s.strip().strip('"').strip("'") for s in src_m.group(1).split(",") if s.strip().strip('"').strip("'")]
-                if _current_source_page in existing:
+                if _ctx()._current_source_page in existing:
                     continue
-                new_src_str = ", ".join(f'"{s}"' for s in [_current_source_page] + existing)
+                new_src_str = ", ".join(f'"{s}"' for s in [_ctx()._current_source_page] + existing)
                 ep_content = _re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{new_src_str}]", ep_content, flags=_re.MULTILINE)
             else:
                 # sources: field missing entirely — insert before the closing --- of frontmatter
@@ -884,17 +906,17 @@ def _post_process_session() -> None:
                 if not fm_match:
                     continue
                 insert_at = fm_match.start(1)
-                ep_content = ep_content[:insert_at] + f'sources: ["{_current_source_page}"]\n' + ep_content[insert_at:]
+                ep_content = ep_content[:insert_at] + f'sources: ["{_ctx()._current_source_page}"]\n' + ep_content[insert_at:]
             ep_content = ep_content.replace("<!-- WARNING: no sources cited — update sources: frontmatter -->\n\n", "")
             _atomic_write(ep_path, ep_content)
-            log.debug("post_process: added %s to sources: of %s", _current_source_page, wiki_rel)
+            log.debug("post_process: added %s to sources: of %s", _ctx()._current_source_page, wiki_rel)
 
     # Autolink all pages touched this session (all entities now exist, so all titles resolve).
     for wiki_rel in all_pages:
         _autolink({"path": f"wiki/{wiki_rel}"})
 
     # Re-inject ## Sources on all entity/concept pages touched this session.
-    for wiki_rel in list(dict.fromkeys(_session_entity_pages + _session_updated_pages)):
+    for wiki_rel in list(dict.fromkeys(_ctx()._session_entity_pages + _ctx()._session_updated_pages)):
         ep_path = WIKI_DIR / wiki_rel
         if not ep_path.exists():
             continue
@@ -1430,7 +1452,6 @@ def _search_raw(args: dict) -> str:
 
 def _create_file(args: dict) -> str:
     """Write a new wiki page with auto-populated frontmatter."""
-    global _current_source_page, _session_entity_pages
     import datetime, re
     path    = args.get("path", "")
     title   = args.get("title", "")
@@ -1440,7 +1461,7 @@ def _create_file(args: dict) -> str:
     sources = args.get("sources", [])
     url     = args.get("url", "")
     if not url and pg_type == "source":
-        url = _current_inbox_url
+        url = _ctx()._current_inbox_url
 
     if not path or not title or not pg_type:
         return "Error: path, title, and type are required."
@@ -1457,16 +1478,16 @@ def _create_file(args: dict) -> str:
         return f"Error: create_file refused — {path} already exists. Use update_file to update existing pages."
 
     # Only one source page per ingest session.
-    if _subdir == "sources" and _current_source_page:
-        return (f"Error: create_file refused — a source page ({_current_source_page}) was already "
+    if _subdir == "sources" and _ctx()._current_source_page:
+        return (f"Error: create_file refused — a source page ({_ctx()._current_source_page}) was already "
                 f"created this session. Each ingest produces exactly one source page.")
     # Entity/concept pages must be created after the source page so sources: is populated.
-    if _subdir in ("entities", "concepts") and _current_inbox_path and not _current_source_page:
+    if _subdir in ("entities", "concepts") and _ctx()._current_inbox_path and not _ctx()._current_source_page:
         return (f"Error: create_file refused — create the source page (wiki/sources/...) first, "
                 f"then create entity/concept pages. This ensures sources: frontmatter is populated correctly.")
     if _subdir in ("entities", "concepts"):
         # Always derive sources from the current session source page; ignore LLM-supplied value.
-        sources = [_current_source_page] if _current_source_page else []
+        sources = [_ctx()._current_source_page] if _ctx()._current_source_page else []
     _missing_sources = _subdir in ("entities", "concepts") and not sources
 
     today = datetime.date.today().isoformat()
@@ -1474,7 +1495,7 @@ def _create_file(args: dict) -> str:
     raw_source = ""
 
     if pg_type == "source" and not raw_source:
-        raw_source = _current_inbox_path
+        raw_source = _ctx()._current_inbox_path
 
     tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]) if t is not None)
     src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]) if s is not None)
@@ -1500,11 +1521,11 @@ def _create_file(args: dict) -> str:
     assert p.exists(), f"create_file invariant violated: {path} must exist after write"
 
     wiki_rel = str(p.relative_to(WIKI_DIR))
-    if wiki_rel not in _session_entity_pages:
-        _session_entity_pages.append(wiki_rel)
+    if wiki_rel not in _ctx()._session_entity_pages:
+        _ctx()._session_entity_pages.append(wiki_rel)
 
     if _subdir == "sources":
-        _current_source_page = str(p.relative_to(WIKI_DIR))
+        _ctx()._current_source_page = str(p.relative_to(WIKI_DIR))
 
     action = "Created"
     suffix = " — WARNING: no sources cited, update sources: frontmatter before calling done()" if _missing_sources else ""
