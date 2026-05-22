@@ -64,7 +64,7 @@ Pages can carry an `aliases:` frontmatter list (e.g. `aliases: ["gonzales", "uc 
 
 ## Key Conventions
 
-- **`raw/` is immutable for the LLM** — code in `_write_file` blocks the LLM from writing outside `wiki/`. However, `serve.py` itself does move files within `raw/`: inbox items are renamed from `raw/inbox/` to `raw/sources/` when the user archives them (`serve.py:_mark_inbox_wikified`, `inbox_archive`). Don't assume files stay in `raw/inbox/` permanently.
+- **`raw/` is immutable for the LLM** — code in `_write_file` blocks the LLM from writing outside `wiki/`. Raw source files live flat in `raw/` (no subdirectories). `serve.py` manages their lifecycle via `_mark_inbox_wikified`.
 - **`wiki/log.md` is append-only** — always use `prepend_log`, never `write_file` on the log.
 - **No `[[wikilink]]` syntax** — standard relative markdown links only.
 - **`create_file` over `write_file`** for new wiki pages — it auto-fills `created`/`updated` dates.

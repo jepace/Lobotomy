@@ -50,9 +50,10 @@ class JobQueue:
         return {"running": jid is not None, "job_id": jid}
 
     def submit(self, client, model: str, messages: list,
-               system: str, on_done=None) -> str:
+               system: str, on_done=None, setup=None) -> str:
         """
         Enqueue an agent turn. Returns job_id immediately.
+        setup() is called in the worker thread immediately before the job runs.
         on_done(messages) is called in the worker thread after completion.
         """
         job_id = secrets.token_hex(8)
@@ -60,7 +61,7 @@ class JobQueue:
         stop_event = threading.Event()
         with self._lock:
             self._cancel_events[job_id] = stop_event
-        self._q.put((job_id, client, model, messages, system, on_done, stop_event))
+        self._q.put((job_id, client, model, messages, system, on_done, stop_event, setup))
         return job_id
 
     def cancel(self, job_id: str) -> bool:
@@ -167,9 +168,14 @@ class JobQueue:
     def _worker(self):
         from agent import stream_agent_turn
         while True:
-            job_id, client, model, messages, system, on_done, stop_event = self._q.get()
+            job_id, client, model, messages, system, on_done, stop_event, setup = self._q.get()
             with self._lock:
                 self._current_job_id = job_id
+            if setup is not None:
+                try:
+                    setup()
+                except Exception as e:
+                    log.error("Job %s: setup() failed: %s", job_id, e, exc_info=True)
             f = self._event_file(job_id)
             log.info("Job %s started (model=%s, messages=%d)", job_id, model, len(messages))
             cancelled = False
