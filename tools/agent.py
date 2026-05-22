@@ -2349,4 +2349,14 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
             yield json.dumps({"type": "done"}) + "\n"
             return
 
-    yield json.dumps({"type": "done"}) + "\n"
+    # Agent exited the loop via a text reply instead of calling done().
+    # Run post-processing and write the log entry so work isn't silently lost.
+    ctx = _ctx()
+    if ctx._current_source_page or ctx._session_entity_pages or ctx._session_updated_pages:
+        log.warning("stream_agent_turn: agent never called done() — auto-running post-process")
+        _post_process_session()
+        _auto_write_log_entry()
+        messages.append({"role": "system", "content": "__ingested__:1"})
+        yield json.dumps({"type": "done", "ingested": True}) + "\n"
+    else:
+        yield json.dumps({"type": "done"}) + "\n"
