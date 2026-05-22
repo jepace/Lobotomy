@@ -873,6 +873,8 @@ def _auto_write_log_entry() -> None:
     if updated:
         lines.append(f"- **Documents updated**: {', '.join(_tag(p) for p in updated)}")
 
+    lines.append("- **Status**: Done")
+
     _prepend_log("\n".join(lines))
 
 
