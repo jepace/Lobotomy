@@ -2414,6 +2414,9 @@ def inbox_delete():
 @require_login
 def inbox_process_all():
     """Process all unprocessed inbox items sequentially via the job queue."""
+    global _batch_running
+    if _batch_running:
+        return {"error": "A batch is already running."}, 409
     unprocessed = [
         item for item in list_inbox()
         if not item.get("wikified") and not item.get("archived")
@@ -2428,9 +2431,21 @@ def inbox_process_all():
     import re as _re
     import agent as _agent
 
+    _batch_running = True
+    _batch_succeeded: list = []
+    _batch_failed:    list = []
+
     def _submit_item(items, index):
         """Submit one item; on_done sets globals then submits the next."""
+        global _batch_running
         if index >= len(items):
+            _batch_running = False
+            log.info(
+                "inbox/process-all: done — %d succeeded, %d failed%s",
+                len(_batch_succeeded),
+                len(_batch_failed),
+                ("; failed: " + ", ".join(_batch_failed)) if _batch_failed else "",
+            )
             return
         item = items[index]
         filename = item["filename"]
@@ -2486,8 +2501,10 @@ def inbox_process_all():
                     pass
             if ingested:
                 _mark_inbox_wikified(_fname)
+                _batch_succeeded.append(_fname)
                 log.info("inbox/process-all: marked wikified %s", _fname)
             else:
+                _batch_failed.append(_fname)
                 log.warning("inbox/process-all: no __ingested__:1 for %s — not marking wikified", _fname)
             # Submit the next item now that this one is done.
             _submit_item(items, index + 1)
@@ -2495,7 +2512,11 @@ def inbox_process_all():
         job_id = job_queue.submit(client, model, history, system_prompt(), on_done=on_done)
         log.info("inbox/process-all: submitted %s as job %s", filename, job_id)
 
-    _submit_item(unprocessed, 0)
+    try:
+        _submit_item(unprocessed, 0)
+    except Exception:
+        _batch_running = False
+        raise
     return {"queued": len(unprocessed)}
 
 
@@ -2970,6 +2991,8 @@ _threading.Thread(target=_daily_email_loop, daemon=True, name="daily-email").sta
 # ---------------------------------------------------------------------------
 # Inbox process-all state
 # ---------------------------------------------------------------------------
+
+_batch_running = False  # True while process-all is executing
 
 
 
