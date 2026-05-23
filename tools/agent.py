@@ -1301,40 +1301,61 @@ def _fix_wiki_links(_args: dict) -> str:
     return f"Fixed {total_fixed} bad link(s) across {pages_fixed} page(s)."
 
 
-def _search_wiki(args: dict) -> str:
-    """Keyword search across all wiki pages. Returns matching pages with title, path, snippet.
-    Supports in:<subdir> scope token (e.g. 'california in:sources')."""
-    import re
-    query = args.get("query", "").strip()
-    if not query:
-        return "Error: query is required."
+def search_wiki_core(query: str, wiki_dir: Path) -> dict:
+    """Parse a search query and return structured results.
+
+    Query tokens:
+      in:<subdir>     restrict to a wiki subdirectory (sources/entities/concepts/synthesis)
+      tag:<value>     require a tag in frontmatter
+      after:YYYY-MM-DD  require created >= date
+      before:YYYY-MM-DD require created <= date
+      <keyword>       AND-matched against page text (case-insensitive)
+
+    Returns a dict with keys:
+      keywords   list[str]
+      scope      str | None
+      results    list of dicts: {score, title, path (Path), rel (str), snippet, lines, created}
+      error      str | None
+    """
+    _VALID_SUBDIRS = {"sources", "entities", "concepts", "synthesis"}
+    _META_STEMS = {"log", "index", "lint"}
+    _SYS_FIELDS = re.compile(r'^(sources|created|raw_source):[ \t].*', re.MULTILINE)
+    _SKIP_SNIPPET = re.compile(r'^(sources|created|raw_source):')
+
     scope = None
     required_tag = None
+    after_date = None
+    before_date = None
     kw_tokens = []
+
     for t in query.split():
         tl = t.lower()
         if tl.startswith("in:"):
             scope = tl[3:].strip("/")
         elif tl.startswith("tag:"):
             required_tag = tl[4:]
+        elif tl.startswith("after:"):
+            after_date = tl[6:]
+        elif tl.startswith("before:"):
+            before_date = tl[7:]
         else:
             kw_tokens.append(t)
-    keywords = kw_tokens
-    if not keywords and not required_tag:
-        return "Error: no search keywords provided (only filter tokens found)."
-    patterns = [re.compile(re.escape(kw), re.IGNORECASE) for kw in keywords]
-    valid_subdirs = {"sources", "entities", "concepts", "synthesis"}
-    if scope and scope in valid_subdirs:
-        search_root = WIKI_DIR / scope
+
+    if not kw_tokens and not required_tag and not after_date and not before_date:
+        return {"keywords": [], "scope": scope, "results": [], "error": "no search terms provided"}
+
+    patterns = [re.compile(re.escape(kw), re.IGNORECASE) for kw in kw_tokens]
+
+    if scope and scope in _VALID_SUBDIRS:
+        search_root = wiki_dir / scope
         exclude_sources = False
     else:
-        search_root = WIKI_DIR
-        exclude_sources = True  # sources excluded unless in:sources requested
+        search_root = wiki_dir
+        exclude_sources = True
 
-    _META_STEMS = {"log", "index", "lint"}
     results = []
     for f in sorted(search_root.rglob("*.md")):
-        if exclude_sources and f.is_relative_to(WIKI_DIR / "sources"):
+        if exclude_sources and f.is_relative_to(wiki_dir / "sources"):
             continue
         if f.stem in _META_STEMS:
             continue
@@ -1342,55 +1363,104 @@ def _search_wiki(args: dict) -> str:
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+
         fm = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+        fm_text = fm.group(1) if fm else ""
+
         # tag: filter
         if required_tag:
             if not fm:
                 continue
-            tags_line = next((l for l in fm.group(1).splitlines() if l.startswith("tags:")), "")
+            tags_line = next((l for l in fm_text.splitlines() if l.startswith("tags:")), "")
             page_tags = [t.strip().strip('"').lower() for t in tags_line.split(":", 1)[-1].strip().strip("[]").split(",") if t.strip().strip('"')]
             if required_tag not in page_tags:
                 continue
-        # Strip system-owned frontmatter fields and link URLs before scoring.
-        # Prevents filenames embedded in sources: from creating false matches,
-        # and stops system metadata from leaking into snippets shown to the LLM.
-        _sys_fields = re.compile(r'^(sources|created|raw_source):[ \t].*', re.MULTILINE)
-        searchable = _sys_fields.sub('', text)
+
+        # date filters — read created: from frontmatter
+        created = ""
+        if fm:
+            for line in fm_text.splitlines():
+                if line.startswith("created:"):
+                    created = line.split(":", 1)[1].strip()
+                    break
+        if after_date and created and created < after_date:
+            continue
+        if before_date and created and created > before_date:
+            continue
+        # If a date filter is set but the page has no created: field, exclude it.
+        if (after_date or before_date) and not created:
+            continue
+
+        # Strip system fields and link URLs before keyword scoring.
+        searchable = _SYS_FIELDS.sub('', text)
         searchable = re.sub(r'\]\([^)]*\)', ']()', searchable)
-        # AND logic: every keyword must appear at least once.
+
         if patterns and not all(p.search(searchable) for p in patterns):
             continue
         score = sum(len(p.findall(searchable)) for p in patterns) if patterns else 1
         if not score:
             continue
-        # Extract title from frontmatter
+
         title = f.stem
         if fm:
-            for line in fm.group(1).splitlines():
+            for line in fm_text.splitlines():
                 if line.startswith("title:"):
                     title = line.split(":", 1)[1].strip().strip('"')
                     break
-        # Find first matching line for snippet — skip system-owned frontmatter lines
-        _skip_snippet = re.compile(r'^(sources|created|raw_source):')
+
+        # First matching line for snippet
         snippet = ""
-        for line in text.splitlines():
-            if _skip_snippet.match(line.strip()):
+        snippet_lines = []
+        file_lines = text.splitlines()
+        for i, line in enumerate(file_lines):
+            if _SKIP_SNIPPET.match(line.strip()):
                 continue
             if patterns and any(p.search(line) for p in patterns):
                 snippet = line.strip()[:120]
+                snippet_lines = file_lines[max(0, i - 2):i + 3]
                 break
-        rel = "wiki/" + str(f.relative_to(WIKI_DIR))
-        results.append((score, title, rel, snippet))
 
-    results.sort(key=lambda x: -x[0])
-    scope_desc = f" in {scope}/" if scope and scope in valid_subdirs else ""
+        rel = "wiki/" + str(f.relative_to(wiki_dir))
+        results.append({
+            "score": score,
+            "title": title,
+            "path": f,
+            "rel": rel,
+            "snippet": snippet,
+            "lines": snippet_lines,
+            "created": created,
+        })
+
+    results.sort(key=lambda x: -x["score"])
+    return {"keywords": kw_tokens, "scope": scope, "results": results, "error": None}
+
+
+def _search_wiki(args: dict) -> str:
+    """Keyword search across all wiki pages. Returns matching pages with title, path, snippet.
+    Supports in:<subdir>, tag:, after:YYYY-MM-DD, before:YYYY-MM-DD filter tokens."""
+    query = args.get("query", "").strip()
+    if not query:
+        return "Error: query is required."
+
+    res = search_wiki_core(query, WIKI_DIR)
+    if res["error"]:
+        return f"Error: {res['error']}."
+
+    keywords = res["keywords"]
+    scope = res["scope"]
+    results = res["results"]
+
+    _VALID_SUBDIRS = {"sources", "entities", "concepts", "synthesis"}
+    scope_desc = f" in {scope}/" if scope and scope in _VALID_SUBDIRS else ""
+    kw_desc = " ".join(keywords) if keywords else "(date/tag filter only)"
+
     if not results:
-        return f"No wiki pages found matching: {' '.join(keywords)}{scope_desc}"
-    lines = [f"Found {len(results)} page(s) matching '{' '.join(keywords)}'{scope_desc}:\n"]
-    for _, title, rel, snippet in results[:10]:
-        lines.append(f"- [{title}]({rel})")
-        if snippet:
-            lines.append(f"  > {snippet}")
+        return f"No wiki pages found matching: {kw_desc}{scope_desc}"
+    lines = [f"Found {len(results)} page(s) matching '{kw_desc}'{scope_desc}:\n"]
+    for r in results[:10]:
+        lines.append(f"- [{r['title']}]({r['rel']})")
+        if r["snippet"]:
+            lines.append(f"  > {r['snippet']}")
     return "\n".join(lines)
 
 

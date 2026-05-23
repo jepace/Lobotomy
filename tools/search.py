@@ -2,22 +2,24 @@
 """
 Lobotomy — Wiki Keyword Search
 
-Searches all markdown files in wiki/ recursively.
-Ranks results by total keyword match count (descending).
-Shows matching lines with ±2 lines of context.
+Searches all markdown files in wiki/ using the same logic as the AI agent.
 
 Usage: python3 tools/search.py <keyword> [keyword2 ...]
-       python3 tools/search.py --help
+       python3 tools/search.py tag:<tag> [keyword ...]
+       python3 tools/search.py after:YYYY-MM-DD [keyword ...]
+       python3 tools/search.py before:YYYY-MM-DD [keyword ...]
+       python3 tools/search.py in:<subdir> <keyword>
 
-Multiple keywords are treated as OR (each keyword searched independently).
-Results are ranked by total combined match count across all keywords.
-
-No external dependencies required.
+Multiple keywords use AND logic (all must appear in the page).
+Filter tokens (in:, tag:, after:, before:) can be combined with keywords.
 """
 
 import sys
 import re
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from agent import search_wiki_core
 
 
 def find_wiki_root(script_path):
@@ -34,41 +36,13 @@ def find_wiki_root(script_path):
     )
 
 
-def search_file(filepath, patterns):
-    """Return list of match records for all pattern hits in a file."""
-    try:
-        text = filepath.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-
-    lines = text.splitlines()
-    matches = []
-    seen = set()
-
-    for i, line in enumerate(lines):
-        hits = [p.pattern for p in patterns if p.search(line)]
-        if hits and i not in seen:
-            seen.add(i)
-            matches.append({
-                "line_num": i + 1,
-                "line": line,
-                "before": lines[max(0, i - 2):i],
-                "after": lines[i + 1:min(len(lines), i + 3)],
-                "hits": hits,
-            })
-
-    return matches
-
-
 def highlight(line, patterns, use_ansi):
-    """Bold-highlight matched text when outputting to a TTY."""
     if not use_ansi:
         return line
     BOLD, RESET = "\033[1m", "\033[0m"
-    result = line
     for p in patterns:
-        result = p.sub(lambda m: f"{BOLD}{m.group()}{RESET}", result)
-    return result
+        line = p.sub(lambda m: f"{BOLD}{m.group()}{RESET}", line)
+    return line
 
 
 def main():
@@ -77,14 +51,7 @@ def main():
         print(__doc__.strip())
         sys.exit(0 if args else 1)
 
-    keywords = args
-    patterns = []
-    for kw in keywords:
-        try:
-            patterns.append(re.compile(re.escape(kw), re.IGNORECASE))
-        except re.error as e:
-            print(f"Invalid keyword '{kw}': {e}", file=sys.stderr)
-            sys.exit(1)
+    query = " ".join(args)
 
     try:
         wiki_dir = find_wiki_root(Path(__file__))
@@ -92,49 +59,46 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    md_files = sorted(wiki_dir.rglob("*.md"))
-    if not md_files:
-        print("No markdown files found in wiki/.")
-        sys.exit(0)
+    res = search_wiki_core(query, wiki_dir)
+    if res["error"]:
+        print(f"Error: {res['error']}", file=sys.stderr)
+        sys.exit(1)
 
-    results = []
-    for f in md_files:
-        matches = search_file(f, patterns)
-        if matches:
-            results.append((f, matches))
+    keywords = res["keywords"]
+    results = res["results"]
+    patterns = [re.compile(re.escape(kw), re.IGNORECASE) for kw in keywords]
+    use_ansi = sys.stdout.isatty()
 
-    # Rank by total match count descending, then path ascending for ties
-    results.sort(key=lambda x: (-sum(len(m["hits"]) for m in x[1]), str(x[0])))
-
-    total_hits = sum(sum(len(m["hits"]) for m in ms) for _, ms in results)
-    print(f"\nSearch: {' + '.join(keywords)}")
-    print(
-        f"Found {total_hits} match{'es' if total_hits != 1 else ''} "
-        f"in {len(results)} file{'s' if len(results) != 1 else ''}."
-    )
+    scope_desc = f" in {res['scope']}/" if res["scope"] else ""
+    kw_desc = " + ".join(keywords) if keywords else "(filter only)"
+    print(f"\nSearch: {kw_desc}{scope_desc}")
+    print(f"Found {len(results)} page{'s' if len(results) != 1 else ''}.")
 
     if not results:
         sys.exit(0)
 
-    use_ansi = sys.stdout.isatty()
     repo_root = wiki_dir.parent
-
-    for rank, (filepath, matches) in enumerate(results, 1):
-        rel = filepath.relative_to(repo_root)
-        total = sum(len(m["hits"]) for m in matches)
+    for rank, r in enumerate(results, 1):
+        rel = r["path"].relative_to(repo_root)
         print(f"\n{'=' * 60}")
-        print(f"[{rank}] {rel}  ({total} match{'es' if total != 1 else ''})")
+        print(f"[{rank}] {rel}  ({r['score']} match{'es' if r['score'] != 1 else ''})"
+              + (f"  created: {r['created']}" if r["created"] else ""))
         print("=" * 60)
 
-        for m in matches:
-            base = m["line_num"] - len(m["before"])
-            for j, ctx in enumerate(m["before"]):
-                print(f"  {base + j:>4} | {ctx}")
-            hl = highlight(m["line"], patterns, use_ansi)
-            print(f"> {m['line_num']:>4} | {hl}")
-            for j, ctx in enumerate(m["after"], 1):
-                print(f"  {m['line_num'] + j:>4} | {ctx}")
+        if r["lines"]:
+            # Find index of snippet line within context window
+            snippet_idx = next(
+                (i for i, l in enumerate(r["lines"]) if l.strip()[:120] == r["snippet"]),
+                len(r["lines"]) // 2,
+            )
+            # Compute starting line number (approximate — we don't track it in core)
+            for j, ctx_line in enumerate(r["lines"]):
+                prefix = "> " if j == snippet_idx else "  "
+                display = highlight(ctx_line, patterns, use_ansi) if j == snippet_idx else ctx_line
+                print(f"{prefix} {display}")
             print()
+        elif r["snippet"]:
+            print(f"  {highlight(r['snippet'], patterns, use_ansi)}\n")
 
 
 if __name__ == "__main__":
