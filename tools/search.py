@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""
-Lobotomy — Wiki Keyword Search
-
-Searches all markdown files in wiki/ using the same logic as the AI agent.
-
-Usage: python3 tools/search.py <keyword> [keyword2 ...]
-       python3 tools/search.py tag:<tag> [keyword ...]
-       python3 tools/search.py after:YYYY-MM-DD [keyword ...]
-       python3 tools/search.py before:YYYY-MM-DD [keyword ...]
-       python3 tools/search.py in:<subdir> <keyword>
-
-Multiple keywords use AND logic (all must appear in the page).
-Filter tokens (in:, tag:, after:, before:) can be combined with keywords.
-"""
+"""Lobotomy wiki search — CLI wrapper around the shared search_wiki_core engine."""
 
 import sys
 import re
@@ -21,17 +8,35 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from agent import search_wiki_core
 
+USAGE = """\
+Usage: search [OPTIONS] [KEYWORD ...]
 
-def find_wiki_root(script_path):
-    repo_root = script_path.resolve().parent.parent
-    wiki_dir = repo_root / "wiki"
-    if wiki_dir.is_dir():
-        return wiki_dir
-    cwd_wiki = Path.cwd() / "wiki"
-    if cwd_wiki.is_dir():
-        return cwd_wiki
+Search all wiki pages. Multiple keywords use AND logic (all must appear).
+
+Filter tokens (mix freely with keywords):
+  in:<subdir>        Restrict to a subdirectory: sources, entities, concepts, synthesis
+  tag:<value>        Require a frontmatter tag
+  after:YYYY-MM-DD   Require created >= date
+  before:YYYY-MM-DD  Require created <= date
+
+Examples:
+  search monterey
+  search casa monterey
+  search in:entities monterey
+  search tag:nonprofit after:2026-01-01
+"""
+
+
+def find_wiki_root():
+    candidates = [
+        Path(__file__).resolve().parent.parent / "wiki",
+        Path.cwd() / "wiki",
+    ]
+    for p in candidates:
+        if p.is_dir():
+            return p
     raise FileNotFoundError(
-        f"Cannot find wiki/ at {wiki_dir} or {cwd_wiki}\n"
+        f"Cannot find wiki/ directory (tried: {', '.join(str(c) for c in candidates)})\n"
         "Run from the repository root or the tools/ directory."
     )
 
@@ -48,18 +53,16 @@ def highlight(line, patterns, use_ansi):
 def main():
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help"):
-        print(__doc__.strip())
+        print(USAGE.rstrip())
         sys.exit(0 if args else 1)
 
-    query = " ".join(args)
-
     try:
-        wiki_dir = find_wiki_root(Path(__file__))
+        wiki_dir = find_wiki_root()
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    res = search_wiki_core(query, wiki_dir)
+    res = search_wiki_core(" ".join(args), wiki_dir)
     if res["error"]:
         print(f"Error: {res['error']}", file=sys.stderr)
         sys.exit(1)
@@ -80,18 +83,17 @@ def main():
     repo_root = wiki_dir.parent
     for rank, r in enumerate(results, 1):
         rel = r["path"].relative_to(repo_root)
+        created = f"  created: {r['created']}" if r["created"] else ""
+        score = r["score"]
         print(f"\n{'=' * 60}")
-        print(f"[{rank}] {rel}  ({r['score']} match{'es' if r['score'] != 1 else ''})"
-              + (f"  created: {r['created']}" if r["created"] else ""))
+        print(f"[{rank}] {rel}  ({score} match{'es' if score != 1 else ''}){created}")
         print("=" * 60)
 
         if r["lines"]:
-            # Find index of snippet line within context window
             snippet_idx = next(
-                (i for i, l in enumerate(r["lines"]) if l.strip()[:120] == r["snippet"]),
+                (i for i, ln in enumerate(r["lines"]) if ln.strip()[:120] == r["snippet"]),
                 len(r["lines"]) // 2,
             )
-            # Compute starting line number (approximate — we don't track it in core)
             for j, ctx_line in enumerate(r["lines"]):
                 prefix = "> " if j == snippet_idx else "  "
                 display = highlight(ctx_line, patterns, use_ansi) if j == snippet_idx else ctx_line
