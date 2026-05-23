@@ -1,140 +1,154 @@
 #!/usr/bin/env python3
-"""
-Lobotomy — Wiki Keyword Search
+"""Lobotomy wiki search — CLI wrapper around the shared search_wiki_core engine."""
 
-Searches all markdown files in wiki/ recursively.
-Ranks results by total keyword match count (descending).
-Shows matching lines with ±2 lines of context.
-
-Usage: python3 tools/search.py <keyword> [keyword2 ...]
-       python3 tools/search.py --help
-
-Multiple keywords are treated as OR (each keyword searched independently).
-Results are ranked by total combined match count across all keywords.
-
-No external dependencies required.
-"""
-
-import sys
+import json
+import os
 import re
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+from agent import search_wiki_core
 
-def find_wiki_root(script_path):
-    repo_root = script_path.resolve().parent.parent
-    wiki_dir = repo_root / "wiki"
-    if wiki_dir.is_dir():
-        return wiki_dir
-    cwd_wiki = Path.cwd() / "wiki"
-    if cwd_wiki.is_dir():
-        return cwd_wiki
+USAGE = """\
+Usage: search [OPTIONS] [KEYWORD ...]
+
+Search all wiki pages. Multiple keywords use AND logic (all must appear).
+
+Filter tokens (mix freely with keywords):
+  in:<subdir>        Restrict to a subdirectory: sources, entities, concepts, synthesis
+  tag:<value>        Require a frontmatter tag
+  after:YYYY-MM-DD   Require created >= date
+  before:YYYY-MM-DD  Require created <= date
+
+Examples:
+  search monterey
+  search casa monterey
+  search in:entities monterey
+  search tag:nonprofit after:2026-01-01
+
+Remote mode (set both env vars to search a running Lobotomy server):
+  LOBOTOMY_URL   Base URL of the server, e.g. https://wiki.example.com
+  LOBOTOMY_KEY   Bearer token — matches api.push_key in the server's config.json
+"""
+
+
+def find_wiki_root():
+    candidates = [
+        Path(__file__).resolve().parent.parent / "wiki",
+        Path.cwd() / "wiki",
+    ]
+    for p in candidates:
+        if p.is_dir():
+            return p
     raise FileNotFoundError(
-        f"Cannot find wiki/ at {wiki_dir} or {cwd_wiki}\n"
+        f"Cannot find wiki/ directory (tried: {', '.join(str(c) for c in candidates)})\n"
         "Run from the repository root or the tools/ directory."
     )
 
 
-def search_file(filepath, patterns):
-    """Return list of match records for all pattern hits in a file."""
-    try:
-        text = filepath.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-
-    lines = text.splitlines()
-    matches = []
-    seen = set()
-
-    for i, line in enumerate(lines):
-        hits = [p.pattern for p in patterns if p.search(line)]
-        if hits and i not in seen:
-            seen.add(i)
-            matches.append({
-                "line_num": i + 1,
-                "line": line,
-                "before": lines[max(0, i - 2):i],
-                "after": lines[i + 1:min(len(lines), i + 3)],
-                "hits": hits,
-            })
-
-    return matches
-
-
 def highlight(line, patterns, use_ansi):
-    """Bold-highlight matched text when outputting to a TTY."""
     if not use_ansi:
         return line
     BOLD, RESET = "\033[1m", "\033[0m"
-    result = line
     for p in patterns:
-        result = p.sub(lambda m: f"{BOLD}{m.group()}{RESET}", result)
-    return result
+        line = p.sub(lambda m: f"{BOLD}{m.group()}{RESET}", line)
+    return line
+
+
+def remote_search(base_url, api_key, query):
+    """Call /api/search on a remote server. Returns same structure as search_wiki_core."""
+    url = f"{base_url}/api/search?q={urllib.parse.quote(query)}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        try:
+            msg = json.loads(body).get("error", body)
+        except ValueError:
+            msg = body
+        return {"error": f"HTTP {e.code}: {msg}", "keywords": [], "scope": None, "results": []}
+    except urllib.error.URLError as e:
+        return {"error": str(e.reason), "keywords": [], "scope": None, "results": []}
+    # Normalise remote result dicts to match local structure (no lines field)
+    for r in data.get("results", []):
+        r.setdefault("lines", [])
+    return {"error": None, "keywords": data.get("keywords", []),
+            "scope": data.get("scope"), "results": data.get("results", [])}
+
+
+def render_results(res, use_ansi, repo_root=None):
+    keywords = res["keywords"]
+    results = res["results"]
+    patterns = [re.compile(re.escape(kw), re.IGNORECASE) for kw in keywords]
+
+    scope_desc = f" in {res['scope']}/" if res["scope"] else ""
+    kw_desc = " + ".join(keywords) if keywords else "(filter only)"
+    print(f"\nSearch: {kw_desc}{scope_desc}")
+    print(f"Found {len(results)} page{'s' if len(results) != 1 else ''}.")
+
+    if not results:
+        return
+
+    for rank, r in enumerate(results, 1):
+        path_display = r.get("rel") or str(r["path"])
+        created = f"  created: {r['created']}" if r.get("created") else ""
+        score = r.get("score", 0)
+        print(f"\n{'=' * 60}")
+        print(f"[{rank}] {path_display}  ({score} match{'es' if score != 1 else ''}){created}")
+        print("=" * 60)
+
+        lines = r.get("lines", [])
+        snippet = r.get("snippet", "")
+        if lines:
+            snippet_idx = next(
+                (i for i, ln in enumerate(lines) if ln.strip()[:120] == snippet),
+                len(lines) // 2,
+            )
+            for j, ctx_line in enumerate(lines):
+                prefix = "> " if j == snippet_idx else "  "
+                display = highlight(ctx_line, patterns, use_ansi) if j == snippet_idx else ctx_line
+                print(f"{prefix} {display}")
+            print()
+        elif snippet:
+            print(f"  {highlight(snippet, patterns, use_ansi)}\n")
 
 
 def main():
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help"):
-        print(__doc__.strip())
+        print(USAGE.rstrip())
         sys.exit(0 if args else 1)
 
-    keywords = args
-    patterns = []
-    for kw in keywords:
-        try:
-            patterns.append(re.compile(re.escape(kw), re.IGNORECASE))
-        except re.error as e:
-            print(f"Invalid keyword '{kw}': {e}", file=sys.stderr)
-            sys.exit(1)
+    query = " ".join(args)
+    use_ansi = sys.stdout.isatty()
 
-    try:
-        wiki_dir = find_wiki_root(Path(__file__))
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
+    base_url = os.environ.get("LOBOTOMY_URL", "").rstrip("/")
+    if base_url:
+        api_key = os.environ.get("LOBOTOMY_KEY", "").strip()
+        if not api_key:
+            print("Error: LOBOTOMY_URL is set but LOBOTOMY_KEY is missing.", file=sys.stderr)
+            print("Set LOBOTOMY_KEY to the api.push_key value from the server's config.json.", file=sys.stderr)
+            sys.exit(1)
+        res = remote_search(base_url, api_key, query)
+    else:
+        try:
+            wiki_dir = find_wiki_root()
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        res = search_wiki_core(query, wiki_dir)
+
+    if res["error"]:
+        print(f"Error: {res['error']}", file=sys.stderr)
         sys.exit(1)
 
-    md_files = sorted(wiki_dir.rglob("*.md"))
-    if not md_files:
-        print("No markdown files found in wiki/.")
-        sys.exit(0)
-
-    results = []
-    for f in md_files:
-        matches = search_file(f, patterns)
-        if matches:
-            results.append((f, matches))
-
-    # Rank by total match count descending, then path ascending for ties
-    results.sort(key=lambda x: (-sum(len(m["hits"]) for m in x[1]), str(x[0])))
-
-    total_hits = sum(sum(len(m["hits"]) for m in ms) for _, ms in results)
-    print(f"\nSearch: {' + '.join(keywords)}")
-    print(
-        f"Found {total_hits} match{'es' if total_hits != 1 else ''} "
-        f"in {len(results)} file{'s' if len(results) != 1 else ''}."
-    )
-
-    if not results:
-        sys.exit(0)
-
-    use_ansi = sys.stdout.isatty()
-    repo_root = wiki_dir.parent
-
-    for rank, (filepath, matches) in enumerate(results, 1):
-        rel = filepath.relative_to(repo_root)
-        total = sum(len(m["hits"]) for m in matches)
-        print(f"\n{'=' * 60}")
-        print(f"[{rank}] {rel}  ({total} match{'es' if total != 1 else ''})")
-        print("=" * 60)
-
-        for m in matches:
-            base = m["line_num"] - len(m["before"])
-            for j, ctx in enumerate(m["before"]):
-                print(f"  {base + j:>4} | {ctx}")
-            hl = highlight(m["line"], patterns, use_ansi)
-            print(f"> {m['line_num']:>4} | {hl}")
-            for j, ctx in enumerate(m["after"], 1):
-                print(f"  {m['line_num'] + j:>4} | {ctx}")
-            print()
+    render_results(res, use_ansi)
 
 
 if __name__ == "__main__":

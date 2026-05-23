@@ -88,7 +88,7 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, run_agent_turn, system_prompt,
                    _fix_wiki_links, _rebuild_index, _validate_ingest,
-                   heal_index_if_stale, _atomic_write)
+                   heal_index_if_stale, _atomic_write, search_wiki_core)
 
 BLOG_DIR = REPO_ROOT / "blog"
 from job_queue import JobQueue
@@ -1229,61 +1229,15 @@ def wiki_search():
     q = request.args.get("q", "").strip()
     if not q or len(q) < 2:
         return {"results": []}
-    # Parse filter tokens: in:<subdir> and tag:<name>
-    scope = None
-    required_tag = None
-    filtered = []
-    for t in q.split():
-        tl = t.lower()
-        if tl.startswith("in:"):
-            scope = tl[3:].strip("/")
-        elif tl.startswith("tag:"):
-            required_tag = tl[4:]
-        else:
-            filtered.append(t)
-    words = [w.lower() for w in filtered if w]
-    if not words and not required_tag:
+    res = search_wiki_core(q, WIKI_DIR)
+    if res["error"]:
         return {"results": []}
-    valid_subdirs = {"sources", "entities", "concepts", "synthesis"}
-    search_root = WIKI_DIR / scope if scope and scope in valid_subdirs else WIKI_DIR
-    results = []
-    for md_file in sorted(search_root.rglob("*.md")):
-        try:
-            text = md_file.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        # tag: filter — check frontmatter tags field
-        if required_tag:
-            fm_m = re.match(r'^---\s*\n(.*?)\n---', text, re.DOTALL)
-            if not fm_m:
-                continue
-            tags_line = next((l for l in fm_m.group(1).splitlines() if l.startswith("tags:")), "")
-            page_tags = [t.strip().strip('"').lower() for t in tags_line.split(":", 1)[-1].strip().strip("[]").split(",") if t.strip().strip('"')]
-            if required_tag not in page_tags:
-                continue
-        text_lower = text.lower()
-        if words and not all(w in text_lower for w in words):
-            continue
-        # Extract title from frontmatter or filename
-        title = md_file.stem.replace("-", " ").title()
-        for line in text.splitlines():
-            m = re.match(r'^title:\s*["\']?(.+?)["\']?\s*$', line)
-            if m:
-                title = m.group(1)
-                break
-        # Find best matching excerpt
-        excerpt = ""
-        for line in text.splitlines():
-            if line.startswith("---") or re.match(r'^[a-z]+:', line):
-                continue
-            if words and any(w in line.lower() for w in words):
-                excerpt = line.strip()[:120]
-                break
-        rel = str(md_file.relative_to(WIKI_DIR))
-        results.append({"path": rel, "title": title, "excerpt": excerpt})
-        if len(results) >= 12:
-            break
-    return {"results": results}
+    return {
+        "results": [
+            {"path": str(r["path"].relative_to(WIKI_DIR)), "title": r["title"], "excerpt": r["snippet"]}
+            for r in res["results"][:12]
+        ]
+    }
 
 
 @app.route("/wiki/")
@@ -1804,6 +1758,28 @@ def api_status():
         "version": "1",
         "push_configured": bool(cfg_get("api", "push_key", "").strip()),
     }
+
+
+@app.route("/api/search")
+def api_search():
+    ok, err = _api_auth()
+    if not ok:
+        return jsonify(err[0]), err[1]
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify({"error": "q parameter required"}), 400
+    res = search_wiki_core(q, WIKI_DIR)
+    if res["error"]:
+        return jsonify({"error": res["error"]}), 400
+    return jsonify({
+        "keywords": res["keywords"],
+        "scope": res["scope"],
+        "results": [
+            {"title": r["title"], "path": r["rel"], "snippet": r["snippet"],
+             "created": r["created"], "score": r["score"]}
+            for r in res["results"]
+        ],
+    })
 
 
 @app.route("/api/push", methods=["POST", "OPTIONS"])
