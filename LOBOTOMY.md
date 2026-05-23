@@ -26,7 +26,6 @@ Key invariants:
 - **Raw sources are immutable.** The LLM reads `raw/` but never modifies or deletes anything there.
 - **Every claim has a source.** Documents cite which raw source supports each claim.
 - **Contradictions are surfaced, not resolved.** The LLM flags disagreements; the human decides.
-- **The log is append-only.** Every operation is recorded and never deleted.
 - **Cold-start friendly.** A fresh LLM session can orient itself from this file alone.
 
 ---
@@ -40,7 +39,6 @@ raw/assets/            Binary attachments (images, PDFs) referenced by raw sourc
 
 wiki/                  All LLM-generated content lives here.
 wiki/index.md          Master catalog. Auto-generated — do not read or edit directly.
-wiki/log.md            Append-only operation log. Never delete entries.
 wiki/sources/          One summary document per ingested source.
 wiki/entities/         People, organizations, products, projects, codebases.
 wiki/concepts/         Ideas, techniques, frameworks, algorithms, terms.
@@ -83,7 +81,7 @@ url: "https://original-article-url"   # source documents only; omit on all other
 | `raw_source` | string (quoted) | Repo-relative path to the raw inbox file. Source documents only. **System-managed — never supply or modify.** |
 | `aliases` | list of strings | Extra names the autolinker should match and link to this page (e.g. common abbreviations or alternate spellings). Human-set only — do not supply during ingest. Example: `aliases: ["FBI", "bureau"]` |
 | `no_autolink` | boolean | If `true`, this page's title and aliases are excluded from the autolinker — bare occurrences of the title in other pages will not be linked here. Use for concept titles that are also common nouns. Human-set only — do not supply during ingest. |
-| `deprecated` | boolean | If `true`, the page is retired. Do not delete — set this flag and note it in the log. |
+| `deprecated` | boolean | If `true`, the page is retired. Do not delete — set this flag. |
 
 ### Standard heading structures per document type
 
@@ -223,7 +221,7 @@ Determine whether the new source warrants:
 - Updates to an existing synthesis document
 
 ### Step 8 — Done
-Call `done()`. The server automatically writes the log entry and runs health checks — results are visible at `/wiki/lint`.
+Call `done()`. The server runs health checks — results are visible at `/wiki/lint`.
 
 ---
 
@@ -287,7 +285,6 @@ When a new source contradicts an existing document:
 If you are a fresh LLM session with no context beyond this file and the wiki directory:
 
 1. Read this file (`LOBOTOMY.md`) completely — you have done so
-2. Read `wiki/log.md` — understand recent operations
 Do not modify any file until the user gives an explicit instruction.
 
 ---
