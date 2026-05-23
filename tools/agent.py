@@ -165,6 +165,8 @@ _RAW_READ_LIMIT  = 60_000  # chars for raw source files
 _WIKI_READ_LIMIT = 20_000  # chars for wiki pages — generous but prevents context blowout
 
 
+_WIKI_META_STEMS = {"log", "index"}
+
 def _read_file(path: str, offset: int = 0) -> "str | list":
     """Return a string, or a list of content blocks for image/image-only PDF."""
     p = REPO_ROOT / path
@@ -172,6 +174,12 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
         return f"Error: not found: {path}"
     if not p.is_file():
         return f"Error: not a file: {path}"
+    try:
+        p.resolve().relative_to(WIKI_DIR.resolve())
+        if p.stem in _WIKI_META_STEMS:
+            return f"Error: {path} is a system-managed file and is not readable by the agent."
+    except ValueError:
+        pass
     if p.suffix.lower() == ".pdf":
         return _read_pdf(p)
     if p.suffix.lower() in _IMAGE_EXTS:
