@@ -197,6 +197,7 @@
     {% if msg.tools %}
     <div class="tool-list" style="display:block">
       {% for t in msg.tools %}<div class="tool-item">⚙ {{ t }}</div>{% endfor %}
+      <div class="tool-item">✓ Done</div>
     </div>
     {% endif %}
     {% if msg.reply %}
