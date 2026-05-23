@@ -320,6 +320,15 @@ async function readStream(streamResp, toolsEl, bubbleEl) {
           toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">' + escHtml(t) + '</div>'; }).join('');
         } else if (ev.type === 'cancelled') {
           cancelled = true;
+          if (hadTools) {
+            tools.push('✗ Cancelled');
+            toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">' + escHtml(t) + '</div>'; }).join('');
+          }
+        } else if (ev.type === 'done') {
+          if (hadTools && !cancelled) {
+            tools.push('✓ Done');
+            toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">' + escHtml(t) + '</div>'; }).join('');
+          }
         } else if (ev.type === 'error') {
           bubbleEl.innerHTML = '<span style="color:var(--danger)">Error: ' + escHtml(ev.content) + '</span>';
         }
