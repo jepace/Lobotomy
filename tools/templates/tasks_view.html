@@ -97,9 +97,9 @@
   /* completing animation */
   .completing .task-name-text { text-decoration: line-through; opacity: .6; }
 
-  /* Note row */
-  .note-row { display: none; }
-  .note-row.open { display: table-row; }
+  /* Note row (table) */
+  .tasks-table .note-row { display: none; }
+  .tasks-table .note-row.open { display: table-row; }
   .note-row > td { height: auto; white-space: normal; padding: 8px; }
   .note-textarea { width: 100%; min-height: 56px; font-size: 12px; padding: 6px 8px;
                    border: 1px solid var(--accent); border-radius: 6px;
@@ -169,6 +169,164 @@
     margin-right: 6px; }
   .bulk-date-overlay .cancel-btn { background: var(--bg3); color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+
+  /* ── Mobile / tablet-portrait card layout (≤900px) ───────── */
+  .task-cards-list { display: none; }
+  .fab { display: none; }
+  .mob-add-overlay { display: none; }
+  .mob-add-sheet { display: none; }
+
+  @media (max-width: 900px) {
+    .tasks-container { padding: 10px 0 90px; }
+    h1 { padding: 0 14px; }
+
+    /* Hide desktop elements */
+    .add-form { display: none; }
+    .tasks-table { display: none; }
+    .toolbar { padding: 0 14px; margin-bottom: 6px; }
+
+    /* Card list */
+    .task-cards-list { display: block; }
+
+    /* Group header */
+    .card-group-hdr {
+      padding: 6px 14px 4px;
+      font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .07em;
+      color: var(--text2); background: var(--bg3);
+      border-top: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .card-group-hdr:first-child { border-top: none; }
+    .card-group-hdr.grp-overdue { color: var(--danger); background: #ff3b3010; border-top-color: var(--danger); }
+    .card-group-hdr.grp-today   { color: #ff9500; background: #ff950010; border-top-color: #ff9500; }
+    .card-group-hdr.grp-week    { color: #0a84ff; background: #0a84ff10; border-top-color: #0a84ff; }
+    .card-group-hdr.grp-month   { color: #bf5af2; background: #bf5af210; border-top-color: #bf5af2; }
+    .card-group-hdr.grp-future  { color: #32ade6; background: #32ade610; border-top-color: #32ade6; }
+    .card-group-count { font-size: 11px; font-weight: 600; opacity: .7; }
+
+    /* Task card */
+    .task-card {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      transition: background .15s;
+    }
+    .task-card:active { background: var(--bg3); }
+    .task-card.completed { opacity: .45; }
+    .task-card.completing .card-title { text-decoration: line-through; opacity: .6; }
+
+    /* Priority left border on card */
+    .task-card.pri-top    { border-left: 3px solid #ff3b30; }
+    .task-card.pri-high   { border-left: 3px solid #ff9500; }
+    .task-card.pri-medium { border-left: 3px solid #007aff; }
+    .task-card.pri-low    { border-left: 3px solid #8e8e93; }
+
+    .card-cb-wrap { flex-shrink: 0; }
+    .card-cb {
+      width: 22px; height: 22px; cursor: pointer;
+      accent-color: var(--success); flex-shrink: 0;
+      margin: 0;
+    }
+
+    .card-main { flex: 1; min-width: 0; }
+    .card-title {
+      font-size: 15px; line-height: 1.3; color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      cursor: pointer; border-radius: 3px; padding: 1px 2px; display: block;
+    }
+    .card-title:active { background: var(--accent); color: #fff; }
+    .card-meta {
+      display: flex; align-items: center; gap: 8px; margin-top: 3px; flex-wrap: wrap;
+    }
+    .card-due {
+      font-size: 12px; color: var(--text2);
+      cursor: pointer; border-radius: 3px; padding: 0 2px;
+    }
+    .card-due:active { background: var(--accent); color: #fff; }
+    .card-due.overdue { color: var(--danger); font-weight: 600; }
+    .card-due.due-today { color: #ff9500; font-weight: 600; }
+    .card-ctx {
+      font-size: 11px; color: var(--text2);
+      background: var(--bg3); border-radius: 4px; padding: 1px 6px;
+      cursor: pointer;
+    }
+    .card-ctx:active { background: var(--accent); color: #fff; }
+    .card-rec { font-size: 12px; opacity: .6; }
+
+    .card-right { flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
+    .card-note-btn {
+      display: block; background: none; border: none; cursor: pointer;
+      font-size: 18px; opacity: .4; color: var(--text); padding: 4px;
+      line-height: 1;
+    }
+    .card-note-btn.has-note { opacity: 1; }
+
+    /* Card note expansion */
+    .card-note-row {
+      display: none; padding: 8px 14px 12px;
+      background: var(--bg2); border-bottom: 1px solid var(--border);
+    }
+    .card-note-row.open { display: block; }
+
+    /* FAB */
+    .fab {
+      display: flex; align-items: center; justify-content: center;
+      position: fixed; bottom: 72px; right: 20px;
+      width: 56px; height: 56px; border-radius: 50%;
+      background: var(--accent); color: #fff;
+      font-size: 28px; font-weight: 300; line-height: 1;
+      border: none; cursor: pointer; z-index: 300;
+      box-shadow: 0 4px 16px rgba(0,0,0,.35);
+    }
+
+    /* Mobile add overlay + sheet */
+    .mob-add-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.5); z-index: 400;
+    }
+    .mob-add-overlay.open { display: block; }
+    .mob-add-sheet {
+      display: none; position: fixed; bottom: 0; left: 0; right: 0;
+      background: var(--bg2); border-radius: 18px 18px 0 0;
+      padding: 16px 16px 32px; z-index: 500;
+      box-shadow: 0 -4px 24px rgba(0,0,0,.3);
+    }
+    .mob-add-sheet.open { display: block; }
+    .mob-add-handle {
+      width: 36px; height: 4px; border-radius: 2px;
+      background: var(--border); margin: 0 auto 14px;
+    }
+    .mob-add-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 12px;
+    }
+    .mob-add-header span { font-size: 16px; font-weight: 700; }
+    .mob-add-close {
+      background: none; border: none; font-size: 20px;
+      color: var(--text2); cursor: pointer; padding: 0;
+    }
+    .mob-input {
+      width: 100%; padding: 10px 12px; font-size: 16px;
+      border: 1px solid var(--border); border-radius: 10px;
+      background: var(--bg); color: var(--text);
+      -webkit-appearance: none; box-sizing: border-box;
+      margin-bottom: 10px;
+    }
+    .mob-input:focus { border-color: var(--accent); outline: none; }
+    .mob-add-row { display: flex; gap: 10px; margin-bottom: 0; }
+    .mob-field { flex: 1; }
+    .mob-field label {
+      display: block; font-size: 10px; text-transform: uppercase;
+      letter-spacing: .05em; color: var(--text2); margin-bottom: 4px;
+    }
+    .mob-field .mob-input { margin-bottom: 10px; font-size: 14px; }
+    .mob-add-submit {
+      width: 100%; padding: 13px; background: var(--success); color: #fff;
+      border: none; border-radius: 10px; font-size: 16px; font-weight: 700;
+      cursor: pointer; margin-top: 4px;
+    }
+  }
 </style>
 {% endblock %}
 
@@ -177,7 +335,7 @@
 <div class="tasks-container">
 <h1>Tasks</h1>
 
-<!-- Add task form -->
+<!-- Add task form (desktop) -->
 <table class="add-form">
 <tr>
   <td class="col-done"></td>
@@ -246,6 +404,7 @@
 </div>
 
 {% if tasks %}
+<!-- Desktop table -->
 <table class="tasks-table">
   <colgroup>
     <col class="col-done"><col class="col-task"><col class="col-ctx">
@@ -267,7 +426,7 @@
   {% for task in tasks %}
   <tr class="task-row pri-{{ task.priority or 'none' }}{% if task.complete %} completed{% endif %} {% if loop.index0 % 2 == 0 %}row-odd{% else %}row-even{% endif %}"
       data-id="{{ task.line_num }}" data-done="{{ task.tags.get('#done', '') }}">
-    <td><input type="checkbox" class="done-cb" data-id="{{ task.line_num }}"
+    <td><input type="checkbox" class="done-cb primary-cb" data-id="{{ task.line_num }}"
         {% if task.complete %}checked{% endif %}></td>
     <td>
       <span class="ecell task-name-text{% if not task.description %} empty{% endif %}"
@@ -314,16 +473,98 @@
   {% endfor %}
   </tbody>
 </table>
+
+<!-- Mobile card list -->
+<div class="task-cards-list" id="card-list">
+{% for task in tasks %}
+  <div class="task-card pri-{{ task.priority or 'none' }}{% if task.complete %} completed{% endif %}"
+       data-id="{{ task.line_num }}"
+       data-due="{{ task.due or '' }}"
+       data-complete="{{ 'true' if task.complete else 'false' }}">
+    <div class="card-cb-wrap">
+      <input type="checkbox" class="card-cb"
+             data-id="{{ task.line_num }}"
+             {% if task.complete %}checked{% endif %}>
+    </div>
+    <div class="card-main">
+      <div class="card-title ecell task-name-text"
+           data-id="{{ task.line_num }}" data-field="description">{{ task.description or '—' }}</div>
+      <div class="card-meta">
+        <span class="card-due ecell{% if not task.due %} empty{% endif %}"
+              data-id="{{ task.line_num }}" data-field="due">{{ task.due or '—' }}</span>
+        {% if task.context %}<span class="card-ctx ecell"
+              data-id="{{ task.line_num }}" data-field="context">{{ task.context }}</span>{% endif %}
+        {% if task.recurrence %}<span class="card-rec" title="{{ task.recurrence }}">🔁</span>{% endif %}
+      </div>
+    </div>
+    <div class="card-right">
+      <button class="card-note-btn{% if task.notes %} has-note{% endif %}"
+              data-id="{{ task.line_num }}">{% if task.notes %}📝{% else %}＋{% endif %}</button>
+    </div>
+  </div>
+  <div class="card-note-row" data-id="{{ task.line_num }}">
+    <textarea class="note-textarea" data-id="{{ task.line_num }}"
+              placeholder="Notes…">{{ task.notes }}</textarea>
+    <div class="note-actions">
+      <button onclick="saveNote({{ task.line_num }})">Save</button>
+      <button onclick="closeNote({{ task.line_num }})">Cancel</button>
+    </div>
+  </div>
+{% endfor %}
+</div>
+
 {% else %}
 <div class="empty-state"><div style="font-size:48px">📝</div><p>No tasks yet.</p></div>
 {% endif %}
 </div>
 </div>
 
+<!-- FAB (mobile only) -->
+<button class="fab" id="fab" onclick="openMobAdd()">+</button>
+
+<!-- Mobile add sheet -->
+<div class="mob-add-overlay" id="mob-add-overlay"></div>
+<div class="mob-add-sheet" id="mob-add-sheet">
+  <div class="mob-add-handle"></div>
+  <div class="mob-add-header">
+    <span>New Task</span>
+    <button class="mob-add-close" onclick="closeMobAdd()">✕</button>
+  </div>
+  <input id="mf-task" type="text" placeholder="Task name…" class="mob-input">
+  <div class="mob-add-row">
+    <div class="mob-field">
+      <label>Due</label>
+      <input id="mf-due" type="date" class="mob-input">
+    </div>
+    <div class="mob-field">
+      <label>Priority</label>
+      <select id="mf-pri" class="mob-input">
+        <option value="">—</option>
+        <option value="top">Top</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
+    </div>
+  </div>
+  <div class="mob-add-row">
+    <div class="mob-field">
+      <label>Context</label>
+      <input id="mf-ctx" type="text" placeholder="home" list="ctx-options" class="mob-input">
+    </div>
+    <div class="mob-field">
+      <label>Repeat</label>
+      <input id="mf-rep" type="text" placeholder="1w, 1m…" list="rep-options" class="mob-input">
+    </div>
+  </div>
+  <button class="mob-add-submit" onclick="addMobTask()">Add Task</button>
+</div>
+
 <script>
 const today = new Date().toLocaleDateString('en-CA');
 document.getElementById('f-due').value = today;
 document.getElementById('f-start').value = today;
+document.getElementById('mf-due').value = today;
 
 // Completion timeout tracking
 const completionTimeouts = {};
@@ -331,10 +572,17 @@ const completionTimeouts = {};
 // ── Show/hide completed ──────────────────────────────────────
 const showDoneCb = document.getElementById('show-done');
 function applyShowDone() {
+  const hide = !showDoneCb.checked;
+  // Table rows
   document.querySelectorAll('.task-row.completed').forEach(r => {
-    const hide = !showDoneCb.checked;
     r.style.display = hide ? 'none' : '';
-    const nr = document.querySelector(`.note-row[data-id="${r.dataset.id}"]`);
+    const nr = document.querySelector(`.tasks-table .note-row[data-id="${r.dataset.id}"]`);
+    if (nr) nr.style.display = hide ? 'none' : '';
+  });
+  // Cards
+  document.querySelectorAll('.task-card.completed').forEach(c => {
+    c.style.display = hide ? 'none' : '';
+    const nr = document.querySelector(`.card-note-row[data-id="${c.dataset.id}"]`);
     if (nr) nr.style.display = hide ? 'none' : '';
   });
 }
@@ -346,46 +594,64 @@ showDoneCb.addEventListener('change', () => {
 showDoneCb.checked = localStorage.getItem('tasks-show-done') === 'true';
 applyShowDone();
 
-// ── Done checkbox ────────────────────────────────────────────
-document.querySelectorAll('.done-cb').forEach(cb => {
+// ── Done checkbox (table) ────────────────────────────────────
+document.querySelectorAll('.primary-cb').forEach(cb => {
   cb.addEventListener('change', async (e) => {
     const id = parseInt(cb.dataset.id);
     const row = document.querySelector(`.task-row[data-id="${id}"]`);
+    const card = document.querySelector(`.task-card[data-id="${id}"]`);
+    // Sync card checkbox
+    const cardCb = document.querySelector(`.card-cb[data-id="${id}"]`);
+    if (cardCb) cardCb.checked = cb.checked;
+
     if (cb.checked) {
-      row.classList.add('completing');
+      row?.classList.add('completing');
+      card?.classList.add('completing');
       if (completionTimeouts[id]) clearTimeout(completionTimeouts[id]);
       completionTimeouts[id] = setTimeout(async () => {
         const data = await apiUpdate(id, 'complete', 'true');
-        row.classList.remove('completing');
-        row.classList.add('completed');
+        row?.classList.remove('completing');
+        row?.classList.add('completed');
+        card?.classList.remove('completing');
+        card?.classList.add('completed');
         if (!showDoneCb.checked) {
-          row.style.display = 'none';
-          const nr = document.querySelector(`.note-row[data-id="${id}"]`);
-          if (nr) nr.style.display = 'none';
+          if (row) row.style.display = 'none';
+          if (card) card.style.display = 'none';
+          const tnr = document.querySelector(`.tasks-table .note-row[data-id="${id}"]`);
+          const cnr = document.querySelector(`.card-note-row[data-id="${id}"]`);
+          if (tnr) tnr.style.display = 'none';
+          if (cnr) cnr.style.display = 'none';
         }
         delete completionTimeouts[id];
-        // If a recurring next occurrence was created, reload to show it
-        if (data && data.next_task) {
-          setTimeout(() => location.reload(), 800);
-        }
+        if (data && data.next_task) setTimeout(() => location.reload(), 800);
       }, 2000);
     } else {
       if (completionTimeouts[id]) {
         clearTimeout(completionTimeouts[id]);
         delete completionTimeouts[id];
-        row.classList.remove('completing');
+        row?.classList.remove('completing');
+        card?.classList.remove('completing');
         return;
       }
-      row.classList.remove('completed');
+      row?.classList.remove('completed');
+      card?.classList.remove('completed');
       await apiUpdate(id, 'complete', 'false');
     }
   });
 });
 
-// ── Inline editing — DOM swap approach ──────────────────────
-// Replace the span with an actual input, swap back when done.
-// No CSS show/hide tricks — the DOM change IS the update.
+// Card checkboxes proxy to primary-cb
+document.querySelectorAll('.card-cb').forEach(cb => {
+  cb.addEventListener('change', () => {
+    const primary = document.querySelector(`.primary-cb[data-id="${cb.dataset.id}"]`);
+    if (primary) {
+      primary.checked = cb.checked;
+      primary.dispatchEvent(new Event('change'));
+    }
+  });
+});
 
+// ── Inline editing — DOM swap approach ──────────────────────
 const REPEAT_MAP = {
   'daily':'1d','every day':'1d','weekly':'1w','every week':'1w',
   'biweekly':'2w','every 2 weeks':'2w','fortnightly':'2w',
@@ -397,10 +663,9 @@ function makeEditable(span) {
   const field = span.dataset.field;
   const curText = span.textContent.trim();
   const curVal  = (curText === '—' || curText === '') ? '' : curText;
-  const curValLower = curVal.toLowerCase();  // For case-insensitive matching
+  const curValLower = curVal.toLowerCase();
   const td = span.parentElement;
 
-  // Get available contexts from datalist
   const contextOptions = [...document.querySelectorAll('#ctx-options option')].map(o => o.value);
 
   let inp;
@@ -443,16 +708,16 @@ function makeEditable(span) {
 
   const commit = () => {
     let val = (inp.tagName === 'SELECT' ? inp.value : inp.value.trim());
-    if (field === 'recurrence' && val) {
-      val = REPEAT_MAP[val.toLowerCase()] || val;
-    }
+    if (field === 'recurrence' && val) val = REPEAT_MAP[val.toLowerCase()] || val;
     let displayVal = val;
-    if (field === 'priority' && val) {
-      displayVal = val.charAt(0).toUpperCase() + val.slice(1);
-    }
+    if (field === 'priority' && val) displayVal = val.charAt(0).toUpperCase() + val.slice(1);
     span.textContent = displayVal || '—';
     span.classList.toggle('empty', !val);
     td.replaceChild(span, inp);
+    // Update due date styling on card
+    if (field === 'due' && span.classList.contains('card-due')) {
+      applyDueStyling(span, val);
+    }
     apiUpdate(id, field, val);
   };
 
@@ -480,24 +745,48 @@ document.querySelectorAll('.ecell').forEach(span => {
   span.addEventListener('click', () => makeEditable(span));
 });
 
-// ── Notes ───────────────────────────────────────────────────
-document.querySelectorAll('.note-btn').forEach(btn => {
+// ── Notes ────────────────────────────────────────────────────
+document.querySelectorAll('.note-btn, .card-note-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    const nr = document.querySelector(`.note-row[data-id="${btn.dataset.id}"]`);
-    nr.classList.toggle('open');
-    if (nr.classList.contains('open')) nr.querySelector('.note-textarea').focus();
+    const id = btn.dataset.id;
+    // Toggle table note row
+    const tnr = document.querySelector(`.tasks-table .note-row[data-id="${id}"]`);
+    if (tnr) {
+      tnr.classList.toggle('open');
+      if (tnr.classList.contains('open')) tnr.querySelector('.note-textarea')?.focus();
+    }
+    // Toggle card note row
+    const cnr = document.querySelector(`.card-note-row[data-id="${id}"]`);
+    if (cnr) {
+      cnr.classList.toggle('open');
+      if (cnr.classList.contains('open')) cnr.querySelector('.note-textarea')?.focus();
+    }
   });
 });
+
 function closeNote(id) {
-  document.querySelector(`.note-row[data-id="${id}"]`).classList.remove('open');
+  const tnr = document.querySelector(`.tasks-table .note-row[data-id="${id}"]`);
+  if (tnr) tnr.classList.remove('open');
+  const cnr = document.querySelector(`.card-note-row[data-id="${id}"]`);
+  if (cnr) cnr.classList.remove('open');
 }
+
 async function saveNote(id) {
-  const ta  = document.querySelector(`.note-textarea[data-id="${id}"]`);
-  const btn = document.querySelector(`.note-btn[data-id="${id}"]`);
-  await apiUpdate(id, 'notes', ta.value);
-  const has = ta.value.trim().length > 0;
-  btn.textContent = has ? '📝' : '+';
-  btn.classList.toggle('has-note', has);
+  // Find whichever textarea is visible / has content
+  const tas = document.querySelectorAll(`.note-textarea[data-id="${id}"]`);
+  let val = '';
+  tas.forEach(ta => { val = ta.value; });
+  // Sync all textareas for this id
+  tas.forEach(ta => { ta.value = val; });
+
+  await apiUpdate(id, 'notes', val);
+  const has = val.trim().length > 0;
+
+  // Update all note buttons for this id
+  document.querySelectorAll(`.note-btn[data-id="${id}"], .card-note-btn[data-id="${id}"]`).forEach(btn => {
+    btn.textContent = has ? '📝' : (btn.classList.contains('card-note-btn') ? '＋' : '+');
+    btn.classList.toggle('has-note', has);
+  });
   closeNote(id);
 }
 
@@ -529,7 +818,6 @@ document.querySelectorAll('.bulk-item').forEach(item => {
     }
 
     if (action === 'set-due') {
-      // Show inline date-picker overlay with explicit Apply button
       const wrap = document.querySelector('.bulk-wrap');
       const existing = wrap.querySelector('.bulk-date-overlay');
       if (existing) existing.remove();
@@ -567,7 +855,6 @@ document.querySelectorAll('.bulk-item').forEach(item => {
       return;
     }
 
-    // Other actions: set-priority, set-context
     const val = prompt(`Set ${action.replace('set-','')} for ${ids.length} task(s):`);
     if (val === null) return;
     await fetch('/tasks/bulk-update', {
@@ -581,11 +868,9 @@ document.querySelectorAll('.bulk-item').forEach(item => {
 // ── Column sort with date grouping ──────────────────────────
 const PRIORITY_ORDER = {top:0, high:1, medium:2, low:3};
 
-// Load sort preference — supports multi-level configured sort
 let sortCol = localStorage.getItem('tasks-sort-col') || 'due';
 let sortDir = localStorage.getItem('tasks-sort-dir') || 'asc';
 function getSortLevels() {
-  // Returns [{col,dir}, ...] for tiebreaker cascade
   const lvls = [];
   for (let i = 1; i <= 3; i++) {
     const c = localStorage.getItem(`tasks-sort-level-${i}-col`);
@@ -634,14 +919,13 @@ function dateGroup(due) {
   const ym  = due.slice(0,7);
   const [yr, mo] = ym.split('-').map(Number);
   const thisDate = new Date(today);
-  const thisMo   = thisDate.getMonth();   // 0-based
+  const thisMo   = thisDate.getMonth();
   const thisYr   = thisDate.getFullYear();
   const isCurMo  = (yr === thisYr && mo === thisMo + 1);
   const isNextMo = (yr === thisYr && mo === thisMo + 2) ||
                    (thisMo === 11 && yr === thisYr + 1 && mo === 1);
   const label = new Date(yr, mo - 1, 1).toLocaleString('default', {month:'long', year:'numeric'});
   if (isCurMo || isNextMo) return {cls:'grp-month', label};
-  // For future months, just show month/year without parenthetical
   return {cls:'grp-future', label};
 }
 
@@ -655,7 +939,7 @@ function sortTable() {
   removeGroupHeaders();
 
   const pairs = [...document.querySelectorAll('.task-row')].map(row => ({
-    row, note: document.querySelector(`.note-row[data-id="${row.dataset.id}"]`)
+    row, note: document.querySelector(`.tasks-table .note-row[data-id="${row.dataset.id}"]`)
   }));
 
   const extraLevels = getSortLevels();
@@ -665,26 +949,22 @@ function sortTable() {
     if (av < bv) cmp = sortDir === 'asc' ? -1 : 1;
     else if (av > bv) cmp = sortDir === 'asc' ?  1 : -1;
     if (cmp !== 0) return cmp;
-    // Configured multi-level tiebreakers from settings
     for (const {col, dir} of extraLevels) {
       if (col === sortCol) continue;
       const xv = colVal(a.row, col), yv = colVal(b.row, col);
       if (xv < yv) return dir === 'asc' ? -1 : 1;
       if (xv > yv) return dir === 'asc' ?  1 : -1;
     }
-    // Built-in sub-sort: due→priority, priority→due
     if (sortCol === 'due')      return colVal(a.row,'priority') - colVal(b.row,'priority');
     if (sortCol === 'priority') {
       const adv = colVal(a.row,'due'), bdv = colVal(b.row,'due');
       return adv < bdv ? -1 : adv > bdv ? 1 : 0;
     }
-    // Final tiebreaker: alphabetical by description
     return colVal(a.row,'description').localeCompare(colVal(b.row,'description'));
   });
 
   pairs.forEach(({row,note}) => { tbody.appendChild(row); if (note) tbody.appendChild(note); });
 
-  // Inject group headers with select-all checkbox
   function makeGroupHeader(cls, label) {
     const tr = document.createElement('tr');
     tr.className = `group-header-row ${cls}`;
@@ -727,7 +1007,6 @@ function sortTable() {
     }
   }
 
-  // Wire up select-all checkboxes (must be done after inserting headers)
   document.querySelectorAll('.grp-select-all').forEach(cb => {
     cb.addEventListener('change', () => {
       let node = cb.closest('tr').nextElementSibling;
@@ -753,7 +1032,60 @@ function recolorRows() {
   });
 }
 
-// ── Add task ─────────────────────────────────────────────────
+// ── Card group headers & due date styling ─────────────────────
+function applyDueStyling(el, due) {
+  el.classList.remove('overdue', 'due-today');
+  if (!due || due === '—') return;
+  if (due < today) el.classList.add('overdue');
+  else if (due === today) el.classList.add('due-today');
+}
+
+function buildCardGroups() {
+  // Remove existing card group headers
+  document.querySelectorAll('.card-group-hdr').forEach(h => h.remove());
+
+  const cardList = document.getElementById('card-list');
+  if (!cardList) return;
+
+  // Apply due date styling and collect cards
+  const cards = [...cardList.querySelectorAll('.task-card')];
+
+  // Apply styling to due date spans
+  cards.forEach(card => {
+    const due = card.dataset.due;
+    const dueEl = card.querySelector('.card-due');
+    if (dueEl) applyDueStyling(dueEl, due);
+  });
+
+  // Inject group headers (cards are server-sorted by due date asc)
+  let lastGroup = null;
+  const groupCounts = {};
+
+  cards.forEach(card => {
+    if (card.dataset.complete === 'true') return;
+    const due = card.dataset.due;
+    const grp = dateGroup(due);
+    groupCounts[grp.label] = (groupCounts[grp.label] || 0) + 1;
+    if (grp.label !== lastGroup) {
+      const hdr = document.createElement('div');
+      hdr.className = `card-group-hdr ${grp.cls}`;
+      hdr.dataset.grplabel = grp.label;
+      hdr.innerHTML = `${grp.label} <span class="card-group-count"></span>`;
+      cardList.insertBefore(hdr, card);
+      lastGroup = grp.label;
+    }
+  });
+
+  // Fill counts
+  document.querySelectorAll('.card-group-hdr').forEach(hdr => {
+    const label = hdr.dataset.grplabel;
+    hdr.querySelector('.card-group-count').textContent = groupCounts[label] || '';
+  });
+}
+
+buildCardGroups();
+
+// ── Add task (desktop) ────────────────────────────────────────
 async function addTask() {
   const text = document.getElementById('f-task').value.trim();
   if (!text) { document.getElementById('f-task').focus(); return; }
@@ -777,7 +1109,6 @@ async function addTask() {
     body: JSON.stringify({text: fullText, section:'Inbox'})
   });
   if (res.ok) {
-    // Clear form fields
     document.getElementById('f-task').value = '';
     document.getElementById('f-ctx').value = '';
     document.getElementById('f-pri').value = '';
@@ -789,7 +1120,6 @@ async function addTask() {
     alert('Error adding task');
   }
 }
-// Enter commits the add form from any field; date fields open picker on click
 ['f-task','f-ctx','f-rep'].forEach(id => {
   document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addTask(); } });
 });
@@ -800,6 +1130,48 @@ document.getElementById('f-pri').addEventListener('keydown', e => { if (e.key ==
   el.addEventListener('click', () => { try { el.showPicker(); } catch(e) {} });
   el.addEventListener('focus', () => { try { el.showPicker(); } catch(e) {} });
 });
+
+// ── Mobile add sheet ─────────────────────────────────────────
+function openMobAdd() {
+  document.getElementById('mob-add-overlay').classList.add('open');
+  document.getElementById('mob-add-sheet').classList.add('open');
+  setTimeout(() => document.getElementById('mf-task').focus(), 100);
+}
+function closeMobAdd(e) {
+  if (e && e.target !== document.getElementById('mob-add-overlay')) return;
+  document.getElementById('mob-add-overlay').classList.remove('open');
+  document.getElementById('mob-add-sheet').classList.remove('open');
+}
+
+async function addMobTask() {
+  const text = document.getElementById('mf-task').value.trim();
+  if (!text) { document.getElementById('mf-task').focus(); return; }
+
+  const tags = [];
+  const pri  = document.getElementById('mf-pri').value;
+  const ctx  = document.getElementById('mf-ctx').value.trim();
+  const due  = document.getElementById('mf-due').value;
+  const rep  = document.getElementById('mf-rep').value.trim();
+
+  if (pri) tags.push(`#p:${pri}`);
+  if (due) tags.push(`#due:${due}`);
+  if (ctx) tags.push(`#ctx:${ctx}`);
+  if (rep) tags.push(`#rep:${REPEAT_MAP[rep.toLowerCase()] || rep}`);
+  tags.push(`#start:${today}`);
+
+  const fullText = `${text} ${tags.join(' ')}`;
+  const res = await fetch('/tasks/add', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({text: fullText, section:'Inbox'})
+  });
+  if (res.ok) { location.reload(); }
+  else { alert('Error adding task'); }
+}
+
+document.getElementById('mf-task').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); addMobTask(); }
+});
+document.getElementById('mob-add-overlay').addEventListener('click', closeMobAdd);
 
 // ── Delete task ──────────────────────────────────────────────
 async function deleteTask(id) {
@@ -822,19 +1194,10 @@ async function apiUpdate(id, field, value) {
 
 // ── Keyboard shortcuts ────────────────────────────────────────
 document.addEventListener('keydown', (e) => {
-  // Don't trigger shortcuts when typing in inputs
   if (document.activeElement.matches('input, textarea, select')) return;
-
-  if (e.key === 'r' || e.key === 'R') {
-    e.preventDefault();
-    location.reload();
-  } else if (e.key === 'n' || e.key === 'N') {
-    e.preventDefault();
-    document.getElementById('f-task').focus();
-  } else if (e.key === '?') {
-    e.preventDefault();
-    alert('Keyboard shortcuts:\n\nR - Refresh list\nN - New task\n? - Help');
-  }
+  if (e.key === 'r' || e.key === 'R') { e.preventDefault(); location.reload(); }
+  else if (e.key === 'n' || e.key === 'N') { e.preventDefault(); document.getElementById('f-task').focus(); }
+  else if (e.key === '?') { e.preventDefault(); alert('Keyboard shortcuts:\n\nR - Refresh list\nN - New task\n? - Help'); }
 });
 </script>
 {% endblock %}

@@ -456,7 +456,7 @@ def _update_file(path: str, content: str) -> str:
             f"raw/ is immutable. Got: {path}"
         )
     if p.resolve() == (WIKI_DIR / "log.md").resolve():
-        return "Error: update_file refused on wiki/log.md — use prepend_log to add entries."
+        return "Error: update_file refused on wiki/log.md — this file is managed automatically."
     if p.resolve() == (WIKI_DIR / "index.md").resolve():
         return "Error: update_file refused on wiki/index.md — it is auto-generated; use rebuild_index if needed."
     if not p.exists():
@@ -586,6 +586,7 @@ def _ctx():
         t._session_entity_pages = []
         t._session_updated_pages = []
         t._session_read_pages = set()
+        t._session_tool_calls = []
     return t
 
 
@@ -598,6 +599,7 @@ def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
     t._session_entity_pages = []
     t._session_updated_pages = []
     t._session_read_pages = set()
+    t._session_tool_calls = []
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -880,6 +882,13 @@ def _auto_write_log_entry() -> None:
 
     if updated:
         lines.append(f"- **Documents updated**: {', '.join(_tag(p) for p in updated)}")
+
+    tool_calls = _ctx()._session_tool_calls
+    if tool_calls:
+        lines.append("- **Tool calls**:")
+        for fn, arg, ok in tool_calls:
+            mark = "✓" if ok else "✗"
+            lines.append(f"  - {mark} `{fn}` {arg}")
 
     lines.append("- **Status**: Done")
 
@@ -1923,7 +1932,6 @@ def orientation_message() -> str:
     snippets = [f"Today's date: {today}"]
     for rel, max_lines in [
         ("wiki/index.md",    None),
-        ("wiki/log.md",      60),
     ]:
         p = REPO_ROOT / rel
         if p.exists():
@@ -2118,6 +2126,10 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                 result = f"Error: {e}"
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
             log.debug("Tool call: %s  arg=%s  result=%s", fn_name or "(unknown)", str(list(args.values())[:1])[:60], result_preview)
+            # Record for log entry — skip done() itself
+            if fn_name != "done":
+                ok = not (isinstance(result, str) and result.lower().startswith("error"))
+                _ctx()._session_tool_calls.append((fn_name, str(list(args.values())[:1])[:80].strip("[]'\""), ok))
 
             # done() ends the loop — return immediately without sending it back to the LLM.
             if isinstance(result, str) and result.startswith(_DONE_SENTINEL):
@@ -2387,6 +2399,10 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
             log.debug("Tool call: %s  arg=%s", fn_name or "(unknown)", arg_preview[:60])
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
             log.debug("Tool result [%s]: %s", fn_name or "(unknown)", result_preview)
+            # Record for log entry — skip done() itself
+            if fn_name != "done":
+                ok = not (isinstance(result, str) and result.lower().startswith("error"))
+                _ctx()._session_tool_calls.append((fn_name, arg_preview, ok))
 
             # done() is a control signal — it ends the loop, not a message for the LLM.
             if isinstance(result, str) and result.startswith(_DONE_SENTINEL):
