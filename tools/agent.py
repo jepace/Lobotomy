@@ -2106,6 +2106,9 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
 
         for i, tc in enumerate(tool_calls):
             fn_name = (tc.get("function") or {}).get("name") or ""
+            # Strip hallucinated "api:" prefix (Gemini OpenAI-compat quirk)
+            if fn_name not in TOOL_FNS and fn_name.startswith("api:"):
+                fn_name = fn_name[4:]
             # Tolerate LLM hallucinating scope tokens in the tool name
             # e.g. "search_wiki in:sources" → tool=search_wiki, query prepended with "in:sources"
             _scope_in_name = ""
@@ -2360,6 +2363,9 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
         _tools_since_last_continuation += len(tool_calls)
         for i, tc in enumerate(tool_calls):
             fn_name = (tc.get("function") or {}).get("name") or ""
+            # Strip hallucinated "api:" prefix (Gemini OpenAI-compat quirk)
+            if fn_name not in TOOL_FNS and fn_name.startswith("api:"):
+                fn_name = fn_name[4:]
             # Tolerate LLM hallucinating scope tokens in the tool name
             # e.g. "search_wiki in:sources" → tool=search_wiki, query prepended with "in:sources"
             _scope_in_name = ""
