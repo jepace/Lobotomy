@@ -2163,6 +2163,14 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
             messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
                              "name": fn_name, "content": result})
 
+    # Agent exited without calling done() — run post-processing so index stays current.
+    ctx = _ctx()
+    if ctx._current_source_page or ctx._session_entity_pages or ctx._session_updated_pages:
+        log.warning("run_agent_turn: agent never called done() — auto-running post-process")
+        _post_process_session()
+        _auto_write_log_entry()
+    else:
+        _rebuild_index({})
     return messages
 
 
@@ -2459,4 +2467,5 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
         messages.append({"role": "system", "content": "__ingested__:1"})
         yield json.dumps({"type": "done", "ingested": True}) + "\n"
     else:
+        _rebuild_index({})
         yield json.dumps({"type": "done"}) + "\n"
