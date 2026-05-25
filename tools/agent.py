@@ -498,7 +498,7 @@ def _update_file(path: str, content: str) -> str:
             )
 
     _subdir = p.parent.name
-    if _subdir in ("entities", "concepts"):
+    if _subdir in ("entities", "concepts", "synthesis"):
         # Always preserve sources already on disk — the LLM must never shrink this list.
         # First, collect everything already on disk.
         existing_sources: list[str] = []
@@ -1574,10 +1574,10 @@ def _create_file(args: dict) -> str:
     if _subdir in ("entities", "concepts") and _ctx()._current_inbox_path and not _ctx()._current_source_page:
         return (f"Error: create_file refused — create the source page (wiki/sources/...) first, "
                 f"then create entity/concept pages. This ensures sources: frontmatter is populated correctly.")
-    if _subdir in ("entities", "concepts"):
+    if _subdir in ("entities", "concepts", "synthesis"):
         # Always derive sources from the current session source page; ignore LLM-supplied value.
         sources = [_ctx()._current_source_page] if _ctx()._current_source_page else []
-    _missing_sources = _subdir in ("entities", "concepts") and not sources
+    _missing_sources = _subdir in ("entities", "concepts", "synthesis") and not sources
 
     today = datetime.date.today().isoformat()
     created = today
