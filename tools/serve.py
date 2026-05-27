@@ -1854,22 +1854,8 @@ def api_push():
             except (OSError, ValueError, KeyError) as e:
                 log.debug("Skipping unreadable inbox file %s: %s", existing.name, e)
 
-    # If URL given but no content, fetch the page
-    fetch_failed = False
-    fetch_error  = None
-    if url and not content:
-        fetched, fetch_error = _clip_fetch(url)
-        if fetched:
-            content = fetched
-            # Auto-extract title from first non-empty non-markup line
-            if not title:
-                for line in content.splitlines():
-                    line = line.strip().lstrip("#").strip()
-                    if line and not line.startswith("<"):
-                        title = line[:120]
-                        break
-        else:
-            fetch_failed = True
+    # Don't fetch content here — respond instantly and let the inbox "Read" flow handle it.
+    fetch_failed = bool(url and not content)
 
     # Final title fallback
     if not title:
@@ -1905,9 +1891,8 @@ def api_push():
     body = content or ""
     if fetch_failed:
         body = (
-            f"<!-- fetch_failed: {fetch_error or 'unknown'} -->\n\n"
-            "Content could not be fetched automatically. "
-            "Paste the article text here before ingesting."
+            "Content not yet fetched. "
+            "Use the Read button in the inbox to fetch it."
         )
     _atomic_write(dest, "\n".join(fm) + body)
 
