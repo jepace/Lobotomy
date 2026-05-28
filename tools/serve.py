@@ -779,6 +779,44 @@ def _add_task(text: str, section: str = "Inbox") -> None:
 # Inbox helpers
 # ---------------------------------------------------------------------------
 
+def _fetch_and_patch(dest: "pathlib.Path", url: str) -> None:
+    """Background thread: fetch url, rewrite dest with content, clear fetch_failed."""
+    import threading
+    def _run():
+        text, err = _clip_fetch(url)
+        try:
+            raw = dest.read_text(encoding="utf-8", errors="replace")
+            fm, body = _parse_frontmatter(raw)
+            if text:
+                # Update title from content if still a URL-derived fallback
+                if not fm.get("title") or fm.get("title") == url:
+                    for line in text.splitlines():
+                        line = line.strip().lstrip("#").strip()
+                        if line and not line.startswith("<"):
+                            fm["title"] = line[:120]
+                            break
+                fm.pop("fetch_failed", None)
+                new_body = text
+            else:
+                fm["fetch_failed"] = True
+                new_body = body  # leave existing placeholder
+            # Reconstruct frontmatter
+            lines = ["---"]
+            for k, v in fm.items():
+                if isinstance(v, bool):
+                    lines.append(f"{k}: {'true' if v else 'false'}")
+                elif isinstance(v, list):
+                    lines.append(f"{k}: {json.dumps(v)}")
+                else:
+                    lines.append(f'{k}: "{v}"' if k == "title" else f"{k}: {v}")
+            lines += ["---", ""]
+            _atomic_write(dest, "\n".join(lines) + (new_body or ""))
+            log.info("_fetch_and_patch: %s fetched ok=%s", dest.name, bool(text))
+        except Exception as e:
+            log.warning("_fetch_and_patch: failed to patch %s: %s", dest.name, e)
+    threading.Thread(target=_run, daemon=True, name=f"fetch-{dest.stem}").start()
+
+
 def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
     """Fetch a URL and return (clean_text, error). Uses stdlib only."""
     import urllib.request
@@ -1854,22 +1892,8 @@ def api_push():
             except (OSError, ValueError, KeyError) as e:
                 log.debug("Skipping unreadable inbox file %s: %s", existing.name, e)
 
-    # If URL given but no content, fetch the page
-    fetch_failed = False
-    fetch_error  = None
-    if url and not content:
-        fetched, fetch_error = _clip_fetch(url)
-        if fetched:
-            content = fetched
-            # Auto-extract title from first non-empty non-markup line
-            if not title:
-                for line in content.splitlines():
-                    line = line.strip().lstrip("#").strip()
-                    if line and not line.startswith("<"):
-                        title = line[:120]
-                        break
-        else:
-            fetch_failed = True
+    # Save immediately with fetch_failed; background thread fetches and patches the file.
+    needs_fetch = bool(url and not content)
 
     # Final title fallback
     if not title:
@@ -1894,7 +1918,7 @@ def api_push():
     fm.append(f"added: {now}")
     fm.append(f"wikified: false")
     fm.append(f"source: {source}")
-    if fetch_failed:
+    if needs_fetch:
         fm.append(f"fetch_failed: true")
     if author:
         fm.append(f"author: {author}")
@@ -1903,13 +1927,10 @@ def api_push():
     fm += ["---", ""]
 
     body = content or ""
-    if fetch_failed:
-        body = (
-            f"<!-- fetch_failed: {fetch_error or 'unknown'} -->\n\n"
-            "Content could not be fetched automatically. "
-            "Paste the article text here before ingesting."
-        )
     _atomic_write(dest, "\n".join(fm) + body)
+
+    if needs_fetch:
+        _fetch_and_patch(dest, url)
 
     return {
         "ok":          True,
@@ -1919,7 +1940,7 @@ def api_push():
         "title":       title,
         "url":         url or None,
         "saved":       today,
-        "fetch_failed": bool(url and not content),
+        "fetch_failed": needs_fetch,
     }, 201, {"Access-Control-Allow-Origin": "*"}
 
 
@@ -2336,30 +2357,21 @@ def inbox_add():
     name    = (data.get("filename") or "").strip()
     if not content:
         return {"error": "Empty content"}, 400
-    # If the content is just a bare URL, fetch the page now so the reader has content
+    # If the content is just a bare URL, save immediately and fetch in background
     is_url = content.startswith("http") and "\n" not in content and " " not in content.strip()
     if is_url:
         url = content
-        fetched, _ = _clip_fetch(url)
-        body = fetched or ""
-        title = ""
-        if body:
-            for line in body.splitlines():
-                line = line.strip().lstrip("#").strip()
-                if line and not line.startswith("<"):
-                    title = line[:120]
-                    break
-        if not title:
-            title = url.rstrip("/").split("/")[-1].split("?")[0].replace("-", " ").replace("_", " ") or url
+        title = url.rstrip("/").split("/")[-1].split("?")[0].replace("-", " ").replace("_", " ") or url
         slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "article"
         base_name = name or f"{slug}.md"
         dest = RAW_DIR / base_name
         today = datetime.date.today().isoformat()
         now   = datetime.datetime.now().isoformat(timespec="seconds")
         fm    = ["---", f'title: "{title}"', f"url: {url}", f"saved: {today}",
-                 f"added: {now}", "wikified: false", "source: manual", "---", ""]
-        _atomic_write(dest, "\n".join(fm) + body)
-        return {"ok": True, "filename": dest.name, "fetch_failed": not body}
+                 f"added: {now}", "wikified: false", "source: manual", "fetch_failed: true", "---", ""]
+        _atomic_write(dest, "\n".join(fm))
+        _fetch_and_patch(dest, url)
+        return {"ok": True, "filename": dest.name, "fetch_failed": True}
     if not name:
         slug = re.sub(r"[^a-z0-9]+", "-", content[:60].lower()).strip("-")
         name = f"{slug}.txt"

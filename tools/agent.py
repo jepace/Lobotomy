@@ -498,7 +498,7 @@ def _update_file(path: str, content: str) -> str:
             )
 
     _subdir = p.parent.name
-    if _subdir in ("entities", "concepts"):
+    if _subdir in ("entities", "concepts", "synthesis"):
         # Always preserve sources already on disk — the LLM must never shrink this list.
         # First, collect everything already on disk.
         existing_sources: list[str] = []
@@ -1574,10 +1574,10 @@ def _create_file(args: dict) -> str:
     if _subdir in ("entities", "concepts") and _ctx()._current_inbox_path and not _ctx()._current_source_page:
         return (f"Error: create_file refused — create the source page (wiki/sources/...) first, "
                 f"then create entity/concept pages. This ensures sources: frontmatter is populated correctly.")
-    if _subdir in ("entities", "concepts"):
+    if _subdir in ("entities", "concepts", "synthesis"):
         # Always derive sources from the current session source page; ignore LLM-supplied value.
         sources = [_ctx()._current_source_page] if _ctx()._current_source_page else []
-    _missing_sources = _subdir in ("entities", "concepts") and not sources
+    _missing_sources = _subdir in ("entities", "concepts", "synthesis") and not sources
 
     today = datetime.date.today().isoformat()
     created = today
@@ -2163,6 +2163,14 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
             messages.append({"role": "tool", "tool_call_id": tc.get("id", ""),
                              "name": fn_name, "content": result})
 
+    # Agent exited without calling done() — run post-processing so index stays current.
+    ctx = _ctx()
+    if ctx._current_source_page or ctx._session_entity_pages or ctx._session_updated_pages:
+        log.warning("run_agent_turn: agent never called done() — auto-running post-process")
+        _post_process_session()
+        _auto_write_log_entry()
+    else:
+        _rebuild_index({})
     return messages
 
 
@@ -2459,4 +2467,5 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
         messages.append({"role": "system", "content": "__ingested__:1"})
         yield json.dumps({"type": "done", "ingested": True}) + "\n"
     else:
+        _rebuild_index({})
         yield json.dumps({"type": "done"}) + "\n"
