@@ -1327,6 +1327,7 @@ def search_wiki_core(query: str, wiki_dir: Path) -> dict:
       after:YYYY-MM-DD  require created >= date
       before:YYYY-MM-DD require created <= date
       <keyword>       AND-matched against page text (case-insensitive)
+      OR              separates alternatives within a group: foo OR bar baz → (foo|bar) AND baz
 
     Returns a dict with keys:
       keywords   list[str]
@@ -1361,7 +1362,23 @@ def search_wiki_core(query: str, wiki_dir: Path) -> dict:
     if not kw_tokens and not required_tag and not after_date and not before_date:
         return {"keywords": [], "scope": scope, "results": [], "error": "no search terms provided"}
 
-    patterns = [re.compile(re.escape(kw), re.IGNORECASE) for kw in kw_tokens]
+    # Split kw_tokens on literal "OR" to build AND-of-OR-groups.
+    # "foo OR bar baz" → [[foo,bar],[baz]] — page must match (foo|bar) AND baz.
+    or_groups: "list[list]" = []
+    prev_was_or = False
+    for t in kw_tokens:
+        if t.upper() == "OR":
+            prev_was_or = True
+            continue
+        p = re.compile(re.escape(t), re.IGNORECASE)
+        if prev_was_or and or_groups:
+            or_groups[-1].append(p)
+        else:
+            or_groups.append([p])
+        prev_was_or = False
+
+    # Flatten for display / scoring
+    patterns = [p for g in or_groups for p in g]
 
     if scope and scope in _VALID_SUBDIRS:
         search_root = wiki_dir / scope
@@ -1412,7 +1429,7 @@ def search_wiki_core(query: str, wiki_dir: Path) -> dict:
         searchable = _SYS_FIELDS.sub('', text)
         searchable = re.sub(r'\]\([^)]*\)', ']()', searchable)
 
-        if patterns and not all(p.search(searchable) for p in patterns):
+        if or_groups and not all(any(p.search(searchable) for p in g) for g in or_groups):
             continue
         score = sum(len(p.findall(searchable)) for p in patterns) if patterns else 1
         if not score:
@@ -1432,7 +1449,7 @@ def search_wiki_core(query: str, wiki_dir: Path) -> dict:
         for i, line in enumerate(file_lines):
             if _SKIP_SNIPPET.match(line.strip()):
                 continue
-            if patterns and any(p.search(line) for p in patterns):
+            if patterns and any(p.search(line) for p in patterns):  # any pattern for snippet
                 snippet = line.strip()[:120]
                 snippet_lines = file_lines[max(0, i - 2):i + 3]
                 break
