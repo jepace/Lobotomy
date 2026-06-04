@@ -76,7 +76,7 @@ log = logging.getLogger("lobotomy.serve")
 
 # Suppress noisy polling endpoints from werkzeug's access log.
 class _SuppressPollingPaths(logging.Filter):
-    _QUIET = {"/chat/status", "/api/status"}
+    _QUIET = {"/chat/status", "/api/status", "/inbox/list"}
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
         return not any(p in msg for p in self._QUIET)
