@@ -191,8 +191,7 @@ For each significant entity (person, organization, product, project) in the sour
   4. Rewrite the entity page from this complete picture using `update_file`. Do not set `sources:`
      — it is managed automatically. Preserve the original `created` date.
 - **If the entity is new**, use `create_file` for `wiki/entities/{slug}.md`. Do not set `sources:`
-  — it is injected automatically. Do not search `in:sources` for new entities — there are no prior
-  source pages to find.
+  — it is injected automatically. Before creating, call `search_wiki` with query `"<entity name> in:sources"` — if any source pages exist, read them first so the new page reflects everything already known.
 - Note any contradictions with existing claims in a `## Contradictions` section.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
@@ -211,8 +210,9 @@ For each significant concept, technique, framework, or term:
   4. Rewrite the concept page from this complete picture using `update_file`. Do not set `sources:`
      — it is managed automatically. Preserve the original `created` date.
 - **If no document exists** and the concept warrants one, use `create_file` for
-  `wiki/concepts/{slug}.md`. Do not set `sources:` — it is injected automatically. Do not search
-  `in:sources` for new concepts — there are no prior source pages to find.
+  `wiki/concepts/{slug}.md`. Do not set `sources:` — it is injected automatically. Before creating,
+  call `search_wiki` with query `"<concept name> in:sources"` — if any source pages exist, read them
+  first so the new page reflects everything already known.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
 ### Step 7 — Update synthesis documents
