@@ -2,7 +2,7 @@
 """
 Lobotomy — Web server
 
-Mobile-friendly web app: chat with AI, browse wiki, manage tasks, capture articles.
+Mobile-friendly web app: chat with AI, browse wiki, capture articles.
 
 Requirements:
   pip install flask markdown openai resend
@@ -92,7 +92,6 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
 
 BLOG_DIR = REPO_ROOT / "blog"
 from job_queue import JobQueue
-from task_manager import read_tasks, write_tasks, get_all_contexts, get_all_projects, TASKS_FILE
 from auth  import (user_exists, create_user, authenticate, get_user, update_password,
                    set_verified, create_token, consume_token, record_attempt,
                    is_locked_out, send_verification_email, send_reset_email,
@@ -191,8 +190,6 @@ def inject_globals():
     path = request.path
     if path.startswith("/wiki"):
         active = "wiki"
-    elif path.startswith("/tasks"):
-        active = "tasks"
     elif path.startswith("/inbox") or path.startswith("/reading-list"):
         active = "inbox"
     elif path.startswith("/blog"):
@@ -656,125 +653,6 @@ def render_md_raw(text: str) -> str:
     return html
 
 # ---------------------------------------------------------------------------
-# Task helpers
-# ---------------------------------------------------------------------------
-
-def parse_tasks() -> list:
-    tasks_file = WIKI_DIR / "tasks.md"
-    if not tasks_file.exists():
-        return []
-    lines        = tasks_file.read_text(encoding="utf-8").splitlines()
-    tasks        = []
-    current_sect = "Inbox"
-    today        = datetime.date.today().isoformat()
-    for i, line in enumerate(lines):
-        if line.startswith("## "):
-            current_sect = line[3:].strip()
-            continue
-        m = re.match(r"^(\s*)-\s+\[([ x])\]\s+(.+)$", line)
-        if not m:
-            continue
-        indent, checked, text = m.groups()
-        p   = re.search(r"#p:(\w+)",     text)
-        d   = re.search(r"#due:(\S+)",   text)
-        c   = re.search(r"#ctx:(\w+)",   text)
-        s   = re.search(r"#s:(\w+)",     text)
-        st  = re.search(r"#start:(\S+)", text)
-        lg  = re.search(r"#len:(\S+)",   text)
-        rep = re.search(r"#rep:(\S+)",   text)
-        start = st.group(1) if st else ""
-        # Hide tasks whose start date is in the future
-        if start and start > today and checked != "x":
-            continue
-        tasks.append({
-            "line":     i,
-            "done":     checked == "x",
-            "text":     re.sub(r"#\S+", "", text).strip(),
-            "section":  current_sect,
-            "indent":   len(indent) // 2,
-            "priority": p.group(1) if p else "",
-            "due":      d.group(1) if d else "",
-            "context":  c.group(1) if c else "",
-            "status":   s.group(1) if s else "",
-            "start":    start,
-            "length":   lg.group(1) if lg else "",
-            "repeat":   rep.group(1) if rep else "",
-            "star":     bool(re.search(r"#star\b", text)),
-        })
-    return tasks
-
-
-def _next_due(rep: str, current_due: str, done_date: str) -> str:
-    import calendar
-    m = re.match(r"^(\d+)([dwmy])(\+?)$", rep.lower())
-    if not m:
-        return ""
-    n, unit, after = int(m.group(1)), m.group(2), m.group(3) == "+"
-    base_str = done_date if after else current_due
-    try:
-        base = datetime.date.fromisoformat(base_str)
-    except (ValueError, TypeError):
-        return ""
-    if unit == "d":
-        return (base + datetime.timedelta(days=n)).isoformat()
-    if unit == "w":
-        return (base + datetime.timedelta(weeks=n)).isoformat()
-    if unit == "m":
-        mo = base.month - 1 + n
-        yr = base.year + mo // 12
-        mo = mo % 12 + 1
-        dy = min(base.day, calendar.monthrange(yr, mo)[1])
-        return datetime.date(yr, mo, dy).isoformat()
-    if unit == "y":
-        try:
-            return base.replace(year=base.year + n).isoformat()
-        except ValueError:
-            return base.replace(year=base.year + n, day=28).isoformat()
-    return ""
-
-
-def _toggle_task(line_num: int, action: str) -> bool:
-    tasks_file = WIKI_DIR / "tasks.md"
-    lines = tasks_file.read_text(encoding="utf-8").splitlines()
-    if not (0 <= line_num < len(lines)):
-        return False
-    line = lines[line_num]
-    if action == "complete" and "- [ ]" in line:
-        today = datetime.date.today().isoformat()
-        lines[line_num] = line.replace("- [ ]", "- [x]") + f" #done:{today}"
-        rep_m = re.search(r"#rep:(\S+)", line)
-        if rep_m:
-            due_m    = re.search(r"#due:(\S+)", line)
-            due      = due_m.group(1) if due_m else today
-            next_due = _next_due(rep_m.group(1), due, today)
-            if next_due:
-                new_line = re.sub(r"\s*#done:\S+", "", line)
-                if due_m:
-                    new_line = re.sub(r"#due:\S+", f"#due:{next_due}", new_line)
-                else:
-                    new_line += f" #due:{next_due}"
-                lines.insert(line_num + 1, new_line)
-    elif action == "reopen" and "- [x]" in line:
-        lines[line_num] = re.sub(r"\s*#done:\S+", "", line).replace("- [x]", "- [ ]")
-    else:
-        return False
-    tasks_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return True
-
-
-def _add_task(text: str, section: str = "Inbox") -> None:
-    tasks_file = WIKI_DIR / "tasks.md"
-    if not tasks_file.exists():
-        tasks_file.write_text("# Tasks\n\n## Inbox\n\n", encoding="utf-8")
-    content = tasks_file.read_text(encoding="utf-8")
-    entry   = f"- [ ] {text.strip()}\n"
-    pattern = rf"(## {re.escape(section)}\n)"
-    if re.search(pattern, content):
-        content = re.sub(pattern, r"\1" + entry, content, count=1)
-    else:
-        content = content.rstrip("\n") + f"\n\n## {section}\n\n{entry}"
-    tasks_file.write_text(content, encoding="utf-8")
-
 # ---------------------------------------------------------------------------
 # Inbox helpers
 # ---------------------------------------------------------------------------
@@ -1372,7 +1250,7 @@ def wiki_save(page_path):
 def wiki_lint():
     import re as _re
     SKIP_ALL   = {"log.md"}
-    SKIP_FM    = {"index.md", "overview.md", "reading-list.md", "tasks.md", "tasks-archive.md"}
+    SKIP_FM    = {"index.md", "overview.md", "reading-list.md"}
     required_fields = {"title", "type", "tags", "created", "updated", "sources"}
     index_text = (WIKI_DIR / "index.md").read_text(encoding="utf-8") if (WIKI_DIR / "index.md").exists() else ""
 
@@ -1552,146 +1430,6 @@ def raw_file(filename):
     else:
         # For other files, serve as download
         return send_file(p, as_attachment=True)
-
-
-@app.route("/tasks")
-@require_login
-def tasks():
-    tasks_list = read_tasks()
-    tasks_list.sort(key=lambda t: t.due or "9999-12-31")
-    return render_template("tasks_view.html", tasks=tasks_list,
-                           all_contexts=get_all_contexts(),
-                           all_projects=get_all_projects())
-
-
-@app.route("/tasks/toggle", methods=["POST"])
-@require_login
-def tasks_toggle():
-    data   = request.get_json(silent=True) or {}
-    line   = data.get("line")
-    action = data.get("action")
-    if line is None or action not in ("complete", "reopen"):
-        return {"error": "bad request"}, 400
-    return {"ok": _toggle_task(int(line), action)}
-
-
-@app.route("/tasks/add", methods=["POST"])
-@require_login
-def tasks_add():
-    data    = request.get_json(silent=True) or {}
-    text    = (data.get("text")    or "").strip()
-    section = (data.get("section") or "Inbox").strip()
-    if not text:
-        return {"error": "Empty task"}, 400
-    _add_task(text, section)
-    return {"ok": True}
-
-
-@app.route("/tasks/update", methods=["POST"])
-@require_login
-def tasks_update():
-    data = request.get_json(silent=True) or {}
-    task_id = data.get("task_id")
-    field = data.get("field")
-    value = data.get("value", "").strip()
-
-    if task_id is None or field is None:
-        return {"error": "missing task_id or field"}, 400
-
-    tasks_list = read_tasks()
-    if not (0 <= task_id < len(tasks_list)):
-        return {"error": "task not found"}, 404
-
-    task = tasks_list[task_id]
-    next_task = None
-
-    if field == "description":
-        task.description = value
-    elif field == "context":
-        task.set_context(value if value else None)
-    elif field == "due":
-        task.set_due(value if value else None)
-    elif field == "priority":
-        task.set_priority(value if value else None)
-    elif field == "project":
-        task.set_project(value if value else None)
-    elif field == "recurrence":
-        task.set_recurrence(value if value else None)
-    elif field == "start":
-        task.set_start(value if value else None)
-    elif field == "notes":
-        task.set_notes(value)
-    elif field == "complete":
-        if value == "true":
-            task.complete_task()
-            # Handle recurrence: create next occurrence if recurring
-            next_task = task.get_next_recurrence()
-        else:
-            task.reopen_task()
-    else:
-        return {"error": "unknown field"}, 400
-
-    # Write the updated tasks
-    write_tasks(tasks_list)
-
-    # If a new recurring task was created, append it to the file
-    if next_task:
-        next_line = next_task.to_line()
-        next_notes = next_task.raw_notes.strip()
-
-        with open(TASKS_FILE, 'a', encoding='utf-8') as f:
-            f.write('\n' + next_line)
-            if next_notes:
-                for note_line in next_notes.split('\n'):
-                    f.write('\n' + note_line)
-
-    result = {"ok": True}
-    if next_task:
-        result["next_task"] = {
-            "description": next_task.description,
-            "due": next_task.due,
-            "priority": next_task.priority,
-            "context": next_task.context,
-            "recurrence": next_task.recurrence,
-        }
-    return result
-
-
-@app.route("/tasks/bulk-update", methods=["POST"])
-@require_login
-def tasks_bulk_update():
-    data = request.get_json(silent=True) or {}
-    action = data.get("action")
-    task_ids = data.get("task_ids", [])
-    value = data.get("value", "").strip()
-
-    if action is None:
-        return {"error": "missing action"}, 400
-
-    tasks_list = read_tasks()
-
-    for task_id in task_ids:
-        if not (0 <= task_id < len(tasks_list)):
-            continue
-
-        task = tasks_list[task_id]
-
-        if action == "set-priority":
-            task.set_priority(value if value else None)
-        elif action == "set-context":
-            task.set_context(value if value else None)
-        elif action == "set-due":
-            task.set_due(value if value else None)
-        elif action == "set-project":
-            task.set_project(value if value else None)
-        elif action == "delete":
-            task.description = "[DELETED]"
-            task.complete = True
-        else:
-            return {"error": "unknown action"}, 400
-
-    write_tasks(tasks_list)
-    return {"ok": True}
 
 
 @app.route("/reading-list")
@@ -2888,88 +2626,6 @@ def blog_post(slug):
         abort(404)
     html = md_lib.markdown(body, extensions=_MD_EXTENSIONS)
     return render_template("blog_post.html", meta=meta, content=html, slug=slug)
-
-# ---------------------------------------------------------------------------
-# Daily tasks email
-# ---------------------------------------------------------------------------
-
-def _build_daily_email() -> str | None:
-    """Return HTML email body for overdue + today tasks, or None if nothing to send."""
-    today_str = datetime.date.today().isoformat()
-    tasks = read_tasks()
-    overdue = [t for t in tasks if not t.complete and t.due and t.due < today_str]
-    due_today = [t for t in tasks if not t.complete and t.due == today_str]
-    if not overdue and not due_today:
-        return None
-
-    def task_row(t):
-        pri = f"[{t.priority.upper()}] " if t.priority else ""
-        ctx = f" @{t.context}" if t.context else ""
-        return f"<li>{pri}{t.description}{ctx}</li>"
-
-    sections = []
-    if overdue:
-        items = "".join(task_row(t) for t in sorted(overdue, key=lambda t: t.due or ""))
-        sections.append(f"<h3 style='color:#ff3b30;margin:16px 0 6px'>Overdue ({len(overdue)})</h3><ul>{items}</ul>")
-    if due_today:
-        items = "".join(task_row(t) for t in due_today)
-        sections.append(f"<h3 style='color:#ff9500;margin:16px 0 6px'>Due today ({len(due_today)})</h3><ul>{items}</ul>")
-
-    body = "".join(sections)
-    base_url = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
-    return (
-        f"<div style='font-family:-apple-system,sans-serif;max-width:480px;margin:0 auto;padding:16px'>"
-        f"<h2 style='margin:0 0 4px'>Lobotomy — Daily Summary</h2>"
-        f"<p style='color:#8e8e93;font-size:13px;margin:0 0 16px'>{today_str}</p>"
-        f"{body}"
-        f"<p style='margin-top:20px;font-size:13px'><a href='{base_url}/tasks'>Open Tasks</a></p>"
-        f"</div>"
-    )
-
-
-def _send_daily_tasks_email() -> None:
-    """Send the daily tasks summary if enabled and configured."""
-    from auth import _resend_ready, _send_email, get_user, get_settings
-    if not _resend_ready():
-        return
-    settings = get_settings()
-    if not settings.get("daily_email_enabled"):
-        return
-    user = get_user() or {}
-    recipient = settings.get("daily_email_address") or user.get("email", "")
-    if not recipient:
-        return
-    html = _build_daily_email()
-    if not html:
-        return
-    today_str = datetime.date.today().isoformat()
-    try:
-        _send_email(recipient, f"Tasks for {today_str}", html)
-        log.info("Daily email sent to %s", recipient)
-    except Exception as e:
-        log.error("Daily email send failed: %s", e, exc_info=True)
-
-
-def _daily_email_loop() -> None:
-    import time as _time
-    last_sent = None
-    while True:
-        _time.sleep(60)
-        try:
-            send_hour = cfg_int("email", "daily_tasks_hour", default=-1)
-            if send_hour < 0:
-                continue  # not configured → disabled
-            now = datetime.datetime.now()
-            today_str = now.date().isoformat()
-            if now.hour == send_hour and last_sent != today_str:
-                _send_daily_tasks_email()
-                last_sent = today_str
-        except Exception as e:
-            log.error("Daily email loop error: %s", e, exc_info=True)
-
-
-import threading as _threading
-_threading.Thread(target=_daily_email_loop, daemon=True, name="daily-email").start()
 
 # ---------------------------------------------------------------------------
 # Inbox process-all state
