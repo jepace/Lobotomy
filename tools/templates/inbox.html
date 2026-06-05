@@ -244,16 +244,68 @@
 <script>
 // Auto-refresh inbox list every 30s, only while tab is visible
 const seenItems = new Set();
+const itemState = {}; // name -> {has_content, wikified, wiki_path}
+
 (function initItems() {
   document.querySelectorAll('.reading-item').forEach(el => {
-    const match = el.id.match(/^item-(\d+)$/);
-    if (match) {
-      const idx = match[1];
-      const name = el.querySelector('.item-header')?.getAttribute('onclick')?.match(/'([^']+)'/)?.[1];
-      if (name) seenItems.add(name);
-    }
+    const name = el.dataset.name;
+    if (!name) return;
+    seenItems.add(name);
+    itemState[name] = {
+      has_content: !!el.querySelector('.act-btn.read'),
+      wikified:    !!el.querySelector('.wikified-badge'),
+      wiki_path:   el.querySelector('a.wikified-badge')?.getAttribute('href')?.replace('/wiki/', '') || '',
+    };
   });
 })();
+
+function patchItemStatus(item) {
+  const prev = itemState[item.name];
+  if (!prev) return;
+  // Find the card by data-name
+  const card = document.querySelector(`.reading-item[data-name="${CSS.escape(item.name)}"]`);
+  if (!card) return;
+  let changed = false;
+
+  // Read button: appears when has_content flips true
+  if (item.has_content && !prev.has_content) {
+    const actions = card.querySelector('.item-actions');
+    if (actions && !actions.querySelector('.act-btn.read')) {
+      const a = document.createElement('a');
+      a.className = 'act-btn read';
+      a.href = '/inbox/read/' + encodeURIComponent(item.name);
+      a.textContent = 'Read';
+      actions.prepend(a);
+    }
+    prev.has_content = true;
+    changed = true;
+  }
+
+  // Wikified badge
+  if (item.wikified && !prev.wikified) {
+    const meta = card.querySelector('.item-meta');
+    if (meta && !meta.querySelector('.wikified-badge')) {
+      if (item.wiki_path) {
+        const a = document.createElement('a');
+        a.className = 'wikified-badge';
+        a.href = '/wiki/' + item.wiki_path;
+        a.onclick = e => e.stopPropagation();
+        a.textContent = 'Wikified ✓';
+        meta.appendChild(a);
+      } else {
+        const span = document.createElement('span');
+        span.className = 'wikified-badge';
+        span.textContent = 'Wikified ✓';
+        meta.appendChild(span);
+      }
+    }
+    prev.wikified = true;
+    prev.wiki_path = item.wiki_path;
+    changed = true;
+  }
+
+  return changed;
+}
 
 async function pollInbox() {
   try {
@@ -261,11 +313,17 @@ async function pollInbox() {
     const data = await resp.json();
     const items = data.items || [];
 
+    // Patch status of existing items
+    items.forEach(item => patchItemStatus(item));
+
     // Find new items
     const newItems = items.filter(item => !seenItems.has(item.name));
     if (newItems.length === 0) return;
 
-    newItems.forEach(item => seenItems.add(item.name));
+    newItems.forEach(item => {
+      seenItems.add(item.name);
+      itemState[item.name] = { has_content: item.has_content, wikified: item.wikified, wiki_path: item.wiki_path };
+    });
 
     // Find first reading-item or empty-state
     const page = document.querySelector('.page');
@@ -335,7 +393,59 @@ async function pollInbox() {
   }
 }
 
-setInterval(() => { if (!document.hidden) pollInbox(); }, 30000);
+setInterval(() => { if (!document.hidden) pollInbox(); }, 8000);
+
+// Pull-to-refresh
+(function() {
+  const page = document.querySelector('.page');
+  if (!page) return;
+  let startY = 0, pulling = false, indicator = null;
+  const THRESHOLD = 64;
+
+  function getIndicator() {
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.style.cssText = 'position:sticky;top:0;left:0;right:0;height:0;overflow:visible;' +
+        'display:flex;align-items:flex-start;justify-content:center;pointer-events:none;z-index:200;';
+      indicator.innerHTML = '<div id="ptr-inner" style="background:var(--bg2);border-radius:50%;' +
+        'width:36px;height:36px;display:flex;align-items:center;justify-content:center;' +
+        'font-size:18px;margin-top:8px;opacity:0;transform:scale(0.5);' +
+        'transition:opacity .15s,transform .15s;box-shadow:0 2px 8px rgba(0,0,0,.15);">↓</div>';
+      page.prepend(indicator);
+    }
+    return indicator.querySelector('#ptr-inner');
+  }
+
+  page.addEventListener('touchstart', e => {
+    if (page.scrollTop === 0) { startY = e.touches[0].clientY; pulling = true; }
+  }, {passive: true});
+
+  page.addEventListener('touchmove', e => {
+    if (!pulling) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy <= 0) { pulling = false; return; }
+    const progress = Math.min(dy / THRESHOLD, 1);
+    const inner = getIndicator();
+    inner.style.opacity = progress;
+    inner.style.transform = `scale(${0.5 + 0.5 * progress}) rotate(${progress * 180}deg)`;
+    inner.textContent = progress >= 1 ? '↺' : '↓';
+  }, {passive: true});
+
+  page.addEventListener('touchend', async e => {
+    if (!pulling) return;
+    pulling = false;
+    const dy = e.changedTouches[0].clientY - startY;
+    const inner = getIndicator();
+    if (dy >= THRESHOLD) {
+      inner.textContent = '↺';
+      inner.style.opacity = '1';
+      inner.style.transform = 'scale(1) rotate(0deg)';
+      await pollInbox();
+    }
+    inner.style.opacity = '0';
+    inner.style.transform = 'scale(0.5)';
+  }, {passive: true});
+})();
 
 
 function toggleSave() {
