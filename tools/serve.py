@@ -1530,6 +1530,61 @@ def api_search():
     })
 
 
+@app.route("/save")
+def save_redirect():
+    """
+    Bookmarklet-friendly save endpoint. Accepts GET with query params so the
+    bookmarklet can just set location.href — no fetch(), no CORS, no CSP issues.
+
+      /save?url=<url>&title=<title>&key=<push_key>
+
+    Saves the item and redirects back to the original URL with a fragment so
+    the user sees a visual confirmation via the browser's back-navigation.
+    """
+    url   = request.args.get("url",   "").strip()
+    title = request.args.get("title", "").strip()
+    key   = request.args.get("key",   "").strip()
+
+    push_key = cfg_get("api", "push_key", "").strip()
+    if not push_key or key != push_key:
+        return "Unauthorized", 403
+    if not url:
+        return "Missing url", 400
+
+    # Reuse the same save logic as /api/push
+    inbox_dir = RAW_DIR
+    for existing in inbox_dir.glob("*.md"):
+        if existing.name == "index.md":
+            continue
+        try:
+            meta, _ = _parse_frontmatter(existing.read_text(encoding="utf-8", errors="replace"))
+            if meta.get("url", "").strip() == url:
+                return redirect(url + "#lobotomy-saved")
+        except Exception:
+            pass
+
+    if not title:
+        title = url.rstrip("/").split("/")[-1].split("?")[0].replace("-", " ").replace("_", " ") or url
+
+    slug      = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "article"
+    base_name = f"{slug}.md"
+    dest      = inbox_dir / base_name
+    if dest.exists():
+        import time as _t
+        base_name = f"{slug}-{int(_t.time())}.md"
+        dest      = inbox_dir / base_name
+
+    today = datetime.date.today().isoformat()
+    now   = datetime.datetime.now().isoformat(timespec="seconds")
+    fm    = ["---", f'title: "{title}"', f"url: {url}",
+             f"saved: {today}", f"added: {now}",
+             "wikified: false", "source: bookmarklet", "fetch_failed: true", "---", ""]
+    _atomic_write(dest, "\n".join(fm))
+    _fetch_and_patch(dest, url)
+
+    return redirect(url + "#lobotomy-saved")
+
+
 @app.route("/api/push", methods=["POST", "OPTIONS"])
 def api_push():
     """
