@@ -6,7 +6,7 @@ set -e
 #   --full:    include wiki/ and raw/ (default: preserve them)
 #   --dry-run: show what would be synced without making changes
 
-JAIL_ROOT="/usr/local/bastille/jails/Lobotomy/root/var/www/Lobotomy"
+JAIL_ROOT="/usr/local/bastille/jails/lobotomy/root/var/www/Lobotomy"
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ ! -d "$JAIL_ROOT" ]; then
