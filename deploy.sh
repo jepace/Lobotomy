@@ -3,7 +3,7 @@ set -e
 
 # Deploy Lobotomy to FreeBSD jail using rsync
 # Usage: ./deploy.sh [--full] [--dry-run]
-#   --full:    include wiki/, raw/, and blog/ (default: preserve them)
+#   --full:    include wiki/ and raw/ (default: preserve them)
 #   --dry-run: show what would be synced without making changes
 
 JAIL_ROOT="/usr/local/bastille/jails/Lobotomy/root/var/www/Lobotomy"
@@ -39,7 +39,7 @@ for arg in "$@"; do
 done
 
 if [ "$FULL_DEPLOY" = "1" ]; then
-    echo "🔴 FULL DEPLOY MODE: will overwrite wiki/, raw/, blog/"
+    echo "🔴 FULL DEPLOY MODE: will overwrite wiki/, raw/"
     echo "   (Ctrl+C to cancel)"
     sleep 2
 fi
@@ -63,12 +63,11 @@ RSYNC_ARGS="$RSYNC_ARGS --exclude=server.log*"
 if [ "$FULL_DEPLOY" != "1" ]; then
     RSYNC_ARGS="$RSYNC_ARGS --exclude=wiki/"
     RSYNC_ARGS="$RSYNC_ARGS --exclude=raw/"
-    RSYNC_ARGS="$RSYNC_ARGS --exclude=blog/"
     RSYNC_ARGS="$RSYNC_ARGS --exclude=config.json"
     RSYNC_ARGS="$RSYNC_ARGS --exclude=.user.json"
     RSYNC_ARGS="$RSYNC_ARGS --exclude=.tokens.json"
     RSYNC_ARGS="$RSYNC_ARGS --exclude=.login_log.json"
-    echo "📦 Deploying code (preserving wiki/, raw/, blog/, config.json)..."
+    echo "📦 Deploying code (preserving wiki/, raw/, config.json)..."
 else
     echo "📦 Deploying everything..."
 fi

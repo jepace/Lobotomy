@@ -33,7 +33,7 @@ sh tools/lint.sh                           # shell-based broken-link checker
 
 **`tools/agent.py`** — the heart of the system. Contains all AI tool implementations (`_read_file`, `_write_file`, `_create_file`, `_autolink`, `_search_wiki`, `_fetch_url`, `_prepend_log`, `_done`, `_rebuild_index`, etc.) plus the agentic loop (`stream_agent_turn`, `run_agent_turn`) and LLM provider abstraction. Both `serve.py` and `wiki.py` import from here.
 
-**`tools/serve.py`** — Flask web server. Routes for: `/chat` (streaming AI), `/wiki/*` (rendered markdown), `/inbox` (read-it-later), `/blog`, auth, and settings. Imports `agent.py` for AI functionality and `job_queue.py` for background jobs.
+**`tools/serve.py`** — Flask web server. Routes for: `/chat` (streaming AI), `/wiki/*` (rendered markdown), `/inbox` (read-it-later), auth, and settings. Imports `agent.py` for AI functionality and `job_queue.py` for background jobs.
 
 **`tools/wiki.py`** — CLI wrapper around the same agent tools. An interactive REPL or one-shot runner; no Flask dependency.
 

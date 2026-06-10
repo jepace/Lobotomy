@@ -182,6 +182,10 @@ For each significant entity (person, organization, product, project) in the sour
   how large the wiki is or what it contains — always search first. Do not create a document until
   you have confirmed no existing document covers this entity. Search by the entity's full name and
   any common abbreviations or alternate names.
+- **HARD LIMIT: 2 searches per entity maximum — no exceptions.** Search 1: full name. Search 2:
+  abbreviation or alternate name. If neither returns a match, stop immediately and treat as new.
+  Do NOT search again. Do NOT try capitalization variants. Do NOT add `in:entities`, `in:concepts`,
+  `in:sources`, or `in:synthesis` modifiers as additional attempts. Two searches total, then move on.
 - **If a document exists**, build full context before rewriting it:
   1. Read the existing entity page. Note the `sources:` frontmatter list — that is your reading list.
   2. Call `search_wiki` with query `"<entity name> in:sources"` to find any source pages not already
@@ -201,6 +205,10 @@ For each significant concept, technique, framework, or term:
   how large the wiki is or what it contains — always search first. Do not create a document until
   you have confirmed no existing document covers this concept. Search by the concept's full name
   and any common abbreviations or alternate names.
+- **HARD LIMIT: 2 searches per concept maximum — no exceptions.** Search 1: full name. Search 2:
+  abbreviation or alternate name. If neither returns a match, stop immediately and treat as new.
+  Do NOT search again. Do NOT try capitalization variants. Do NOT add scope modifiers as additional
+  attempts. Two searches total, then move on.
 - **If a document exists**, build full context before rewriting it:
   1. Read the existing concept page. Note the `sources:` frontmatter list — that is your reading list.
   2. Call `search_wiki` with query `"<concept name> in:sources"` to find any source pages not already
