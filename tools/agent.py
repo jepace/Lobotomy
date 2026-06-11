@@ -587,6 +587,7 @@ def _ctx():
         t._session_updated_pages = []
         t._session_read_pages = set()
         t._session_tool_calls = []
+        t._session_search_counts = {}
     return t
 
 
@@ -600,6 +601,7 @@ def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
     t._session_updated_pages = []
     t._session_read_pages = set()
     t._session_tool_calls = []
+    t._session_search_counts = {}
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -1469,12 +1471,33 @@ def search_wiki_core(query: str, wiki_dir: Path) -> dict:
     return {"keywords": kw_tokens, "scope": scope, "results": results, "error": None}
 
 
+_SEARCH_HARD_LIMIT = 2
+
+
 def _search_wiki(args: dict) -> str:
     """Keyword search across all wiki pages. Returns matching pages with title, path, snippet.
     Supports in:<subdir>, tag:, after:YYYY-MM-DD, before:YYYY-MM-DD filter tokens."""
     query = args.get("query", "").strip()
     if not query:
         return "Error: query is required."
+
+    # Enforce per-session search limit per normalized query term.
+    # Strip scope/filter tokens to get the bare keyword for counting.
+    _norm_key = " ".join(
+        t.lower() for t in query.split()
+        if not t.startswith(("in:", "tag:", "after:", "before:"))
+    )
+    ctx = _ctx()
+    counts = ctx._session_search_counts
+    counts[_norm_key] = counts.get(_norm_key, 0) + 1
+    if counts[_norm_key] > _SEARCH_HARD_LIMIT:
+        log.warning("search_wiki hard limit reached for %r (count=%d) — blocking repeat search",
+                    _norm_key, counts[_norm_key])
+        return (
+            f"Search limit reached: '{_norm_key}' has already been searched "
+            f"{_SEARCH_HARD_LIMIT} times this session. "
+            "Do not search for this term again. Treat as not found and proceed."
+        )
 
     res = search_wiki_core(query, WIKI_DIR)
     if res["error"]:
