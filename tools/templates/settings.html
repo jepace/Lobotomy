@@ -171,57 +171,33 @@
     </div>
   </div>
 
-  <!-- Task Sort Order -->
+  <!-- AI Model -->
   <div class="settings-section">
-    <h2>Task Sort Order</h2>
+    <h2>AI Model</h2>
     <div class="settings-card">
-      <div class="settings-row" style="flex-direction:column; align-items:flex-start; gap:0;">
-        <div style="padding-bottom:8px;">
-          <label>Default sort cascade</label>
-          <div class="hint">Applied as tiebreakers in order. Column-header clicks override for the session.</div>
-        </div>
-      </div>
-      {% for lvl in [1,2,3,4] %}
+      {% if all_providers | length > 1 %}
       <div class="field-group">
-        <label>Level {{ lvl }}</label>
-        <select id="sort-level-{{ lvl }}" onchange="saveSortLevels()">
-          <option value="">— none —</option>
-          <option value="due">Due Date</option>
-          <option value="priority">Priority</option>
-          <option value="context">Context</option>
-          <option value="description">Task Name (A–Z)</option>
-          <option value="start">Start Date</option>
+        <label>Provider</label>
+        <select id="ai-provider" onchange="onProviderChange()">
+          {% for p in all_providers %}
+          <option value="{{ p }}" {% if p == active_provider %}selected{% endif %}>{{ p }}</option>
+          {% endfor %}
         </select>
       </div>
-      {% endfor %}
-      <div class="form-msg" id="sort-msg"></div>
-    </div>
-  </div>
-
-  <!-- Daily Tasks Email -->
-  <div class="settings-section">
-    <h2>Daily Tasks Email</h2>
-    <div class="settings-card">
+      {% else %}
       <div class="settings-row">
         <div>
-          <label>Send daily summary</label>
-          <div class="hint">Overdue + due today, sent each morning</div>
+          <label>Provider</label>
+          <div class="hint">{{ active_provider }}</div>
         </div>
-        <label class="toggle-switch">
-          <input type="checkbox" id="email-enabled"
-                 {% if settings.get('daily_email_enabled') %}checked{% endif %}
-                 onchange="saveEmailPrefs()">
-          <span class="toggle-track"></span>
-        </label>
       </div>
+      {% endif %}
       <div class="field-group">
-        <label>Send to</label>
-        <input type="email" id="email-address"
-               value="{{ settings.get('daily_email_address') or user.get('email', '') }}"
-               placeholder="{{ user.get('email', 'you@example.com') }}"
-               oninput="scheduleEmailSave()">
+        <label>Model</label>
+        <select id="ai-model" onchange="scheduleModelSave()">
+        </select>
       </div>
-      <div class="form-msg" id="email-msg"></div>
+      <div class="form-msg" id="model-msg"></div>
     </div>
   </div>
 
@@ -342,45 +318,62 @@ async function saveProfile() {
   } catch(e) { showMsg(msg, 'Network error', 'err'); }
 }
 
-// ── Sort levels ────────────────────────────────────────────
-(function loadSortLevels() {
-  for (let i = 1; i <= 4; i++) {
-    const val = localStorage.getItem(`tasks-sort-level-${i}-col`) || '';
-    const sel = document.getElementById(`sort-level-${i}`);
-    if (sel) sel.value = val;
+// ── AI Model picker ────────────────────────────────────────
+const _providerModels = {{ provider_models | tojson }};
+const _activeProvider = {{ active_provider | tojson }};
+const _activeModel    = {{ active_model | tojson }};
+
+function populateModelSelect(provider, selectedModel) {
+  const sel = document.getElementById('ai-model');
+  sel.innerHTML = '';
+  const models = _providerModels[provider] || [];
+  if (!models.length) {
+    // no curated list — just show a free-text option with current model
+    sel.appendChild(new Option(selectedModel || '(default)', selectedModel || ''));
+    return;
   }
-})();
-function saveSortLevels() {
-  for (let i = 1; i <= 4; i++) {
-    const val = document.getElementById(`sort-level-${i}`)?.value || '';
-    if (val) localStorage.setItem(`tasks-sort-level-${i}-col`, val);
-    else localStorage.removeItem(`tasks-sort-level-${i}-col`);
+  models.forEach(m => {
+    const o = new Option(m, m);
+    if (m === selectedModel) o.selected = true;
+    sel.appendChild(o);
+  });
+  if (selectedModel && !models.includes(selectedModel)) {
+    const o = new Option(selectedModel, selectedModel, true, true);
+    sel.appendChild(o);
   }
-  const msg = document.getElementById('sort-msg');
-  showMsg(msg, 'Saved ✓', 'ok');
 }
 
-// ── Email preferences ──────────────────────────────────────
-let emailSaveTimer = null;
-function scheduleEmailSave() {
-  clearTimeout(emailSaveTimer);
-  emailSaveTimer = setTimeout(saveEmailPrefs, 800);
+function onProviderChange() {
+  const provider = document.getElementById('ai-provider')?.value || _activeProvider;
+  const models = _providerModels[provider] || [];
+  populateModelSelect(provider, models[0] || '');
+  scheduleModelSave();
 }
-async function saveEmailPrefs() {
-  clearTimeout(emailSaveTimer);
-  const enabled = document.getElementById('email-enabled').checked;
-  const address = document.getElementById('email-address').value.trim();
-  const msg = document.getElementById('email-msg');
+
+let modelSaveTimer = null;
+function scheduleModelSave() {
+  clearTimeout(modelSaveTimer);
+  modelSaveTimer = setTimeout(saveModel, 600);
+}
+async function saveModel() {
+  clearTimeout(modelSaveTimer);
+  const provider = document.getElementById('ai-provider')?.value || _activeProvider;
+  const model    = document.getElementById('ai-model').value;
+  const msg = document.getElementById('model-msg');
   try {
-    const r = await fetch('/settings/preferences', {
+    const r = await fetch('/api/set-model', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({daily_email_enabled: enabled, daily_email_address: address})
+      body: JSON.stringify({provider, model})
     });
     const d = await r.json();
     if (d.ok) showMsg(msg, 'Saved ✓', 'ok');
     else showMsg(msg, d.error || 'Error', 'err');
   } catch(e) { showMsg(msg, 'Network error', 'err'); }
 }
+
+(function initModelPicker() {
+  populateModelSelect(_activeProvider, _activeModel);
+})();
 
 function showMsg(el, text, cls) {
   el.textContent = text;

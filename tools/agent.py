@@ -18,7 +18,7 @@ from typing import Generator
 log = logging.getLogger("lobotomy.agent")
 
 sys.path.insert(0, str(Path(__file__).parent))
-from config import cfg_get, cfg_int, cfg_api_key, cfg_provider
+from config import cfg_get, cfg_int, cfg_api_key, cfg_provider, cfg_active_provider
 
 # RPM rate-limit tracking (shared across threads)
 _request_times: collections.deque = collections.deque()
@@ -61,7 +61,7 @@ def get_client_and_model():
     """Return (client_dict, model_name, error_string_or_None).
     client_dict has keys: api_key, endpoint.
     """
-    provider_name = cfg_get("llm", "provider", "openai").lower()
+    provider_name = cfg_active_provider()
     preset        = PROVIDERS.get(provider_name, PROVIDERS["openai"])
 
     p        = cfg_provider(provider_name)
@@ -72,7 +72,7 @@ def get_client_and_model():
     if not api_key:
         return None, None, (
             f"No API key for provider '{provider_name}'.\n"
-            f"  Set llm.api_key in config.json."
+            f"  Set llm.providers.{provider_name}.api_key in config.json."
         )
 
     client = {"api_key": api_key, "endpoint": f"{base_url}/chat/completions"}
@@ -2068,8 +2068,9 @@ def _error_message(exc) -> str:
 
 def _create(client: dict, messages: list, system: str) -> dict:
     """Non-streaming create with two-phase retry and RPM awareness."""
-    provider_name = cfg_get("llm", "provider", "openai").lower()
-    model = cfg_get("llm", "model") or PROVIDERS.get(provider_name, PROVIDERS["openai"])["default_model"]
+    provider_name = cfg_active_provider()
+    p = cfg_provider(provider_name)
+    model = p.get("model") or cfg_get("llm", "model") or PROVIDERS.get(provider_name, PROVIDERS["openai"])["default_model"]
     payload = {
         "model":      model,
         "messages":   [{"role": "system", "content": system}] + messages,
@@ -2227,8 +2228,8 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
     Phase 2: poll every retry_poll_interval seconds indefinitely.
     Updates messages in-place so history can be saved after the generator finishes.
     """
-    provider_name  = cfg_get("llm", "provider", "openai").lower()
-    resolved_model = model or PROVIDERS.get(provider_name, PROVIDERS["openai"])["default_model"]
+    provider_name  = cfg_active_provider()
+    resolved_model = model or cfg_provider(provider_name).get("model") or PROVIDERS.get(provider_name, PROVIDERS["openai"])["default_model"]
     last_user = next(
         (m["content"] for m in reversed(messages)
          if m.get("role") == "user" and isinstance(m.get("content"), str)),
