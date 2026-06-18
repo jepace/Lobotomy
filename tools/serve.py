@@ -83,7 +83,9 @@ class _SuppressPollingPaths(logging.Filter):
 
 logging.getLogger("werkzeug").addFilter(_SuppressPollingPaths())
 
-from config import cfg_get, cfg_bool, cfg_int, validate_config
+from config import (cfg_get, cfg_bool, cfg_int, validate_config,
+                    cfg_active_provider, cfg_provider, cfg_available_models,
+                    cfg_all_providers, cfg_write_llm)
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, run_agent_turn, system_prompt,
@@ -334,11 +336,19 @@ def settings_page():
     settings = get_settings()
     push_key = cfg_get("api", "push_key", "")
     base_url = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
+    active_provider = cfg_active_provider()
+    all_providers   = cfg_all_providers()
+    active_model    = cfg_provider(active_provider).get("model", "")
+    provider_models = {p: cfg_available_models(p) for p in all_providers}
     return render_template("settings.html",
                            user=user,
                            settings=settings,
                            push_key=push_key,
-                           base_url=base_url)
+                           base_url=base_url,
+                           active_provider=active_provider,
+                           all_providers=all_providers,
+                           active_model=active_model,
+                           provider_models=provider_models)
 
 
 @app.route("/settings/password", methods=["POST"])
@@ -382,6 +392,27 @@ def settings_profile():
     if patch:
         update_settings(patch)
     return {"ok": True}
+
+
+@app.route("/api/set-model", methods=["POST"])
+@require_login
+def api_set_model():
+    data = request.get_json(silent=True) or {}
+    provider = str(data.get("provider", "")).strip().lower()
+    model    = str(data.get("model", "")).strip()
+    if not provider:
+        return {"error": "provider required"}, 400
+    known = cfg_all_providers()
+    if provider not in known:
+        return {"error": f"Unknown provider '{provider}'"}, 400
+    patch: dict = {"active": provider}
+    if model:
+        patch["providers"] = {provider: {"model": model}}
+    try:
+        cfg_write_llm(patch)
+    except RuntimeError as e:
+        return {"error": str(e)}, 500
+    return {"ok": True, "provider": provider, "model": model}
 
 
 # ---------------------------------------------------------------------------
