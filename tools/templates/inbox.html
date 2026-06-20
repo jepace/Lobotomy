@@ -576,13 +576,18 @@ async function editItem(name, idx) {
   const textarea = document.getElementById('edit-body-' + idx);
   textarea.value = 'Loading…';
   editDiv.classList.add('open');
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const resp = await fetch('/inbox/view/' + encodeURIComponent(name));
+    const resp = await fetch('/inbox/view/' + encodeURIComponent(name), {signal: ctrl.signal});
+    clearTimeout(tid);
     const data = await resp.json();
     textarea.value = data.content || '';
     textarea.focus();
   } catch(e) {
+    clearTimeout(tid);
     textarea.value = '';
+    textarea.focus();
   }
 }
 
@@ -593,11 +598,22 @@ function cancelEdit(idx) {
 async function saveEdit(name, idx) {
   const textarea = document.getElementById('edit-body-' + idx);
   const content  = textarea.value;
-  const resp = await fetch('/inbox/edit', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({filename: name, content}),
-  });
-  const data = await resp.json();
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 15000);
+  let data;
+  try {
+    const resp = await fetch('/inbox/edit', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename: name, content}),
+      signal: ctrl.signal,
+    });
+    clearTimeout(tid);
+    data = await resp.json();
+  } catch(e) {
+    clearTimeout(tid);
+    alert('Save failed: ' + e.message);
+    return;
+  }
   if (data.ok) {
     if (data.filename && data.filename !== name) {
       // File was renamed (e.g. .url promoted to .md) — reload to reflect new state
@@ -643,23 +659,23 @@ async function wikifyItem(name, idx) {
     }
     const job = await sendResp.json();
 
-    const streamResp = await fetch('/chat/stream/' + job.job_id);
-    const reader  = streamResp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+    // Poll for events instead of holding a long-lived streaming connection open.
+    // A streaming connection occupies one of the browser's 6 per-host connection slots,
+    // which starves other requests (edit panel, etc.) after a few concurrent jobs.
     const tools = [];
+    let seenCount = 0;
     let ingestedFlag = false;
+    let done = false;
 
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      buffer += decoder.decode(chunk.value, {stream: true});
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const ev = JSON.parse(line);
+    while (!done) {
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        const evResp = await fetch('/chat/events/' + job.job_id);
+        const evData = await evResp.json();
+        done = evData.done;
+        const allEvents = evData.events || [];
+        for (let i = seenCount; i < allEvents.length; i++) {
+          const ev = allEvents[i];
           if (ev.type === 'tool') {
             tools.push('⚙ ' + ev.name + (ev.arg ? '  ' + ev.arg : ''));
             progress.innerHTML = tools.map(t => `<div class="prog-tool">${t}</div>`).join('');
@@ -672,18 +688,21 @@ async function wikifyItem(name, idx) {
           } else if (ev.type === 'done') {
             ingestedFlag = ev.ingested === true;
           }
-        } catch(e) {}
+        }
+        seenCount = allEvents.length;
+      } catch(pollErr) {
+        console.warn('wikify poll error:', pollErr);
       }
     }
+
     if (!ingestedFlag) {
-      progress.innerHTML += `<div class="prog-error">Ingest failed — no wiki page was created. Check fetch errors above.</div>`;
+      progress.innerHTML += `<div class="prog-error">Ingest failed — no wiki page was created. Check errors above.</div>`;
       btn.disabled = false;
       btn.textContent = 'Wikify';
       if (navChat) navChat.classList.remove('ai-busy');
       return;
     }
     btn.textContent = 'Wikified ✓';
-    // Mark wikified in file frontmatter; use returned wiki_path for direct link
     const wikiResp = await fetch('/inbox/mark-wikified', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({filename: name}),
