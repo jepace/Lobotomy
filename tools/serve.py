@@ -76,7 +76,7 @@ log = logging.getLogger("lobotomy.serve")
 
 # Suppress noisy polling endpoints from werkzeug's access log.
 class _SuppressPollingPaths(logging.Filter):
-    _QUIET = {"/chat/status", "/api/status", "/inbox/list"}
+    _QUIET = {"/chat/status", "/api/status", "/inbox/list", "/chat/events"}
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
         return not any(p in msg for p in self._QUIET)
@@ -1115,6 +1115,32 @@ def chat_stream(job_id):
     def generate():
         yield from job_queue.tail(job_id)
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
+
+
+@app.route("/chat/events/<job_id>")
+@require_login
+def chat_events(job_id):
+    """Non-streaming: return all events emitted by a job so far. For client-side polling."""
+    f = job_queue._event_file(job_id)
+    if not f.exists():
+        return {"events": [], "done": False}
+    events = []
+    done = False
+    try:
+        for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+                events.append(ev)
+                if ev.get("type") == "done":
+                    done = True
+            except json.JSONDecodeError:
+                pass
+    except OSError:
+        pass
+    return {"events": events, "done": done}
 
 
 @app.route("/chat/status")
