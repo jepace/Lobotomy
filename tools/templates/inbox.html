@@ -394,6 +394,13 @@ async function pollInbox() {
 }
 
 setInterval(() => { if (!document.hidden) pollInbox(); }, 8000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pollInbox(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'r' && !e.metaKey && !e.ctrlKey && !e.altKey &&
+      !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {
+    pollInbox();
+  }
+});
 
 // Pull-to-refresh
 (function() {
