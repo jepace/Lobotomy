@@ -1,0 +1,59 @@
+#!/bin/sh
+#
+# PROVIDE: lobotomy
+# REQUIRE: LOGIN networking
+# KEYWORD: shutdown
+#
+# Add to /etc/rc.conf:
+#   lobotomy_enable="YES"
+
+. /etc/rc.subr
+
+name="lobotomy"
+rcvar="lobotomy_enable"
+
+: ${lobotomy_enable:="NO"}
+: ${lobotomy_user:="www"}
+: ${lobotomy_group:="www"}
+: ${lobotomy_dir:="/var/www/Lobotomy"}
+: ${lobotomy_python:="/usr/local/bin/python3"}
+: ${lobotomy_log:="/var/log/lobotomy.log"}
+: ${lobotomy_env:="HOME=/var/www/Lobotomy"}
+
+pidfile="/var/run/${name}.pid"
+command="/usr/sbin/daemon"
+command_args="-p ${pidfile} -u ${lobotomy_user} -o ${lobotomy_log} \
+    /usr/bin/env ${lobotomy_env} \
+    ${lobotomy_python} ${lobotomy_dir}/tools/serve.py"
+
+start_precmd="lobotomy_prestart"
+
+lobotomy_prestart()
+{
+    # Ensure log file is writable by www
+    touch "${lobotomy_log}"
+    chown "${lobotomy_user}:${lobotomy_group}" "${lobotomy_log}"
+
+    # wiki/ and raw/ must be writable — these are the backing store
+    chown -R "${lobotomy_user}:${lobotomy_group}" \
+        "${lobotomy_dir}/wiki" \
+        "${lobotomy_dir}/raw"
+
+    # Config and user state files
+    for f in "${lobotomy_dir}/config.json" \
+              "${lobotomy_dir}/.user.json" \
+              "${lobotomy_dir}/.tokens.json" \
+              "${lobotomy_dir}/.login_log.json"; do
+        if [ -f "$f" ]; then
+            chown "${lobotomy_user}:${lobotomy_group}" "$f"
+        fi
+    done
+
+    # Job queue scratch dir (created at runtime if absent)
+    if [ -d "${lobotomy_dir}/wiki/.jobs" ]; then
+        chown -R "${lobotomy_user}:${lobotomy_group}" "${lobotomy_dir}/wiki/.jobs"
+    fi
+}
+
+load_rc_config $name
+run_rc_command "$1"
