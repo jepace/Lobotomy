@@ -20,7 +20,7 @@ rcvar="lobotomy_enable"
 : ${lobotomy_log:="/var/log/lobotomy.log"}
 : ${lobotomy_env:="HOME=/var/www/Lobotomy"}
 
-pidfile="/var/run/${name}.pid"
+pidfile="/var/run/${name}/${name}.pid"
 command="/usr/sbin/daemon"
 command_args="-p ${pidfile} -u ${lobotomy_user} -o ${lobotomy_log} \
     /usr/bin/env ${lobotomy_env} \
@@ -30,6 +30,10 @@ start_precmd="lobotomy_prestart"
 
 lobotomy_prestart()
 {
+    # Create pid directory owned by www so daemon can write the pidfile
+    install -d -o "${lobotomy_user}" -g "${lobotomy_group}" -m 755 \
+        "/var/run/${name}"
+
     # Ensure log file is writable by www
     touch "${lobotomy_log}"
     chown "${lobotomy_user}:${lobotomy_group}" "${lobotomy_log}"
