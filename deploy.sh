@@ -60,6 +60,7 @@ RSYNC_ARGS="$RSYNC_ARGS --exclude=deploy.sh"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=README.md"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=CLAUDE.md"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=server.log*"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=usr/"
 
 # Exclude data dirs if not full deploy
 if [ "$FULL_DEPLOY" != "1" ]; then
