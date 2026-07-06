@@ -8,7 +8,7 @@ set -e
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 JAIL_ROOT="/usr/local/bastille/jails/lobotomy/root/var/www/Lobotomy"
-RC_SRC="$REPO_DIR/rc.d/lobotomy"
+RC_SRC="$REPO_DIR/contrib/freebsd/rc.d/lobotomy"
 RC_DEST="/usr/local/bastille/jails/lobotomy/root/usr/local/etc/rc.d/lobotomy"
 
 if [ ! -d "$JAIL_ROOT" ]; then
