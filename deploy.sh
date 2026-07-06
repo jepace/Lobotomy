@@ -6,7 +6,9 @@ set -e
 #   --full:    include wiki/ and raw/ (default: preserve them)
 #   --dry-run: show what would be synced without making changes
 
-JAIL_ROOT="/usr/local/bastille/jails/lobotomy/root/var/www/Lobotomy"
+JAIL_ROOT="/usr/local/bastille/jails/Lobotomy/root/var/www/Lobotomy"
+RC_SRC="$REPO_DIR/usr/local/etc/rc.d/lobotomy"
+RC_DEST="/usr/local/bastille/jails/Lobotomy/root/usr/local/etc/rc.d/lobotomy"
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ ! -d "$JAIL_ROOT" ]; then
@@ -76,13 +78,18 @@ fi
 # Trailing slash on source = sync contents (not the dir itself)
 eval rsync $RSYNC_ARGS "$REPO_DIR/" "$JAIL_ROOT/"
 
+# Install rc script directly — rsync puts it under the app dir,
+# but it belongs in the jail's /usr/local/etc/rc.d/
+mkdir -p "$(dirname "$RC_DEST")"
+install -m 555 "$RC_SRC" "$RC_DEST"
+echo "✔ rc.d script installed → $RC_DEST"
+
 echo ""
 echo "✅ Deploy complete!"
 echo ""
 echo "Next steps:"
-echo "  1. Log into the jail: bastille console Lobotomy"
 if [ "$FULL_DEPLOY" != "1" ]; then
-    echo "  2. Verify config.json has correct API keys"
+    echo "  1. Verify config.json has correct API keys"
 fi
-echo "  3. Restart the service: service lobotomy restart"
-echo "     (or: pkill -f 'python3.*serve.py')"
+echo "  • Enable service (first deploy): bastille cmd Lobotomy sysrc lobotomy_enable=YES"
+echo "  • Restart: bastille cmd Lobotomy service lobotomy restart"
