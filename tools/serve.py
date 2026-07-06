@@ -2559,9 +2559,10 @@ def inbox_edit():
         m = re.match(r'^---\n.*?\n---\n', existing, re.DOTALL)
         if m:
             fm_block = existing[:m.end()]
-            # If user pasted content, clear fetch_failed so Read/Wikify become available
+            # If user pasted content, clear fetch_failed and reset wikified
             if content.strip():
                 fm_block = re.sub(r'^fetch_failed:.*\n', '', fm_block, flags=re.MULTILINE)
+                fm_block = re.sub(r'^wikified:.*\n', 'wikified: false\n', fm_block, flags=re.MULTILINE)
             p.write_text(fm_block + "\n" + content, encoding="utf-8")
         else:
             p.write_text(content, encoding="utf-8")
