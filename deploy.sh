@@ -6,10 +6,10 @@ set -e
 #   --full:    include wiki/ and raw/ (default: preserve them)
 #   --dry-run: show what would be synced without making changes
 
-JAIL_ROOT="/usr/local/bastille/jails/Lobotomy/root/var/www/Lobotomy"
-RC_SRC="$REPO_DIR/usr/local/etc/rc.d/lobotomy"
-RC_DEST="/usr/local/bastille/jails/Lobotomy/root/usr/local/etc/rc.d/lobotomy"
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+JAIL_ROOT="/usr/local/bastille/jails/lobotomy/root/var/www/Lobotomy"
+RC_SRC="$REPO_DIR/usr/local/etc/rc.d/lobotomy"
+RC_DEST="/usr/local/bastille/jails/lobotomy/root/usr/local/etc/rc.d/lobotomy"
 
 if [ ! -d "$JAIL_ROOT" ]; then
     echo "Error: Jail not found at $JAIL_ROOT"
@@ -91,5 +91,5 @@ echo "Next steps:"
 if [ "$FULL_DEPLOY" != "1" ]; then
     echo "  1. Verify config.json has correct API keys"
 fi
-echo "  • Enable service (first deploy): bastille cmd Lobotomy sysrc lobotomy_enable=YES"
-echo "  • Restart: bastille cmd Lobotomy service lobotomy restart"
+echo "  • Enable service (first deploy): bastille cmd lobotomy sysrc lobotomy_enable=YES"
+echo "  • Restart: bastille cmd lobotomy service lobotomy restart"
