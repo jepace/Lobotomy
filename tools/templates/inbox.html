@@ -636,7 +636,6 @@ async function saveEdit(name, idx) {
     card?.querySelector('.wikified-badge')?.remove();
     if (itemState[name]) itemState[name].wikified = false;
     // Refresh the inline reader if it was open
-    const card = document.getElementById('item-' + idx);
     if (card.classList.contains('expanded')) {
       loaded[idx] = false;
       const reader = document.getElementById('reader-' + idx);
