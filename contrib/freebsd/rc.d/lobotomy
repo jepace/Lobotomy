@@ -1,5 +1,13 @@
 #!/bin/sh
 #
+# FreeBSD rc.d script for Lobotomy.
+#
+# Install once:
+#   install -o root -g wheel -m 555 contrib/freebsd/rc.d/lobotomy /usr/local/etc/rc.d/lobotomy
+#
+# Enable via rc.conf:
+#   sysrc lobotomy_enable="YES"
+#
 # PROVIDE: lobotomy
 # REQUIRE: LOGIN networking
 # KEYWORD: shutdown
@@ -7,47 +15,73 @@
 . /etc/rc.subr
 
 name="lobotomy"
+desc="Lobotomy personal knowledge base"
 rcvar="lobotomy_enable"
-desc="Lobotomy knowledge base server"
 
-load_rc_config $name
+load_rc_config "$name"
 
 : ${lobotomy_enable:="NO"}
-: ${lobotomy_user:="www"}
-: ${lobotomy_group:="www"}
+# NOTE: deliberately NOT named lobotomy_user/lobotomy_group — those are
+# rc.subr magic variables that wrap $command in `su -m`, stacking on top of
+# daemon(8)'s own -u drop and causing double privilege-drop failures.
+# Use daemon(8)'s -u exclusively; keep these names distinct.
+: ${lobotomy_runas_user:="www"}
+: ${lobotomy_runas_group:="www"}
 : ${lobotomy_dir:="/var/www/Lobotomy"}
 : ${lobotomy_python:="/usr/local/bin/python3"}
-: ${lobotomy_log:="/var/log/lobotomy.log"}
+: ${lobotomy_logfile:="/var/log/lobotomy.log"}
 
 pidfile="/var/run/${name}/${name}.pid"
 procname="${lobotomy_python}"
+
 command="/usr/sbin/daemon"
-command_args="-f -p ${pidfile} -u ${lobotomy_user} -o ${lobotomy_log} \
+command_args="-f -p ${pidfile} -o ${lobotomy_logfile} -u ${lobotomy_runas_user} \
     ${lobotomy_python} ${lobotomy_dir}/tools/serve.py"
 
-start_precmd="${name}_prestart"
+start_precmd="lobotomy_precmd"
+stop_postcmd="lobotomy_stop_postcmd"
 
-lobotomy_prestart()
+lobotomy_precmd()
 {
-    install -d -o "${lobotomy_user}" -g "${lobotomy_group}" -m 755 \
-        "/var/run/${name}"
+	install -d -o "${lobotomy_runas_user}" -g "${lobotomy_runas_group}" -m 750 \
+		"$(dirname "${pidfile}")"
 
-    touch "${lobotomy_log}"
-    chown "${lobotomy_user}:${lobotomy_group}" "${lobotomy_log}"
+	touch "${lobotomy_logfile}"
+	chown "${lobotomy_runas_user}:${lobotomy_runas_group}" "${lobotomy_logfile}"
 
-    chown -R "${lobotomy_user}:${lobotomy_group}" \
-        "${lobotomy_dir}/wiki" \
-        "${lobotomy_dir}/raw"
+	chown -R "${lobotomy_runas_user}:${lobotomy_runas_group}" \
+		"${lobotomy_dir}/wiki" \
+		"${lobotomy_dir}/raw"
 
-    for f in "${lobotomy_dir}/config.json" \
-              "${lobotomy_dir}/.user.json" \
-              "${lobotomy_dir}/.tokens.json" \
-              "${lobotomy_dir}/.login_log.json"; do
-        [ -f "$f" ] && chown "${lobotomy_user}:${lobotomy_group}" "$f"
-    done
+	for f in "${lobotomy_dir}/config.json" \
+		  "${lobotomy_dir}/.user.json" \
+		  "${lobotomy_dir}/.tokens.json" \
+		  "${lobotomy_dir}/.login_log.json"; do
+		[ -f "$f" ] && chown "${lobotomy_runas_user}:${lobotomy_runas_group}" "$f"
+	done
 
-    [ -d "${lobotomy_dir}/wiki/.jobs" ] && \
-        chown -R "${lobotomy_user}:${lobotomy_group}" "${lobotomy_dir}/wiki/.jobs"
+	[ -d "${lobotomy_dir}/wiki/.jobs" ] && \
+		chown -R "${lobotomy_runas_user}:${lobotomy_runas_group}" \
+			"${lobotomy_dir}/wiki/.jobs"
+}
+
+lobotomy_stop_postcmd()
+{
+	_n=0
+	while [ ${_n} -lt 15 ]; do
+		[ -f "${pidfile}" ] || return 0
+		_pid=$(cat "${pidfile}" 2>/dev/null)
+		if [ -z "${_pid}" ] || ! kill -0 "${_pid}" 2>/dev/null; then
+			return 0
+		fi
+		sleep 1
+		_n=$((_n + 1))
+	done
+	if [ -n "${_pid}" ] && kill -0 "${_pid}" 2>/dev/null; then
+		warn "lobotomy didn't exit within 15s of SIGTERM; sending SIGKILL"
+		kill -9 "${_pid}" 2>/dev/null
+	fi
+	rm -f "${pidfile}"
 }
 
 run_rc_command "$1"
