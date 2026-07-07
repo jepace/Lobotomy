@@ -3,14 +3,14 @@
 # PROVIDE: lobotomy
 # REQUIRE: LOGIN networking
 # KEYWORD: shutdown
-#
-# Add to /etc/rc.conf:
-#   lobotomy_enable="YES"
 
 . /etc/rc.subr
 
 name="lobotomy"
 rcvar="lobotomy_enable"
+desc="Lobotomy knowledge base server"
+
+load_rc_config $name
 
 : ${lobotomy_enable:="NO"}
 : ${lobotomy_user:="www"}
@@ -20,44 +20,34 @@ rcvar="lobotomy_enable"
 : ${lobotomy_log:="/var/log/lobotomy.log"}
 
 pidfile="/var/run/${name}/${name}.pid"
+procname="${lobotomy_python}"
 command="/usr/sbin/daemon"
-command_args="-p ${pidfile} -o ${lobotomy_log} -f \
+command_args="-f -p ${pidfile} -o ${lobotomy_log} \
     ${lobotomy_python} ${lobotomy_dir}/tools/serve.py"
 
-# rc.subr handles dropping privileges to ${lobotomy_user} via su(1),
-# which works even when www has /usr/sbin/nologin as shell.
-start_precmd="lobotomy_prestart"
+start_precmd="${name}_prestart"
 
 lobotomy_prestart()
 {
-    # Create pid directory owned by www so daemon can write the pidfile
     install -d -o "${lobotomy_user}" -g "${lobotomy_group}" -m 755 \
         "/var/run/${name}"
 
-    # Ensure log file is writable by www
     touch "${lobotomy_log}"
     chown "${lobotomy_user}:${lobotomy_group}" "${lobotomy_log}"
 
-    # wiki/ and raw/ must be writable — these are the backing store
     chown -R "${lobotomy_user}:${lobotomy_group}" \
         "${lobotomy_dir}/wiki" \
         "${lobotomy_dir}/raw"
 
-    # Config and user state files
     for f in "${lobotomy_dir}/config.json" \
               "${lobotomy_dir}/.user.json" \
               "${lobotomy_dir}/.tokens.json" \
               "${lobotomy_dir}/.login_log.json"; do
-        if [ -f "$f" ]; then
-            chown "${lobotomy_user}:${lobotomy_group}" "$f"
-        fi
+        [ -f "$f" ] && chown "${lobotomy_user}:${lobotomy_group}" "$f"
     done
 
-    # Job queue scratch dir (created at runtime if absent)
-    if [ -d "${lobotomy_dir}/wiki/.jobs" ]; then
+    [ -d "${lobotomy_dir}/wiki/.jobs" ] && \
         chown -R "${lobotomy_user}:${lobotomy_group}" "${lobotomy_dir}/wiki/.jobs"
-    fi
 }
 
-load_rc_config $name
 run_rc_command "$1"
