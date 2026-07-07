@@ -22,7 +22,7 @@ load_rc_config $name
 pidfile="/var/run/${name}/${name}.pid"
 procname="${lobotomy_python}"
 command="/usr/sbin/daemon"
-command_args="-f -p ${pidfile} -o ${lobotomy_log} \
+command_args="-f -p ${pidfile} -u ${lobotomy_user} -o ${lobotomy_log} \
     ${lobotomy_python} ${lobotomy_dir}/tools/serve.py"
 
 start_precmd="${name}_prestart"
