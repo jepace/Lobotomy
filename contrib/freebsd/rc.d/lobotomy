@@ -18,14 +18,14 @@ rcvar="lobotomy_enable"
 : ${lobotomy_dir:="/var/www/Lobotomy"}
 : ${lobotomy_python:="/usr/local/bin/python3"}
 : ${lobotomy_log:="/var/log/lobotomy.log"}
-: ${lobotomy_env:="HOME=/var/www/Lobotomy"}
 
 pidfile="/var/run/${name}/${name}.pid"
 command="/usr/sbin/daemon"
-command_args="-p ${pidfile} -u ${lobotomy_user} -o ${lobotomy_log} \
-    /usr/bin/env ${lobotomy_env} \
+command_args="-p ${pidfile} -o ${lobotomy_log} -f \
     ${lobotomy_python} ${lobotomy_dir}/tools/serve.py"
 
+# rc.subr handles dropping privileges to ${lobotomy_user} via su(1),
+# which works even when www has /usr/sbin/nologin as shell.
 start_precmd="lobotomy_prestart"
 
 lobotomy_prestart()
