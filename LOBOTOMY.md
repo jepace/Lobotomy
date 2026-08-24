@@ -38,7 +38,9 @@ raw/index.md           Auto-generated index of all raw sources and their state.
 raw/assets/            Binary attachments (images, PDFs) referenced by raw sources.
 
 wiki/                  All LLM-generated content lives here.
-wiki/index.md          Master catalog. Auto-generated — do not read or edit directly.
+wiki/index.md          Master catalog of every page. Auto-generated — never edit.
+                       Its full contents are given to you up front in "Current wiki
+                       state". It is the authority on what pages exist.
 wiki/sources/          One summary document per ingested source.
 wiki/entities/         People, organizations, products, projects, codebases.
 wiki/concepts/         Ideas, techniques, frameworks, algorithms, terms.
@@ -139,6 +141,32 @@ All raw files live permanently in `raw/`. State (wikified, archived) is tracked 
 
 Execute all steps in order. Do not skip any step.
 
+### Index first, search second
+
+Two different questions, two different tools. Confusing them wastes entire rounds:
+
+- **"Does a page for X already exist?"** → Answer from `wiki/index.md`. Its complete
+  contents are already in your context under "Current wiki state", listing every page
+  under Sources, Entities, Concepts, and Synthesis with its title and path. Read it.
+  **Do not call `search_wiki` to answer this** — you already have the answer, and every
+  call costs a full round-trip.
+- **"Which pages mention X?"** → That requires full-text search, which the index cannot
+  answer. Use `search_wiki` for this, and only this.
+
+So: scan the index for the title. If it is there, you have the path — go straight to
+`read_file`. If it is not there, the page does not exist — go straight to `create_file`.
+The index is regenerated on every page write and is never stale.
+
+Call `search_wiki` during ingest only when:
+- You need source pages that mention an entity or concept (the `in:sources` searches in
+  Steps 5 and 6), or
+- The index is genuinely ambiguous — a title that might be recorded under a different
+  name, an acronym, or an alternate spelling. One search, then decide.
+
+**Never search for a term more than twice in a session.** The server enforces this and
+will refuse the third call. If two searches find nothing, the answer is "it does not
+exist" — create the page and move on.
+
 ### Step 1 — Verify source location
 The file must be in `raw/`. If the user gives pasted text, ask them to save it
 to `raw/` first as a `.txt` or `.md` file.
@@ -166,10 +194,15 @@ Required sections:
 - **Context**: how it relates to, extends, supports, or contradicts existing documents
 
 ### Step 4 — Identify affected existing documents
-Call `search_wiki` (no `in:sources` — search entities and concepts, not source pages) for each
-significant entity and concept found in the source. Search uses AND logic — all keywords must
-appear — so search the full name ("Colorado River Compact") rather than splitting into individual
-words. List every existing document that:
+Go through the index in "Current wiki state" and match the entities and concepts you found in
+Step 3 against the page titles listed there. This is a reading task, not a search task — do not
+call `search_wiki` for it.
+
+Only if a name is ambiguous in the index (possible alternate spelling, acronym, or alias) call
+`search_wiki` for that one name. Search uses AND logic — all keywords must appear — so search the
+full name ("Colorado River Compact") rather than splitting into individual words.
+
+List every existing document that:
 - Is mentioned in the new source
 - Overlaps with entities or concepts in the source
 - Could receive new citations or updated claims
@@ -178,14 +211,16 @@ List these explicitly before modifying any of them.
 
 ### Step 5 — Update or create entity documents
 For each significant entity (person, organization, product, project) in the source:
-- **Always call `search_wiki` (no `in:sources`) before calling `create_file`.** You do not know
-  how large the wiki is or what it contains — always search first. Do not create a document until
-  you have confirmed no existing document covers this entity. Search by the entity's full name and
-  any common abbreviations or alternate names.
-- **HARD LIMIT: 2 searches per entity maximum — no exceptions.** Search 1: full name. Search 2:
-  abbreviation or alternate name. If neither returns a match, stop immediately and treat as new.
-  Do NOT search again. Do NOT try capitalization variants. Do NOT add `in:entities`, `in:concepts`,
-  `in:sources`, or `in:synthesis` modifiers as additional attempts. Two searches total, then move on.
+- **Check the index in "Current wiki state" for the entity's title before calling `create_file`.**
+  You already have the complete list of entity pages — read it. If the title is listed, the page
+  exists; if it is not listed, it does not. Do not call `search_wiki` to re-confirm what the index
+  already told you.
+- **Search only to resolve ambiguity**, e.g. the entity may be filed under an abbreviation or an
+  alternate name you can't match by eye. **HARD LIMIT: 2 searches per entity — no exceptions.**
+  Search 1: full name. Search 2: abbreviation or alternate name. If neither matches, stop
+  immediately and treat as new. Do NOT search again. Do NOT try capitalization variants. Do NOT
+  add `in:entities`, `in:concepts`, or `in:synthesis` modifiers as additional attempts. The server
+  enforces this limit and will refuse the third call.
 - **If a document exists**, build full context before rewriting it:
   1. Read the existing entity page. Note the `sources:` frontmatter list — that is your reading list.
   2. Call `search_wiki` with query `"<entity name> in:sources"` to find any source pages not already
@@ -201,14 +236,16 @@ For each significant entity (person, organization, product, project) in the sour
 
 ### Step 6 — Update or create concept documents
 For each significant concept, technique, framework, or term:
-- **Always call `search_wiki` (no `in:sources`) before calling `create_file`.** You do not know
-  how large the wiki is or what it contains — always search first. Do not create a document until
-  you have confirmed no existing document covers this concept. Search by the concept's full name
-  and any common abbreviations or alternate names.
-- **HARD LIMIT: 2 searches per concept maximum — no exceptions.** Search 1: full name. Search 2:
-  abbreviation or alternate name. If neither returns a match, stop immediately and treat as new.
-  Do NOT search again. Do NOT try capitalization variants. Do NOT add scope modifiers as additional
-  attempts. Two searches total, then move on.
+- **Check the index in "Current wiki state" for the concept's title before calling `create_file`.**
+  You already have the complete list of concept pages — read it. If the title is listed, the page
+  exists; if it is not listed, it does not. Do not call `search_wiki` to re-confirm what the index
+  already told you.
+- **Search only to resolve ambiguity**, e.g. the concept may be filed under an abbreviation or an
+  alternate name you can't match by eye. **HARD LIMIT: 2 searches per concept — no exceptions.**
+  Search 1: full name. Search 2: abbreviation or alternate name. If neither matches, stop
+  immediately and treat as new. Do NOT search again. Do NOT try capitalization variants. Do NOT
+  add scope modifiers as additional attempts. The server enforces this limit and will refuse the
+  third call.
 - **If a document exists**, build full context before rewriting it:
   1. Read the existing concept page. Note the `sources:` frontmatter list — that is your reading list.
   2. Call `search_wiki` with query `"<concept name> in:sources"` to find any source pages not already
@@ -303,7 +340,11 @@ Do not modify any file until the user gives an explicit instruction.
 - Do not start a bullet list immediately after a prose paragraph without a blank line between them — markdown requires a blank line before a list or it will not render as a list
 - Do not modify, move, or delete anything in `raw/` — it is immutable
 - Do not modify `LOBOTOMY.md` unless the user explicitly asks you to update the schema
-- Do not read or edit `wiki/index.md` — it is auto-generated on every page write
+- Do not edit `wiki/index.md` or call `read_file` on it — it is auto-generated on every page
+  write, and its full contents are already in your context under "Current wiki state". Read it
+  there instead of searching to find out whether a page exists.
+- Do not call `search_wiki` to check whether a page exists — that is what the index is for.
+  Search answers "which pages mention X", not "does a page for X exist"
 - Do not write document frontmatter manually — always use `create_file` for new documents
 - Do not write any markdown links in document body text — plain text only
 - Do not resolve contradictions without user instruction
