@@ -167,6 +167,11 @@ Call `search_wiki` during ingest only when:
 will refuse the third call. If two searches find nothing, the answer is "it does not
 exist" — create the page and move on.
 
+**Consulting the index replaces the search, not the work.** Skipping a lookup does not
+mean skipping a page. Every entity and concept in the source still gets a page written
+or updated in Steps 5 and 6 — you just reach it faster. An ingest that produces only a
+source page has failed, and the server will refuse your `done()` call.
+
 ### Step 1 — Verify source location
 The file must be in `raw/`. If the user gives pasted text, ask them to save it
 to `raw/` first as a `.txt` or `.md` file.
@@ -210,6 +215,11 @@ List every existing document that:
 List these explicitly before modifying any of them.
 
 ### Step 5 — Update or create entity documents
+
+**Mandatory. Work through the `## Entities` list of the source page you created in Step 3
+and handle every name on it.** Do not stop after one, and do not proceed to `done()` until
+this step and Step 6 are finished.
+
 For each significant entity (person, organization, product, project) in the source:
 - **Check the index in "Current wiki state" for the entity's title before calling `create_file`.**
   You already have the complete list of entity pages — read it. If the title is listed, the page
@@ -235,6 +245,10 @@ For each significant entity (person, organization, product, project) in the sour
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
 ### Step 6 — Update or create concept documents
+
+**Mandatory. Work through the `## Concepts` list of the source page you created in Step 3
+and handle every name on it.**
+
 For each significant concept, technique, framework, or term:
 - **Check the index in "Current wiki state" for the concept's title before calling `create_file`.**
   You already have the complete list of concept pages — read it. If the title is listed, the page
@@ -266,6 +280,10 @@ Determine whether the new source warrants:
 - Updates to an existing synthesis document
 
 ### Step 8 — Done
+Before calling `done()`, confirm you actually completed Steps 5 and 6 — an ingest that
+wrote only a source page is incomplete, and `done()` will be refused until at least one
+entity or concept page has been created or updated.
+
 Call `done()`. The server runs health checks — results are visible at `/wiki/lint`.
 
 ---

@@ -590,6 +590,7 @@ def _ctx():
         t._session_read_pages = set()
         t._session_tool_calls = []
         t._session_search_counts = {}
+        t._done_refusals = 0
     return t
 
 
@@ -604,6 +605,7 @@ def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
     t._session_read_pages = set()
     t._session_tool_calls = []
     t._session_search_counts = {}
+    t._done_refusals = 0
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -954,7 +956,34 @@ def _post_process_session() -> None:
     _rebuild_index({})
 
 
+_DONE_REFUSAL_LIMIT = 2
+
+
 def _done(args: dict) -> str:
+    ctx = _ctx()
+
+    # An ingest that produced only a source page did not do the job: Steps 5-7 build
+    # the entity/concept pages that make the knowledge cross-linked and findable.
+    # Instructions alone do not reliably enforce this, so refuse done() here.
+    if ctx._current_inbox_path:
+        touched = [p for p in (ctx._session_entity_pages + ctx._session_updated_pages)
+                   if not p.startswith("sources/")]
+        if not touched and ctx._done_refusals < _DONE_REFUSAL_LIMIT:
+            ctx._done_refusals += 1
+            log.warning("done() refused (%d/%d): ingest touched no entity/concept pages",
+                        ctx._done_refusals, _DONE_REFUSAL_LIMIT)
+            return (
+                "Error: done() refused — this ingest created a source page but no entity or "
+                "concept pages. An ingest is not complete until Steps 5 and 6 are done.\n\n"
+                "Go back to the '## Entities' and '## Concepts' lists in the source page you "
+                "just created. For EACH significant name in those lists:\n"
+                "  1. Look for its title in the wiki index under 'Current wiki state'.\n"
+                "  2. If it is listed, read that page and update_file it to incorporate this source.\n"
+                "  3. If it is not listed, create_file a new page for it.\n\n"
+                "Do this now, then call done(). If a name genuinely warrants no page, skip it — "
+                "but at least the main subjects of this source must have pages."
+            )
+
     ingested = "1" if args.get("ingested") else "0"
     return _DONE_SENTINEL + ingested + "|" + args.get("summary", "")
 
