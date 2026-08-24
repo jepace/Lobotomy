@@ -92,9 +92,12 @@ class _LLMError(Exception):
 
 def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
     """POST payload to an OpenAI-compatible chat/completions endpoint."""
-    log.debug("LLM POST %s model=%s messages=%d",
-              endpoint, payload.get("model", "?"), len(payload.get("messages", [])))
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    # Payload size is logged because token-per-minute quotas are hit by large requests
+    # long before request-per-minute quotas are, and the two look identical from outside.
+    log.debug("LLM POST %s model=%s messages=%d payload=%dKB (~%dk tokens)",
+              endpoint, payload.get("model", "?"), len(payload.get("messages", [])),
+              len(data) // 1024, len(data) // 4000)
     req  = urllib.request.Request(
         endpoint,
         data=data,
@@ -141,6 +144,11 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
             detail = f"{msg}\n{raw_body}" if raw_body and raw_body != msg else msg
             raise _LLMError(f"Bad request: {detail}")
         if code == 429:
+            # The message is usually just "Too Many Requests"; the body names the actual
+            # quota (per-minute requests vs input tokens vs per-day), which is the only
+            # thing that says whether throttling or shrinking requests is the fix.
+            if raw_body and raw_body != msg:
+                log.warning("LLM 429 detail (payload was %dKB): %s", len(data) // 1024, raw_body[:1200])
             raise _LLMError(f"Rate limited: {msg}", retryable=True, retry_after=retry_after)
         if code >= 500:
             raise _LLMError(f"Server error {code}: {msg}", retryable=True)
