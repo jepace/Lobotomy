@@ -1014,12 +1014,12 @@ def _done(args: dict) -> str:
                 "Error: done() refused — this ingest created a source page but no entity or "
                 "concept pages. An ingest is not complete until Steps 5 and 6 are done.\n\n"
                 "Go back to the '## Entities' and '## Concepts' lists in the source page you "
-                "just created. For EACH significant name in those lists:\n"
-                "  1. Look for its title in the wiki index under 'Current wiki state'.\n"
-                "  2. If it is listed, read that page and update_file it to incorporate this source.\n"
-                "  3. If it is not listed, create_file a new page for it.\n\n"
-                "Do this now, then call done(). If a name genuinely warrants no page, skip it — "
-                "but at least the main subjects of this source must have pages."
+                "just created. You already applied the page-worthiness test when you wrote "
+                "those lists, so every name on them gets a page. For EACH name:\n"
+                "  1. Call lookup_titles to see whether it already has a page.\n"
+                "  2. If it does, read that page and update_file it to incorporate this source.\n"
+                "  3. If it does not, create_file a new page for it.\n\n"
+                "Do this now, then call done()."
             )
 
     ingested = "1" if args.get("ingested") else "0"

@@ -196,7 +196,21 @@ Required sections:
 - **Summary**: 3–5 paragraphs synthesizing the source's main content and contribution
 - **Claims**: bulleted list of factual or analytical claims from the source
 - **Entities**: bulleted list of people, orgs, products, projects. Bare names only.
-- **Concepts**: bulleted list of important concepts and terms. Bare names only.
+  This list drives page creation in Step 5, so apply judgement here rather than listing
+  every name that appears. **Include** an entity when the source makes substantive claims
+  *about* it — its actions, positions, history, or role in the events described.
+  **Exclude**:
+  - the article's byline or reporter — writing the piece is not the same as being a
+    subject of it. A journalist who *is* discussed by the source belongs on the list.
+  - people quoted once for reaction or colour, with nothing else said about them
+  - names mentioned only in passing, with no claim attached
+  - the publication or outlet, when it is only the venue this source appeared in
+
+  The test: could you write more than a sentence or two about this entity from what this
+  source actually says? If not, leave it off — it will be added later by a source that
+  does have something to say about it.
+- **Concepts**: bulleted list of important concepts and terms. Bare names only. Apply the
+  same test: a concept the source explains or argues about, not every term it uses.
 - **Quotes**: 3–5 direct quotes with section references if available
 - **Context**: how it relates to, extends, supports, or contradicts existing documents
 
@@ -216,10 +230,12 @@ List these explicitly before modifying any of them.
 ### Step 5 — Update or create entity documents
 
 **Mandatory. Work through the `## Entities` list of the source page you created in Step 3
-and handle every name on it.** Do not stop after one, and do not proceed to `done()` until
-this step and Step 6 are finished.
+and handle every name on it.** You already applied the page-worthiness test when you wrote
+that list, so do not second-guess it here — every name on it gets a page created or
+updated. Do not stop after one, and do not proceed to `done()` until this step and Step 6
+are finished.
 
-For each significant entity (person, organization, product, project) in the source:
+For each entity (person, organization, product, project) on that list:
 - **Use the `lookup_titles` results from Step 4.** They already tell you whether this entity
   has a page. Do not call `search_wiki` to re-confirm them, and do not look the name up again.
 - **Search only to resolve genuine ambiguity** the lookup could not settle. **HARD LIMIT: 2
@@ -246,9 +262,10 @@ For each significant entity (person, organization, product, project) in the sour
 ### Step 6 — Update or create concept documents
 
 **Mandatory. Work through the `## Concepts` list of the source page you created in Step 3
-and handle every name on it.**
+and handle every name on it.** As with entities, the list is already filtered — do not
+re-apply the page-worthiness test here.
 
-For each significant concept, technique, framework, or term:
+For each concept, technique, framework, or term on that list:
 - **Use the `lookup_titles` results from Step 4.** They already tell you whether this concept
   has a page. Do not call `search_wiki` to re-confirm them, and do not look the name up again.
 - **Search only to resolve genuine ambiguity** the lookup could not settle. **HARD LIMIT: 2
