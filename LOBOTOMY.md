@@ -78,7 +78,7 @@ url: "https://original-article-url"   # source documents only; omit on all other
 | `tags` | list of strings | lowercase, hyphenated, no spaces. Prefer tags from the list in the orientation message; introduce new tags only when no existing tag fits. |
 | `created` | YYYY-MM-DD | Date first created. **System-managed — never supply or modify.** |
 | `updated` | YYYY-MM-DD | Date of most recent edit. Update on every write. |
-| `sources` | list of strings | Paths from `wiki/` to supporting source documents. **System-managed — never supply or modify.** Use `search_wiki` with `in:sources` in the query to discover source pages instead of reading this field. |
+| `sources` | list of strings | Paths from `wiki/` to supporting source documents. **System-managed — never supply or modify.** During an ingest you do not need to read these — the page body already synthesizes them. They are the reading list for the Regenerate Workflow (Section 6) only. |
 | `url` | string (quoted) | Original article URL. Source documents only. **System-managed — never supply or modify.** |
 | `raw_source` | string (quoted) | Repo-relative path to the raw inbox file. Source documents only. **System-managed — never supply or modify.** |
 | `aliases` | list of strings | Extra names the autolinker should match and link to this page (e.g. common abbreviations or alternate spellings). Human-set only — do not supply during ingest. Example: `aliases: ["FBI", "bureau"]` |
@@ -160,8 +160,10 @@ So: one `lookup_titles` call after Step 3, then act on the results. EXISTS → `
 that path and `update_file` it. NO PAGE → `create_file`. Do not re-verify with a search;
 the lookup is authoritative.
 
-Call `search_wiki` during ingest only to find source pages that mention an entity or
-concept (the `in:sources` searches in Steps 5 and 6).
+**Ingest does not use `search_wiki` at all.** `lookup_titles` answers what exists, and an
+existing page is updated from what you already read — never rebuilt by hunting down its old
+sources. Reach for `search_wiki` only if a name is genuinely ambiguous and the lookup could
+not settle it.
 
 **Never search for a term more than twice in a session.** The server enforces this and
 will refuse the third call. If two searches find nothing, the answer is "it does not
@@ -226,16 +228,18 @@ For each significant entity (person, organization, product, project) in the sour
   immediately and treat as new. Do NOT search again. Do NOT try capitalization variants. Do NOT
   add `in:entities`, `in:concepts`, or `in:synthesis` modifiers as additional attempts. The server
   enforces this limit and will refuse the third call.
-- **If a document exists**, build full context before rewriting it:
-  1. Read the existing entity page. Note the `sources:` frontmatter list — that is your reading list.
-  2. Call `search_wiki` with query `"<entity name> in:sources"` to find any source pages not already
-     in the `sources:` list. Add them to your reading list.
-  3. Read every `wiki/sources/*.md` page in your reading list (including the source page you just
-     created in Step 3).
-  4. Rewrite the entity page from this complete picture using `update_file`. Do not set `sources:`
-     — it is managed automatically. Preserve the original `created` date.
-- **If the entity is new**, use `create_file` for `wiki/entities/{slug}.md`. Do not set `sources:`
-  — it is injected automatically. Before creating, call `search_wiki` with query `"<entity name> in:sources"` — if any source pages exist, read them first so the new page reflects everything already known.
+- **If a document exists**, fold the new source into it — do not rebuild it from scratch:
+  1. `read_file` the existing entity page. It already synthesizes every source ingested before
+     now; treat it as correct.
+  2. `update_file` with that page's content plus whatever this new source adds or changes.
+     Preserve existing material that this source does not contradict. Do not set `sources:` —
+     it is managed automatically. Preserve the original `created` date.
+  **Do not read the pages listed in `sources:`, and do not search for more sources.** Their
+  content is already reflected in the page you just read. Re-deriving the page from all of its
+  sources is the Regenerate Workflow (Section 6), which runs only when the user asks for it.
+- **If the entity is new**, use `create_file` for `wiki/entities/{slug}.md`, written from this
+  source. Do not set `sources:` — it is injected automatically. Do not search for older sources
+  to backfill it; if the page later needs the fuller picture, the user can run a regenerate.
 - Note any contradictions with existing claims in a `## Contradictions` section.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
@@ -253,18 +257,19 @@ For each significant concept, technique, framework, or term:
   immediately and treat as new. Do NOT search again. Do NOT try capitalization variants. Do NOT
   add scope modifiers as additional attempts. The server enforces this limit and will refuse the
   third call.
-- **If a document exists**, build full context before rewriting it:
-  1. Read the existing concept page. Note the `sources:` frontmatter list — that is your reading list.
-  2. Call `search_wiki` with query `"<concept name> in:sources"` to find any source pages not already
-     in the `sources:` list. Add them to your reading list.
-  3. Read every `wiki/sources/*.md` page in your reading list (including the source page you just
-     created in Step 3).
-  4. Rewrite the concept page from this complete picture using `update_file`. Do not set `sources:`
-     — it is managed automatically. Preserve the original `created` date.
+- **If a document exists**, fold the new source into it — do not rebuild it from scratch:
+  1. `read_file` the existing concept page. It already synthesizes every source ingested before
+     now; treat it as correct.
+  2. `update_file` with that page's content plus whatever this new source adds or changes.
+     Preserve existing material that this source does not contradict. Do not set `sources:` —
+     it is managed automatically. Preserve the original `created` date.
+  **Do not read the pages listed in `sources:`, and do not search for more sources.** Their
+  content is already reflected in the page you just read. Re-deriving the page from all of its
+  sources is the Regenerate Workflow (Section 6), which runs only when the user asks for it.
 - **If no document exists** and the concept warrants one, use `create_file` for
-  `wiki/concepts/{slug}.md`. Do not set `sources:` — it is injected automatically. Before creating,
-  call `search_wiki` with query `"<concept name> in:sources"` — if any source pages exist, read them
-  first so the new page reflects everything already known.
+  `wiki/concepts/{slug}.md`, written from this source. Do not set `sources:` — it is injected
+  automatically. Do not search for older sources to backfill it; if the page later needs the
+  fuller picture, the user can run a regenerate.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
 
 ### Step 7 — Update synthesis documents
@@ -286,6 +291,11 @@ Call `done()`. The server runs health checks — results are visible at `/wiki/l
 **Trigger**: User says "regenerate", "fix", "rewrite", or "redo" a wiki page (entity, concept, synthesis, etc.).
 
 This workflow rewrites a wiki page from the synthesized source documents already in `wiki/sources/`. **Do not read `raw/` during a regenerate** — raw content has already been synthesized into `wiki/sources/` pages.
+
+This is the *only* workflow that rebuilds a page from its full source list, and it runs only
+when the user asks. Ingest (Section 5) deliberately does not do this: it folds each new source
+into the existing page incrementally. Regenerate is how a page that drifted or was written
+poorly gets repaired.
 
 **You must read every source page before rewriting. Do not skip this.**
 
