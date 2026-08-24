@@ -1188,7 +1188,7 @@ def wiki_search():
 @app.route("/wiki/")
 @require_login
 def wiki_home():
-    return redirect(url_for("wiki_page", page_path="index.md"))
+    return redirect(url_for("wiki_page", page_path="log.md"))
 
 
 @app.route("/wiki/<path:page_path>")
