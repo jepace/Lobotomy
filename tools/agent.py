@@ -322,6 +322,7 @@ def _strip_broken_wiki_links(content: str, page_path: Path) -> str:
     return re.sub(r'\[([^\]]+)\]\(([^)]+)\)', _check, content)
 
 
+_VALID_PAGE_TYPES = {"source", "entity", "concept", "synthesis"}
 _SOURCES_SECTION_TYPES = {"entity", "concept", "synthesis"}
 
 
@@ -334,7 +335,8 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
         return content
     fm_text = fm_match.group(1)
 
-    type_m = re.search(r"^type:\s*(\S+)", fm_text, re.MULTILINE)
+    # Match only the leading identifier — tolerate trailing junk the LLM may append.
+    type_m = re.search(r"^type:\s*([A-Za-z][A-Za-z0-9_-]*)", fm_text, re.MULTILINE)
     if not type_m:
         return content
     pg_type = type_m.group(1)
@@ -1594,6 +1596,15 @@ def _create_file(args: dict) -> str:
 
     if not path or not title or not pg_type:
         return "Error: path, title, and type are required."
+
+    # The LLM occasionally appends junk to the type argument (stray tokens, template
+    # placeholders). Keep only the leading identifier and validate it — a malformed
+    # type: line silently disables ## Sources rendering downstream.
+    _type_m = re.match(r"[A-Za-z][A-Za-z0-9_-]*", str(pg_type).strip())
+    pg_type = _type_m.group(0).lower() if _type_m else ""
+    if pg_type not in _VALID_PAGE_TYPES:
+        return (f"Error: type must be one of {', '.join(sorted(_VALID_PAGE_TYPES))}. "
+                f"Got: {args.get('type')!r}")
 
     p = REPO_ROOT / path
     try:
