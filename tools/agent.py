@@ -1186,6 +1186,109 @@ def _title_alts(title: str) -> str:
     return "(?:" + "|".join(alts) + ")"
 
 
+def _build_title_map() -> list[tuple[str, str]]:
+    """Return the cached [(title_or_alias, wiki_rel_path)] map, building it if needed.
+
+    Sorted longest-title-first (the autolinker depends on this so longer titles win).
+    Invalidated by _atomic_write whenever any wiki page changes.
+    """
+    import re
+    global _title_map_cache
+    if _title_map_cache is not None:
+        return _title_map_cache
+
+    raw: list[tuple[str, str]] = []   # (title_or_alias, wiki_rel_path_str)
+    seen: set[str] = set()
+    for subdir in ("entities", "concepts", "synthesis", "sources"):
+        d = WIKI_DIR / subdir
+        if not d.is_dir():
+            continue
+        for f in d.glob("*.md"):
+            if f.name == "index.md":
+                continue
+            text = f.read_text(encoding="utf-8", errors="replace")
+            m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+            if not m:
+                continue
+            fm_lines = m.group(1).splitlines()
+            title = None
+            aliases: list[str] = []
+            no_autolink = False
+            i = 0
+            while i < len(fm_lines):
+                line = fm_lines[i]
+                if line.startswith("title:"):
+                    title = line.split(":", 1)[1].strip().strip('"')
+                elif line.startswith("no_autolink:"):
+                    val = line.split(":", 1)[1].strip().lower()
+                    no_autolink = val in ("true", "yes", "1")
+                elif line.startswith("aliases:"):
+                    rest = line.split(":", 1)[1].strip()
+                    if rest.startswith("["):
+                        import json
+                        try:
+                            aliases = json.loads(rest)
+                        except Exception:
+                            pass
+                    else:
+                        j = i + 1
+                        while j < len(fm_lines) and fm_lines[j].startswith("- "):
+                            aliases.append(fm_lines[j][2:].strip().strip('"'))
+                            j += 1
+                i += 1
+            if title and not no_autolink:
+                wiki_rel = str(f.relative_to(WIKI_DIR))
+                key = title.lower()
+                if key not in seen:
+                    seen.add(key)
+                    raw.append((title, wiki_rel))
+                for alias in aliases:
+                    if alias:
+                        akey = alias.lower()
+                        if akey not in seen:
+                            seen.add(akey)
+                            raw.append((alias, wiki_rel))
+    raw.sort(key=lambda x: -len(x[0]))
+    _title_map_cache = raw
+    log.debug("built title map with %d entries", len(raw))
+    return _title_map_cache
+
+
+def _lookup_titles(args: dict) -> str:
+    """Batch existence check: map each supplied name to its wiki page, if any.
+
+    Replaces both the injected wiki index and per-entity search_wiki calls for the
+    question "does a page for X already exist?" — one round-trip for every name.
+    """
+    names = args.get("names", [])
+    if isinstance(names, str):
+        # Tolerate a comma-separated string; models often send one despite the schema.
+        names = [n.strip() for n in names.split(",")]
+    names = [str(n).strip() for n in names if str(n).strip()]
+    if not names:
+        return "Error: names is required (a list of entity/concept names to look up)."
+
+    by_key = {t.lower(): rel for t, rel in _build_title_map()}
+
+    found, missing = [], []
+    for n in names:
+        rel = by_key.get(n.lower())
+        if rel:
+            found.append(f"- {n} → EXISTS at wiki/{rel}")
+        else:
+            missing.append(f"- {n} → NO PAGE")
+
+    lines = [f"Looked up {len(names)} name(s) against {len(by_key)} wiki page titles and aliases.", ""]
+    lines.extend(found + missing)
+    lines.append("")
+    lines.append(
+        "EXISTS → read_file that path, then update_file it to incorporate this source. "
+        "NO PAGE → create_file a new page. This answer is exact and covers aliases; "
+        "do not call search_wiki to double-check it."
+    )
+    return "\n".join(lines)
+
+
 def _autolink(args: dict) -> str:
     """Replace all bare occurrences of each other wiki page title with a markdown link."""
     import re
@@ -1202,62 +1305,7 @@ def _autolink(args: dict) -> str:
 
     # Build (or reuse) the cached title map.  The cache stores wiki-root-relative
     # paths; we convert to target-relative below.  Invalidated by _atomic_write.
-    global _title_map_cache
-    if _title_map_cache is None:
-        raw: list[tuple[str, str]] = []   # (title_or_alias, wiki_rel_path_str)
-        seen: set[str] = set()
-        for subdir in ("entities", "concepts", "synthesis", "sources"):
-            d = WIKI_DIR / subdir
-            if not d.is_dir():
-                continue
-            for f in d.glob("*.md"):
-                if f.name == "index.md":
-                    continue
-                text = f.read_text(encoding="utf-8", errors="replace")
-                m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
-                if not m:
-                    continue
-                fm_lines = m.group(1).splitlines()
-                title = None
-                aliases: list[str] = []
-                no_autolink = False
-                i = 0
-                while i < len(fm_lines):
-                    line = fm_lines[i]
-                    if line.startswith("title:"):
-                        title = line.split(":", 1)[1].strip().strip('"')
-                    elif line.startswith("no_autolink:"):
-                        val = line.split(":", 1)[1].strip().lower()
-                        no_autolink = val in ("true", "yes", "1")
-                    elif line.startswith("aliases:"):
-                        rest = line.split(":", 1)[1].strip()
-                        if rest.startswith("["):
-                            import json
-                            try:
-                                aliases = json.loads(rest)
-                            except Exception:
-                                pass
-                        else:
-                            j = i + 1
-                            while j < len(fm_lines) and fm_lines[j].startswith("- "):
-                                aliases.append(fm_lines[j][2:].strip().strip('"'))
-                                j += 1
-                    i += 1
-                if title and not no_autolink:
-                    wiki_rel = str(f.relative_to(WIKI_DIR))
-                    key = title.lower()
-                    if key not in seen:
-                        seen.add(key)
-                        raw.append((title, wiki_rel))
-                    for alias in aliases:
-                        if alias:
-                            akey = alias.lower()
-                            if akey not in seen:
-                                seen.add(akey)
-                                raw.append((alias, wiki_rel))
-        raw.sort(key=lambda x: -len(x[0]))
-        _title_map_cache = raw
-        log.debug("autolink: built title map with %d entries", len(raw))
+    _build_title_map()
 
     # Convert cached wiki-relative paths to paths relative to this target file.
     prefix = "../" * len(target_p.parent.relative_to(WIKI_DIR).parts)
@@ -1786,6 +1834,7 @@ TOOL_FNS = {
     "list_dir":         lambda a: _list_dir(a["directory"]),
     "fetch_url":        lambda a: _fetch_url(a["url"]),
 
+    "lookup_titles":    _lookup_titles,
     "search_wiki":      _search_wiki,
     "search_raw":       _search_raw,
     "create_file":      _create_file,
@@ -1883,11 +1932,37 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
+            "name":        "lookup_titles",
+            "description": (
+                "Check which of a set of names already have wiki pages. Pass EVERY entity and "
+                "concept name from the source in a single call — this is the correct and only "
+                "way to answer 'does a page for X already exist?'. Matching is exact on page "
+                "titles and their aliases, and covers the entire wiki. Returns EXISTS with the "
+                "page path, or NO PAGE, for each name. Do not use search_wiki for existence "
+                "checks, and do not call this once per name — batch them."
+            ),
+            "parameters":  {
+                "type": "object",
+                "properties": {
+                    "names": {
+                        "type":        "array",
+                        "items":       {"type": "string"},
+                        "description": "All entity/concept names to check, e.g. [\"Mark Carney\", \"Canada\", \"Tariff\"].",
+                    },
+                },
+                "required": ["names"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name":        "search_wiki",
             "description": (
-                "Keyword search across wiki pages. Returns matching page titles, paths, and "
-                "a snippet of the matching line. Use this to check whether an entity or concept "
-                "already has a page before creating one. By default excludes wiki/sources/ pages "
+                "Full-text keyword search across wiki pages. Returns matching page titles, paths, "
+                "and a snippet of the matching line. Use this to find which pages MENTION a term — "
+                "NOT to check whether a page exists (use lookup_titles for that). "
+                "By default excludes wiki/sources/ pages "
                 "(use 'in:sources' scope token to search sources explicitly, e.g. 'california in:sources'). "
                 "Use 'tag:<tagname>' to filter by tag (e.g. 'tag:trump-administration' or "
                 "'immigration tag:trump-administration')."
@@ -2010,15 +2085,26 @@ def orientation_message() -> str:
     import datetime
     today = datetime.date.today().isoformat()
     snippets = [f"Today's date: {today}"]
-    for rel, max_lines in [
-        ("wiki/index.md",    None),
-    ]:
-        p = REPO_ROOT / rel
-        if p.exists():
-            text = p.read_text(encoding="utf-8")
-            if max_lines:
-                text = "\n".join(text.splitlines()[:max_lines])
-            snippets.append(f'<file path="{rel}">\n{text}\n</file>')
+
+    # The page catalog is deliberately NOT injected here. At a few thousand pages it ran
+    # to ~130k tokens per request, which dominated context and burned the provider's rate
+    # limit on every round. Use the lookup_titles tool instead — one batched call answers
+    # "which of these already exist?" exactly, including aliases, at negligible cost.
+    counts = []
+    for subdir in ("sources", "entities", "concepts", "synthesis"):
+        d = WIKI_DIR / subdir
+        if d.is_dir():
+            n = sum(1 for f in d.glob("*.md") if f.name != "index.md")
+            if n:
+                counts.append(f"{n} {subdir}")
+    snippets.append(
+        "## Wiki size\n"
+        + (", ".join(counts) if counts else "empty wiki")
+        + "\n\nThe page catalog is not listed here — it is too large. To find out whether "
+          "pages already exist, call `lookup_titles` with all the names you care about in "
+          "one call."
+    )
+
     tags = _collect_tags()
     if tags:
         snippets.append(
