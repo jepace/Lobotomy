@@ -968,6 +968,23 @@ def _done(args: dict) -> str:
     if ctx._current_inbox_path:
         touched = [p for p in (ctx._session_entity_pages + ctx._session_updated_pages)
                    if not p.startswith("sources/")]
+
+        # No source page means nothing can be attributed: the sources: merge in
+        # _update_file and the repair pass in _post_process_session are both keyed off
+        # _current_source_page, so any page written this session records no provenance.
+        if touched and not ctx._current_source_page and ctx._done_refusals < _DONE_REFUSAL_LIMIT:
+            ctx._done_refusals += 1
+            log.warning("done() refused (%d/%d): %d page(s) written with no source page for %s",
+                        ctx._done_refusals, _DONE_REFUSAL_LIMIT, len(touched), ctx._current_inbox_path)
+            return (
+                "Error: done() refused — you updated pages this ingest but never established a "
+                "source page, so none of them record where the information came from.\n\n"
+                "Create the source page for this raw file with create_file (wiki/sources/...), "
+                "then call done(). The sources: frontmatter is filled in automatically once it "
+                "exists. If create_file says the page already exists for this raw source, it has "
+                "been adopted and you can call done()."
+            )
+
         if not touched and ctx._done_refusals < _DONE_REFUSAL_LIMIT:
             ctx._done_refusals += 1
             log.warning("done() refused (%d/%d): ingest touched no entity/concept pages",
@@ -1692,6 +1709,29 @@ def _create_file(args: dict) -> str:
     _subdir = p.parent.name
 
     if p.exists():
+        # Re-ingesting a raw file whose source page already exists: adopt it as this
+        # session's source page instead of just failing. Otherwise _current_source_page
+        # stays empty and every entity updated afterwards silently loses its source
+        # attribution — the frontmatter merge and the post-process repair are both
+        # keyed off it. Only adopt when the existing page came from the same raw file,
+        # so a genuine slug collision between two different articles still errors.
+        if (_subdir == "sources" and _ctx()._current_inbox_path
+                and not _ctx()._current_source_page):
+            _existing_raw = ""
+            _m = re.search(r'^raw_source:\s*["\']?([^"\'\n]+)',
+                           p.read_text(encoding="utf-8", errors="replace"), re.MULTILINE)
+            if _m:
+                _existing_raw = _m.group(1).strip()
+            if _existing_raw and _existing_raw == _ctx()._current_inbox_path:
+                _ctx()._current_source_page = str(p.relative_to(WIKI_DIR))
+                log.info("create_file: adopted existing source page %s for re-ingest of %s",
+                         _ctx()._current_source_page, _ctx()._current_inbox_path)
+                return (
+                    f"Note: {path} already exists for this raw source, and has been adopted as "
+                    f"this session's source page — its content is unchanged and correct. Do not "
+                    f"try to create or update it. Continue with Steps 5 and 6: update the entity "
+                    f"and concept pages for this source."
+                )
         return f"Error: create_file refused — {path} already exists. Use update_file to update existing pages."
 
     # Only one source page per ingest session.
