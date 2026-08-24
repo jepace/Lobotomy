@@ -2219,7 +2219,7 @@ def _rpm_wait_streaming():
                 return
         if not notified:
             yield json.dumps({"type": "retrying", "attempt": 0, "delay": 5, "max": 0,
-                              "msg": "Rate limit reached — waiting for next window…"}) + "\n"
+                              "msg": "Pacing requests — waiting for next window…"}) + "\n"
             notified = True
         time.sleep(5)
 
