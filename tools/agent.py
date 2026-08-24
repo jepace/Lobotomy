@@ -482,9 +482,22 @@ def _update_file(path: str, content: str) -> str:
     try:
         _wiki_rel_check = str(p.resolve().relative_to(WIKI_DIR.resolve()))
         if _wiki_rel_check not in _ctx()._session_read_pages:
+            # Still refuse the write — content composed without seeing the page would
+            # discard whatever is on it. But hand back the page in this same response
+            # (via _read_file, so truncation and the read-marking are identical to a
+            # real read_file call) rather than burning a round-trip on the fetch.
+            _current = _read_file(path)
+            if not isinstance(_current, str):
+                return (
+                    f"Error: update_file refused — you have not read {path} yet this session. "
+                    f"Call read_file on it first, then resend the complete updated content."
+                )
             return (
-                f"Error: update_file refused — you have not read {path} yet this session. "
-                f"Call read_file on it first, then resend the complete updated content."
+                f"Error: update_file refused — you had not read {path} this session, so the "
+                f"content you sent would have discarded what is already on the page.\n\n"
+                f"Its current content is below, and is now marked as read. Merge your changes "
+                f"into it and call update_file again — do NOT call read_file first.\n\n"
+                f'<file path="{path}">\n{_current}\n</file>'
             )
     except ValueError:
         pass
