@@ -1297,7 +1297,11 @@ def wiki_save(page_path):
     content = data.get("content")
     if content is None:
         return {"error": "No content"}, 400
-    p.write_text(content, encoding="utf-8")
+    # Route through _atomic_write, not p.write_text(): it's the only thing that keeps
+    # agent.py's in-memory title-map cache (used by the autolinker) honest. A manual
+    # retitle through this editor that bypassed it would leave the cache pointing at the
+    # old title until something unrelated happened to invalidate it, or the server restarted.
+    _atomic_write(p, content)
     return {"ok": True}
 
 

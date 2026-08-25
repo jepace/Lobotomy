@@ -608,6 +608,7 @@ _fetch_cache_lock = threading.Lock()
 # page is written so it is rebuilt at most once per batch of autolink calls.
 _title_map_cache: list[tuple[str, str]] | None = None  # (title, wiki_rel_path)
 _title_regex_cache: dict = {}  # title -> compiled regex; cleared whenever the map rebuilds
+_title_map_built_at: float = 0.0  # time.time() when the cache was last (re)built
 
 # ---------------------------------------------------------------------------
 # Thread-local per-job session state — replaces the old module-level globals.
@@ -1285,15 +1286,37 @@ def _build_title_map() -> list[tuple[str, str]]:
     """Return the cached [(title_or_alias, wiki_rel_path)] map, building it if needed.
 
     Sorted longest-title-first (the autolinker depends on this so longer titles win).
-    Invalidated by _atomic_write whenever any wiki page changes.
+    Invalidated by _atomic_write whenever a page's title/aliases/no_autolink actually
+    changes. As a backstop against any write path that reaches wiki/ without going
+    through _atomic_write, every cache hit also does a cheap mtime scan (stat() only, no
+    file reads — ~20ms at a few thousand pages) and force-rebuilds if anything on disk is
+    newer than the cache. This is the same "detect drift, don't trust the cache blindly"
+    principle as heal_index_if_stale() for wiki/index.md, sized for a cache that lives in
+    memory rather than on disk.
     """
     import re
-    global _title_map_cache, _title_regex_cache
+    global _title_map_cache, _title_regex_cache, _title_map_built_at
     if _title_map_cache is not None:
-        return _title_map_cache
+        stale = False
+        for subdir in ("entities", "concepts", "synthesis", "sources"):
+            d = WIKI_DIR / subdir
+            if not d.is_dir():
+                continue
+            for f in d.glob("*.md"):
+                if f.name != "index.md" and f.stat().st_mtime > _title_map_built_at:
+                    stale = True
+                    break
+            if stale:
+                break
+        if not stale:
+            return _title_map_cache
+        log.debug("title map cache stale (a wiki page changed outside _atomic_write) — rebuilding")
+        _title_map_cache = None
     # The set of titles is changing (that's why we're rebuilding) — any compiled regex
     # keyed by a title that was renamed or removed would otherwise linger forever.
     _title_regex_cache = {}
+    _title_map_built_at = time.time()  # captured before the scan, so a write that lands
+                                        # mid-scan is still caught as stale on the next call
 
     raw: list[tuple[str, str]] = []   # (title_or_alias, wiki_rel_path_str)
     seen: set[str] = set()
