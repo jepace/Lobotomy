@@ -613,6 +613,31 @@ def clear_history() -> None:
 
 _MD_EXTENSIONS = ["tables", "toc", "fenced_code", "attr_list", "sane_lists"]
 
+_LIST_ITEM_RE = re.compile(r"^[ \t]*(?:[-*+][ \t]+|\d+[.)][ \t]+)\S")
+_FENCE_RE = re.compile(r"^[ \t]*(```|~~~)")
+
+
+def _ensure_blank_line_before_lists(text: str) -> str:
+    """Insert a blank line between a paragraph and a list that immediately follows it.
+
+    Both Python-Markdown and CommonMark require this blank line — without it, a `- item`
+    line right after a prose line renders as part of that paragraph (literal `-` and all,
+    no `<ul>`). The LLM omits it often enough that this is applied as a rendering-time
+    backstop rather than relying solely on it writing the blank line itself. Skips fenced
+    code blocks so example markdown embedded in a page is never rewritten.
+    """
+    lines = text.split("\n")
+    out = []
+    in_fence = False
+    for line in lines:
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+        elif (not in_fence and out and _LIST_ITEM_RE.match(line)
+                and out[-1].strip() and not _LIST_ITEM_RE.match(out[-1])):
+            out.append("")
+        out.append(line)
+    return "\n".join(out)
+
 
 def _rewrite_md_link(href: str, from_page: Path) -> str:
     if href.startswith(("http://", "https://", "/", "#", "mailto:")):
@@ -641,6 +666,7 @@ def render_md(path: Path) -> str:
         return "<p><em>Page not found.</em></p>"
     text = path.read_text(encoding="utf-8")
     text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
+    text = _ensure_blank_line_before_lists(text)
     html = md_lib.markdown(text, extensions=_MD_EXTENSIONS)
     html = re.sub(
         r'href="([^"]*.md[^"]*)"',
@@ -652,6 +678,7 @@ def render_md(path: Path) -> str:
 def render_md_raw(text: str) -> str:
     """Render markdown from string content (for raw files)."""
     text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
+    text = _ensure_blank_line_before_lists(text)
     html = md_lib.markdown(text, extensions=_MD_EXTENSIONS)
     return html
 

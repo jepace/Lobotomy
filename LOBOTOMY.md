@@ -8,6 +8,12 @@ repository, this file tells you everything you need to know to operate correctly
 > pages, not to URLs. External URLs belong only in `url:` frontmatter. The system handles
 > all cross-referencing automatically. Any link you write will be stripped.
 
+> **Always put a blank line before a bulleted or numbered list.** A list that follows a
+> paragraph with no blank line between them does not render as a list — it renders as part
+> of the paragraph. This applies to every `-` or `1.` list you write, in every section of
+> every document. Get in the habit of adding the blank line as you type the list, not as
+> an afterthought.
+
 ## 1. What This System Is
 
 This is a **personal knowledge base maintained by LLMs**. It is not a RAG system. Sources are not
@@ -68,6 +74,33 @@ url: "https://original-article-url"   # source documents only; omit on all other
 
 <!-- body content -->
 ```
+
+**Every list needs a blank line above it.** Each required section below (Summary, Claims,
+Entities, etc.) typically opens with a paragraph and then a bulleted list — put a blank
+line between them. Example:
+
+```markdown
+## Claims
+
+The article reports several developments in the ongoing negotiations.
+
+- First claim, bare text, no link
+- Second claim
+```
+
+Not:
+
+```markdown
+## Claims
+
+The article reports several developments in the ongoing negotiations.
+- First claim, bare text, no link
+- Second claim
+```
+
+The second form renders as a single run-on paragraph with literal `-` characters — no
+bullets, no line breaks. This is the single most common formatting mistake — check for it
+before every `create_file` or `update_file` call.
 
 ### Frontmatter field rules
 
@@ -375,7 +408,7 @@ Do not modify any file until the user gives an explicit instruction.
 ## 10. Do Not Do These Things
 
 - Do not call `list_dir` to verify a file exists before reading it — call `read_file` directly
-- Do not start a bullet list immediately after a prose paragraph without a blank line between them — markdown requires a blank line before a list or it will not render as a list
+- Do not start a bullet list immediately after a prose paragraph without a blank line between them (see Section 3 — this is the most common formatting mistake)
 - Do not modify, move, or delete anything in `raw/` — it is immutable
 - Do not modify `LOBOTOMY.md` unless the user explicitly asks you to update the schema
 - Do not edit `wiki/index.md`, and never `read_file` it — it is auto-generated on every page
