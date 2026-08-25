@@ -1727,6 +1727,22 @@ def _create_file(args: dict) -> str:
         return (f"Error: type must be one of {', '.join(sorted(_VALID_PAGE_TYPES))}. "
                 f"Got: {args.get('type')!r}")
 
+    # A page title is never all-lowercase under the "Title-case, human readable" rule —
+    # this is the cheapest reliable signal that the LLM copied a bare name straight out of
+    # a ## Concepts/## Entities list without capitalizing it. Refuse rather than silently
+    # creating a lowercase-titled page: matching is case-insensitive (search_wiki,
+    # lookup_titles, the autolinker) so this never breaks linking, but it makes the page
+    # display lowercase everywhere — the index, ## Sources back-references, headings.
+    # Only single-word-or-more alphabetic titles are checked; titles the LLM cannot get
+    # meaningfully wrong (pure numbers, etc.) are left alone.
+    if title and title == title.lower() and any(c.isalpha() for c in title):
+        return (
+            f"Error: create_file refused — title {title!r} is all lowercase. Page titles are "
+            f"Title Case (e.g. \"European Union\", not \"european union\"). Resend create_file "
+            f"with the title properly capitalized. Do not just call .title() blindly — keep "
+            f"acronyms like \"EU\" or \"NASA\" and proper nouns capitalized correctly."
+        )
+
     p = REPO_ROOT / path
     try:
         p.resolve().relative_to(WIKI_DIR.resolve())
