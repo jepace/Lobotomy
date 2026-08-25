@@ -1832,7 +1832,18 @@ def _create_file(args: dict) -> str:
                     f"try to create or update it. Continue with Steps 5 and 6: update the entity "
                     f"and concept pages for this source."
                 )
-        return f"Error: create_file refused — {path} already exists. Use update_file to update existing pages."
+        # Hand back the existing content instead of just refusing — the same round-trip
+        # elimination as update_file's unread-page refusal. _read_file also marks it read,
+        # so the follow-up update_file call is not refused by the read-before-update guard.
+        _current = _read_file(path)
+        if not isinstance(_current, str):
+            return f"Error: create_file refused — {path} already exists. Use update_file to update existing pages."
+        return (
+            f"Error: create_file refused — {path} already exists. Its current content is below, "
+            f"and is now marked as read. Call update_file with your changes merged into it — "
+            f"do NOT call read_file first.\n\n"
+            f'<file path="{path}">\n{_current}\n</file>'
+        )
 
     # Only one source page per ingest session.
     if _subdir == "sources" and _ctx()._current_source_page:
