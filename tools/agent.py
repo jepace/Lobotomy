@@ -457,6 +457,12 @@ def _atomic_write(p: Path, content: str) -> None:
 
 
 def _update_file(path: str, content: str) -> str:
+    if not path:
+        return ("Error: update_file requires a 'path' argument, e.g. "
+                "{\"path\": \"wiki/entities/foo.md\", \"content\": \"...\"}. Resend the call.")
+    if not content:
+        return (f"Error: update_file requires a 'content' argument holding the complete new "
+                f"file content for {path}. Resend the call.")
     p = REPO_ROOT / path
     try:
         p.resolve().relative_to(WIKI_DIR.resolve())
@@ -1890,10 +1896,12 @@ def _validate_ingest(args: dict) -> str:
 
 
 TOOL_FNS = {
-    "read_file":       lambda a: _read_file(a["path"], int(a.get("offset", 0))),
-    "update_file":      lambda a: _update_file(a["path"], a["content"]),
-    "list_dir":         lambda a: _list_dir(a["directory"]),
-    "fetch_url":        lambda a: _fetch_url(a["url"]),
+    # Use .get() throughout: a missing key must come back as a tool-level error the LLM
+    # can correct, never a KeyError that unwinds the whole agent loop.
+    "read_file":       lambda a: _read_file(a.get("path", ""), int(a.get("offset", 0) or 0)),
+    "update_file":      lambda a: _update_file(a.get("path", ""), a.get("content", "")),
+    "list_dir":         lambda a: _list_dir(a.get("directory", "")),
+    "fetch_url":        lambda a: _fetch_url(a.get("url", "")),
 
     "lookup_titles":    _lookup_titles,
     "search_wiki":      _search_wiki,
@@ -2353,8 +2361,14 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                 elif _scope_in_name:
                     args["query"] = _scope_in_name
                 result = fn(args) if fn else f"Unknown tool: {fn_name}"
-            except (json.JSONDecodeError, TypeError, ValueError, OSError) as e:
-                result = f"Error: {e}"
+            except json.JSONDecodeError as e:
+                result = f"Error: malformed tool arguments: {e}"
+            except Exception as e:
+                # A malformed tool call must not unwind the agent loop and lose the whole
+                # ingest. Report it back so the LLM can correct and continue.
+                log.error("Tool %s raised %s: %s", fn_name or "(unknown)",
+                          type(e).__name__, e, exc_info=True)
+                result = f"Error: {type(e).__name__}: {e}"
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
             log.debug("Tool call: %s  arg=%s  result=%s", fn_name or "(unknown)", str(list(args.values())[:1])[:60], result_preview)
             # Record for log entry — skip done() itself
@@ -2634,9 +2648,14 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                 log.error("Tool %s: failed to parse arguments JSON: %s", fn_name, e)
                 arg_preview = ""
                 result      = f"Error: malformed tool arguments: {e}"
-            except (TypeError, ValueError, OSError) as e:
+            except Exception as e:
+                # A malformed tool call must not unwind the agent loop and lose the whole
+                # ingest — post_process, the log entry and the index rebuild all happen at
+                # the end. Report it back so the LLM can correct and continue.
+                log.error("Tool %s raised %s: %s", fn_name or "(unknown)",
+                          type(e).__name__, e, exc_info=True)
                 arg_preview = ""
-                result      = f"Error: {e}"
+                result      = f"Error: {type(e).__name__}: {e}"
 
             log.debug("Tool call: %s  arg=%s", fn_name or "(unknown)", arg_preview[:60])
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
