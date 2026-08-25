@@ -228,7 +228,12 @@ Call `create_file` with:
 Required sections:
 - **Summary**: 3–5 paragraphs synthesizing the source's main content and contribution
 - **Claims**: bulleted list of factual or analytical claims from the source
-- **Entities**: bulleted list of people, orgs, products, projects. Bare names only.
+- **Entities**: bulleted list of people, orgs, products, projects. Bare names only —
+  meaning plain text, not a markdown link. **Write each name exactly as a human would read
+  it aloud: natural spacing and capitalization, never a filename slug.** Write
+  "Film Criticism", not "film-criticism". This list is permanent — the page it's on cannot
+  be edited afterward — and it becomes the title of a page in Step 5, so get the form right
+  the first time.
   This list drives page creation in Step 5, so apply judgement here rather than listing
   every name that appears. **Include** an entity when the source makes substantive claims
   *about* it — its actions, positions, history, or role in the events described.
@@ -242,8 +247,10 @@ Required sections:
   The test: could you write more than a sentence or two about this entity from what this
   source actually says? If not, leave it off — it will be added later by a source that
   does have something to say about it.
-- **Concepts**: bulleted list of important concepts and terms. Bare names only. Apply the
-  same test: a concept the source explains or argues about, not every term it uses.
+- **Concepts**: bulleted list of important concepts and terms. Bare names only — same rule
+  as Entities: natural human-readable form, never a slug. Write "Sex in Cinema", not
+  "sex-in-cinema"; "Horror Films", not "horror-films". Apply the same test: a concept the
+  source explains or argues about, not every term it uses.
 - **Quotes**: 3–5 direct quotes with section references if available
 - **Context**: how it relates to, extends, supports, or contradicts existing documents
 
