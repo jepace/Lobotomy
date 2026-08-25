@@ -435,19 +435,30 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
 def _atomic_write(p: Path, content: str) -> None:
     """Write content to p atomically: write to a sibling .tmp file, then rename."""
     global _title_map_cache
+    # Capture pre-write state to decide below whether the title map cache actually needs
+    # to be thrown away. Reading one small file is cheap; rebuilding + re-linking against
+    # the whole corpus is not (~20s at a few thousand pages), and most writes to wiki/ —
+    # notably the autolinker's own writes, which only ever touch body text — never change
+    # title/aliases/no_autolink at all.
+    _existed = p.exists()
+    _old_fields = _parse_title_fields(p.read_text(encoding="utf-8", errors="replace")) if _existed else None
+
     p.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
         os.replace(tmp_path, p)
-        # Invalidate the title map cache whenever a wiki page changes so the
-        # next autolink call rebuilds it with the new page included.
         try:
             p.resolve().relative_to(WIKI_DIR.resolve())
-            _title_map_cache = None
         except ValueError:
-            pass
+            return  # not a wiki page — title map is unaffected either way
+        if not _existed:
+            _title_map_cache = None  # a new page always needs to enter the map
+            return
+        _new_fields = _parse_title_fields(content)
+        if _new_fields != _old_fields:
+            _title_map_cache = None
     except Exception:
         try:
             os.unlink(tmp_path)
@@ -596,6 +607,7 @@ _fetch_cache_lock = threading.Lock()
 # built by scanning all wiki page frontmatter.  Invalidated whenever any wiki
 # page is written so it is rebuilt at most once per batch of autolink calls.
 _title_map_cache: list[tuple[str, str]] | None = None  # (title, wiki_rel_path)
+_title_regex_cache: dict = {}  # title -> compiled regex; cleared whenever the map rebuilds
 
 # ---------------------------------------------------------------------------
 # Thread-local per-job session state — replaces the old module-level globals.
@@ -1230,6 +1242,45 @@ def _title_alts(title: str) -> str:
     return "(?:" + "|".join(alts) + ")"
 
 
+def _parse_title_fields(text: str) -> "tuple[str | None, list[str], bool]":
+    """Extract (title, aliases, no_autolink) from a wiki page's frontmatter.
+
+    Shared by _build_title_map and _atomic_write's cache-invalidation check, so the two
+    never disagree about which fields the title map actually depends on.
+    """
+    import re
+    m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+    if not m:
+        return None, [], False
+    fm_lines = m.group(1).splitlines()
+    title = None
+    aliases: list[str] = []
+    no_autolink = False
+    i = 0
+    while i < len(fm_lines):
+        line = fm_lines[i]
+        if line.startswith("title:"):
+            title = line.split(":", 1)[1].strip().strip('"')
+        elif line.startswith("no_autolink:"):
+            val = line.split(":", 1)[1].strip().lower()
+            no_autolink = val in ("true", "yes", "1")
+        elif line.startswith("aliases:"):
+            rest = line.split(":", 1)[1].strip()
+            if rest.startswith("["):
+                import json
+                try:
+                    aliases = json.loads(rest)
+                except Exception:
+                    pass
+            else:
+                j = i + 1
+                while j < len(fm_lines) and fm_lines[j].startswith("- "):
+                    aliases.append(fm_lines[j][2:].strip().strip('"'))
+                    j += 1
+        i += 1
+    return title, aliases, no_autolink
+
+
 def _build_title_map() -> list[tuple[str, str]]:
     """Return the cached [(title_or_alias, wiki_rel_path)] map, building it if needed.
 
@@ -1237,9 +1288,12 @@ def _build_title_map() -> list[tuple[str, str]]:
     Invalidated by _atomic_write whenever any wiki page changes.
     """
     import re
-    global _title_map_cache
+    global _title_map_cache, _title_regex_cache
     if _title_map_cache is not None:
         return _title_map_cache
+    # The set of titles is changing (that's why we're rebuilding) — any compiled regex
+    # keyed by a title that was renamed or removed would otherwise linger forever.
+    _title_regex_cache = {}
 
     raw: list[tuple[str, str]] = []   # (title_or_alias, wiki_rel_path_str)
     seen: set[str] = set()
@@ -1251,35 +1305,7 @@ def _build_title_map() -> list[tuple[str, str]]:
             if f.name == "index.md":
                 continue
             text = f.read_text(encoding="utf-8", errors="replace")
-            m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
-            if not m:
-                continue
-            fm_lines = m.group(1).splitlines()
-            title = None
-            aliases: list[str] = []
-            no_autolink = False
-            i = 0
-            while i < len(fm_lines):
-                line = fm_lines[i]
-                if line.startswith("title:"):
-                    title = line.split(":", 1)[1].strip().strip('"')
-                elif line.startswith("no_autolink:"):
-                    val = line.split(":", 1)[1].strip().lower()
-                    no_autolink = val in ("true", "yes", "1")
-                elif line.startswith("aliases:"):
-                    rest = line.split(":", 1)[1].strip()
-                    if rest.startswith("["):
-                        import json
-                        try:
-                            aliases = json.loads(rest)
-                        except Exception:
-                            pass
-                    else:
-                        j = i + 1
-                        while j < len(fm_lines) and fm_lines[j].startswith("- "):
-                            aliases.append(fm_lines[j][2:].strip().strip('"'))
-                            j += 1
-                i += 1
+            title, aliases, no_autolink = _parse_title_fields(text)
             if title and not no_autolink:
                 wiki_rel = str(f.relative_to(WIKI_DIR))
                 key = title.lower()
@@ -1370,11 +1396,19 @@ def _autolink(args: dict) -> str:
     for title, link_path in title_map:
         # Group 1: an existing complete link — pass through unchanged (never nest links inside).
         # Group 2: the title bare or with a sub-span already linked — replace with new link.
-        combined = re.compile(
-            r"(\[[^\]]*\]\([^)]*\))"
-            r"|(?<!\w)(" + _title_alts(title) + r")(?!\w)",
-            re.IGNORECASE,
-        )
+        # Compiling this pattern is the expensive part (_title_alts emits an alternative
+        # for every contiguous word sub-span of a multi-word title), and it depends only
+        # on the title text, not on this target page — so it's cached across autolink
+        # calls rather than recompiled from scratch every time, for every title, on
+        # every page touched in an ingest.
+        combined = _title_regex_cache.get(title)
+        if combined is None:
+            combined = re.compile(
+                r"(\[[^\]]*\]\([^)]*\))"
+                r"|(?<!\w)(" + _title_alts(title) + r")(?!\w)",
+                re.IGNORECASE,
+            )
+            _title_regex_cache[title] = combined
         def _replacer(m, _lp=link_path):
             if m.group(1):           # existing complete link — keep as-is
                 return m.group(1)
