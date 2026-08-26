@@ -149,6 +149,22 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
             # thing that says whether throttling or shrinking requests is the fix.
             if raw_body and raw_body != msg:
                 log.warning("LLM 429 detail (payload was %dKB): %s", len(data) // 1024, raw_body[:1200])
+            # A per-day quota will not clear on the retry ladder's timescale — Gemini's
+            # free-tier daily cap resets once every 24h, not once a minute. Both retry
+            # loops (_create, stream_agent_turn) sleep inside the single job-queue worker
+            # thread, so retrying this anyway doesn't just waste calls against a wall that
+            # won't move: it blocks every other queued job for as long as it keeps trying
+            # (previously: up to max_retries x 60s before even reaching phase 2 — one job
+            # was observed retrying for 3+ hours straight against an exhausted daily quota).
+            # Fail this job immediately instead; the quota resets on its own schedule and
+            # the user can re-run when it does.
+            if raw_body and re.search(r'"quotaId"\s*:\s*"[^"]*PerDay[^"]*"', raw_body):
+                raise _LLMError(
+                    f"Daily API quota exhausted for this model/provider — it will not recover "
+                    f"by retrying. Wait for the quota to reset (see provider dashboard) or switch "
+                    f"model/provider in config.json, then try again. Detail: {msg}",
+                    retryable=False,
+                )
             raise _LLMError(f"Rate limited: {msg}", retryable=True, retry_after=retry_after)
         if code >= 500:
             raise _LLMError(f"Server error {code}: {msg}", retryable=True)
