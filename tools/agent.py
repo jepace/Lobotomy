@@ -575,12 +575,23 @@ def _update_file(path: str, content: str) -> str:
                     f"{_full_len} chars of {path}. Call read_file with offset={_covered} to see "
                     f"the rest before writing, or your update would discard it."
                 )
+            # The chunk just served may itself be truncated (a page can span more than
+            # two read_file-sized chunks) — check actual new coverage rather than assume
+            # "the rest" was all of it, so the wording is never wrong for a long page.
+            _new_covered = _ctx()._session_read_coverage.get(_wiki_rel_check, _covered)
+            if _new_covered >= _full_len:
+                _next_msg = "This is the rest of the page, and is now marked as read."
+            else:
+                _next_msg = (
+                    f"This still is NOT the whole page — chars {_covered}–{_new_covered} of "
+                    f"{_full_len}, marked as read. Call read_file with offset={_new_covered} "
+                    f"for the remainder before writing."
+                )
             return (
                 f"Error: update_file refused — you have only read the first {_covered} of "
                 f"{_full_len} chars of {path}. Writing now would silently discard everything "
-                f"after that point.\n\nThe rest is below, and is now marked as read. Once you "
-                f"have seen the whole page, merge your changes into the FULL content and call "
-                f"update_file again.\n\n"
+                f"after that point.\n\n{_next_msg} Once you have seen the whole page, merge "
+                f"your changes into the FULL content and call update_file again.\n\n"
                 f'<file path="{path}" offset="{_covered}">\n{_next_chunk}\n</file>'
             )
     except ValueError:
