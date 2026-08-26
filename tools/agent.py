@@ -175,6 +175,21 @@ _WIKI_READ_LIMIT = 20_000  # chars for wiki pages — generous but prevents cont
 
 _WIKI_META_STEMS = {"log", "index"}
 
+def _strip_system_fm_fields(text: str) -> str:
+    """Remove created:/raw_source: from frontmatter — system-managed, the LLM has no use
+    for them. Shared by _read_file (what the LLM sees) and _update_file's read-coverage
+    check (how much of the page the LLM has actually seen), so both measure length the
+    same way — no false "you haven't read the whole thing" nagging over a few stripped
+    frontmatter chars neither side cares about.
+    """
+    import re as _re2
+    m = _re2.match(r'^(---\s*\n)(.*?\n)(---\s*\n)', text, _re2.DOTALL)
+    if not m:
+        return text
+    stripped_fm = _re2.sub(r'^(created|raw_source):[ \t]*.*\n?', '', m.group(2), flags=_re2.MULTILINE)
+    return m.group(1) + stripped_fm + m.group(3) + text[m.end():]
+
+
 def _read_file(path: str, offset: int = 0) -> "str | list":
     """Return a string, or a list of content blocks for image/image-only PDF."""
     p = REPO_ROOT / path
@@ -225,25 +240,28 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
             limit = _RAW_READ_LIMIT
     # Strip system-owned frontmatter fields the LLM has no use for.
     # sources: is intentionally kept — the LLM needs it to iterate source pages.
-    import re as _re2
-    _fm = _re2.match(r'^(---\s*\n)(.*?\n)(---\s*\n)', text, _re2.DOTALL)
-    if _fm:
-        _stripped_fm = _re2.sub(
-            r'^(created|raw_source):[ \t]*.*\n?', '', _fm.group(2), flags=_re2.MULTILINE
-        )
-        text = _fm.group(1) + _stripped_fm + _fm.group(3) + text[_fm.end():]
+    text = _strip_system_fm_fields(text)
 
     total = len(text)
     if offset:
         text = text[offset:]
     if len(text) > limit:
         remaining = total - offset - limit
+        covered_upto = offset + limit
         text = text[:limit] + f"\n\n[TRUNCATED — showing chars {offset}–{offset+limit} of {total} total. Call read_file with offset={offset+limit} to continue.]"
-    elif offset:
-        text = text + f"\n\n[END OF FILE — read chars {offset}–{total} of {total} total.]"
+    else:
+        covered_upto = total  # this call reached the end of the file, truncated or not
+        if offset:
+            text = text + f"\n\n[END OF FILE — read chars {offset}–{total} of {total} total.]"
     try:
-        p.resolve().relative_to(WIKI_DIR.resolve())
-        _ctx()._session_read_pages.add(str(p.resolve().relative_to(WIKI_DIR.resolve())))
+        wiki_rel = str(p.resolve().relative_to(WIKI_DIR.resolve()))
+        _ctx()._session_read_pages.add(wiki_rel)
+        # Track the furthest point actually seen, not just "read at least once" — a page
+        # over _WIKI_READ_LIMIT needs more than one read_file call to see it all, and
+        # update_file must not accept a rewrite composed from a partial read: it replaces
+        # the whole file, so anything past what was seen would be silently discarded.
+        cov = _ctx()._session_read_coverage
+        cov[wiki_rel] = max(cov.get(wiki_rel, 0), covered_upto)
     except (ValueError, NameError):
         pass
     return text
@@ -524,6 +542,28 @@ def _update_file(path: str, content: str) -> str:
                 f"into it and call update_file again — do NOT call read_file first.\n\n"
                 f'<file path="{path}">\n{_current}\n</file>'
             )
+        # Read-at-least-once is not enough for a page longer than one read_file call can
+        # return: update_file replaces the WHOLE file, so writing back content composed
+        # from only the first chunk of a long page would silently discard everything
+        # after it. Require that this session has actually seen every character.
+        _full_len = len(_strip_system_fm_fields(p.read_text(encoding="utf-8", errors="replace")))
+        _covered = _ctx()._session_read_coverage.get(_wiki_rel_check, 0)
+        if _covered < _full_len:
+            _next_chunk = _read_file(path, offset=_covered)
+            if not isinstance(_next_chunk, str):
+                return (
+                    f"Error: update_file refused — you have only read the first {_covered} of "
+                    f"{_full_len} chars of {path}. Call read_file with offset={_covered} to see "
+                    f"the rest before writing, or your update would discard it."
+                )
+            return (
+                f"Error: update_file refused — you have only read the first {_covered} of "
+                f"{_full_len} chars of {path}. Writing now would silently discard everything "
+                f"after that point.\n\nThe rest is below, and is now marked as read. Once you "
+                f"have seen the whole page, merge your changes into the FULL content and call "
+                f"update_file again.\n\n"
+                f'<file path="{path}" offset="{_covered}">\n{_next_chunk}\n</file>'
+            )
     except ValueError:
         pass
 
@@ -628,6 +668,7 @@ def _ctx():
         t._session_entity_pages = []
         t._session_updated_pages = []
         t._session_read_pages = set()
+        t._session_read_coverage = {}
         t._session_tool_calls = []
         t._session_search_counts = {}
         t._done_refusals = 0
@@ -643,6 +684,7 @@ def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
     t._session_entity_pages = []
     t._session_updated_pages = []
     t._session_read_pages = set()
+    t._session_read_coverage = {}
     t._session_tool_calls = []
     t._session_search_counts = {}
     t._done_refusals = 0
