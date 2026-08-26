@@ -471,7 +471,7 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
 
 def _atomic_write(p: Path, content: str) -> None:
     """Write content to p atomically: write to a sibling .tmp file, then rename."""
-    global _title_map_cache, _title_map_built_at
+    global _title_map_cache
     # Capture pre-write state to decide below whether the title map cache actually needs
     # to be thrown away. Reading one small file is cheap; rebuilding + re-linking against
     # the whole corpus is not (~20s at a few thousand pages), and most writes to wiki/ —
@@ -479,6 +479,10 @@ def _atomic_write(p: Path, content: str) -> None:
     # title/aliases/no_autolink at all.
     _existed = p.exists()
     _old_fields = _parse_title_fields(p.read_text(encoding="utf-8", errors="replace")) if _existed else None
+    try:
+        _old_mtime = p.stat().st_mtime if _existed else 0.0
+    except OSError:
+        _old_mtime = 0.0
 
     p.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
@@ -497,14 +501,26 @@ def _atomic_write(p: Path, content: str) -> None:
         if _new_fields != _old_fields:
             _title_map_cache = None
         elif _title_map_cache is not None:
-            # This write already went through the vetting above and doesn't need to
-            # invalidate the cache — but the file's mtime just advanced, and the backstop
-            # staleness check in _build_title_map() only looks at raw mtimes. Without this,
-            # every KNOWN-safe write (notably the autolinker's own, which happen on almost
-            # every page touched in a session) would advance a file's mtime past
-            # _title_map_built_at and make the very next lookup misdiagnose it as a bypass,
-            # forcing a full rebuild per page — exactly the cost this cache exists to avoid.
-            _title_map_built_at = time.time()
+            _key = str(p.resolve())
+            if _old_mtime > _title_map_built_at and _vetted_mtimes.get(_key) != _old_mtime:
+                # The file was ALREADY newer than the cache before this write, and not by
+                # our doing — some unvetted path touched it, and the "no title change"
+                # comparison above was made against that untrusted state, not against what
+                # the cache holds. Vouching now would launder the bypass. Invalidate.
+                _title_map_cache = None
+            else:
+                # This write is vetted (title fields unchanged) and the file was clean
+                # before it — but its mtime just advanced, and the backstop staleness check
+                # in _build_title_map() only looks at raw mtimes. Record THIS file's new
+                # mtime as vetted so the backstop exempts exactly this write and nothing
+                # else. (An earlier version bumped the global _title_map_built_at watermark
+                # here instead — that silently vouched for every file in the corpus,
+                # masking genuine bypass writes from other processes for as long as any
+                # safe write kept landing, e.g. the log.md prepend on nearly every turn.)
+                try:
+                    _vetted_mtimes[_key] = p.stat().st_mtime
+                except OSError:
+                    pass
     except Exception:
         try:
             os.unlink(tmp_path)
@@ -688,6 +704,11 @@ _fetch_cache_lock = threading.Lock()
 _title_map_cache: list[tuple[str, str]] | None = None  # (title, wiki_rel_path)
 _title_regex_cache: dict = {}  # title -> compiled regex; cleared whenever the map rebuilds
 _title_map_built_at: float = 0.0  # time.time() when the cache was last (re)built
+# Files this process wrote through _atomic_write's vetting since the last rebuild, mapped
+# to the exact post-write mtime that was vetted. The staleness backstop exempts a file
+# only when its current mtime equals its vetted mtime — any later touch (including a
+# bypass write from another process) mismatches and is still caught.
+_vetted_mtimes: dict = {}
 
 # ---------------------------------------------------------------------------
 # Thread-local per-job session state — replaces the old module-level globals.
@@ -1376,7 +1397,7 @@ def _build_title_map() -> list[tuple[str, str]]:
     memory rather than on disk.
     """
     import re
-    global _title_map_cache, _title_regex_cache, _title_map_built_at
+    global _title_map_cache, _title_regex_cache, _title_map_built_at, _vetted_mtimes
     if _title_map_cache is not None:
         stale = False
         for subdir in ("entities", "concepts", "synthesis", "sources"):
@@ -1384,9 +1405,20 @@ def _build_title_map() -> list[tuple[str, str]]:
             if not d.is_dir():
                 continue
             for f in d.glob("*.md"):
-                if f.name != "index.md" and f.stat().st_mtime > _title_map_built_at:
-                    stale = True
-                    break
+                if f.name == "index.md":
+                    continue
+                mtime = f.stat().st_mtime
+                if mtime <= _title_map_built_at:
+                    continue
+                # Newer than the cache — but exempt it if this exact mtime is one this
+                # process vetted in _atomic_write (a body-only write that provably didn't
+                # change title fields). Any OTHER touch — a bypass write from this or
+                # another process — leaves a different mtime and is still caught. resolve()
+                # only runs in this rare branch, so the common scan stays stat()-only.
+                if _vetted_mtimes.get(str(f.resolve())) == mtime:
+                    continue
+                stale = True
+                break
             if stale:
                 break
         if not stale:
@@ -1396,6 +1428,7 @@ def _build_title_map() -> list[tuple[str, str]]:
     # The set of titles is changing (that's why we're rebuilding) — any compiled regex
     # keyed by a title that was renamed or removed would otherwise linger forever.
     _title_regex_cache = {}
+    _vetted_mtimes = {}  # superseded: the fresh watermark below covers everything on disk
     _title_map_built_at = time.time()  # captured before the scan, so a write that lands
                                         # mid-scan is still caught as stale on the next call
 
