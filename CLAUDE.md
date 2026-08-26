@@ -9,8 +9,8 @@ Lobotomy is a personal knowledge-base server where LLMs synthesize knowledge at 
 ## Running the Server
 
 ```sh
-pip install -r requirements.txt      # flask, markdown; add openai and resend as needed
-cp config.json.example config.json   # then fill in llm.provider, llm.api_key, admin creds
+pip install -r requirements.txt      # flask, markdown — nothing else; API calls use stdlib urllib
+cp config.json.example config.json   # then fill in the active provider's api_key, admin creds
 python3 tools/serve.py               # web UI at http://127.0.0.1:8080
 ```
 
@@ -31,7 +31,7 @@ sh tools/lint.sh                           # shell-based broken-link checker
 
 ### Core modules
 
-**`tools/agent.py`** — the heart of the system. Contains all AI tool implementations (`_read_file`, `_write_file`, `_create_file`, `_autolink`, `_search_wiki`, `_fetch_url`, `_prepend_log`, `_done`, `_rebuild_index`, etc.) plus the agentic loop (`stream_agent_turn`, `run_agent_turn`) and LLM provider abstraction. Both `serve.py` and `wiki.py` import from here.
+**`tools/agent.py`** — the heart of the system. Contains all AI tool implementations (`_read_file`, `_update_file`, `_create_file`, `_lookup_titles`, `_search_wiki`, `_autolink`, `_fetch_url`, `_done`, `_rebuild_index`, etc.) plus the agentic loop (`stream_agent_turn`, `run_agent_turn`) and LLM provider abstraction. Both `serve.py` and `wiki.py` import from here.
 
 **`tools/serve.py`** — Flask web server. Routes for: `/chat` (streaming AI), `/wiki/*` (rendered markdown), `/inbox` (read-it-later), auth, and settings. Imports `agent.py` for AI functionality and `job_queue.py` for background jobs.
 
@@ -43,19 +43,21 @@ sh tools/lint.sh                           # shell-based broken-link checker
 
 ### The autolinker (common bug surface)
 
-**`tools/agent.py:_autolink()`** — called automatically after every `create_file` or `write_file`. **This is the only way wiki links are ever created** — the LLM never writes raw markdown links itself. Uses a combined regex where group 1 protects existing links and group 2 matches titles bare or with a sub-span already linked (via `_title_alts()`). **All** bare occurrences of each title (and any `aliases:`) are linked (not just the first). When a partial match is found (e.g. `CASA of [Monterey County](url)`), the inner link is stripped and the whole phrase is replaced with the longer-title link.
+**`tools/agent.py:_autolink()`** — run over every page touched in a session by `_post_process_session()` when the agent calls `done()`. **This is the only way wiki links are ever created** — the LLM never writes raw markdown links itself. Uses a combined regex where group 1 protects existing links and group 2 matches titles bare or with a sub-span already linked (via `_title_alts()`). **All** bare occurrences of each title (and any `aliases:`) are linked (not just the first). When a partial match is found (e.g. `CASA of [Monterey County](url)`), the inner link is stripped and the whole phrase is replaced with the longer-title link.
 
 The critical invariant: **never match inside existing markdown links**. Group 1 of the combined regex takes priority at each position, consuming existing links before group 2 can fire.
+
+Performance: the title+alias map and the per-title compiled regexes are cached in memory (`_title_map_cache`, `_title_regex_cache`). `_atomic_write` invalidates them only when a write actually changes `title`/`aliases`/`no_autolink`; an mtime-scan backstop in `_build_title_map()` catches writes that bypass `_atomic_write` (other processes, manual edits), with per-file vetted mtimes so the backstop doesn't false-fire on the autolinker's own body-only writes. This invalidation logic has been a repeat bug source — change it with care and test all of: safe write keeps cache, title change invalidates, bypass write is detected, safe write doesn't mask a concurrent bypass.
 
 Pages can carry an `aliases:` frontmatter list (e.g. `aliases: ["gonzales", "uc davis"]`) for common short names that the autolinker should also match. The LLM is not instructed to set this field — it's a manual human override for when the formal page title differs from how the subject is typically referenced in prose.
 
 ### Wiki page lifecycle
 
-1. `create_file` → writes frontmatter + body, calls `_autolink`, calls `_inject_sources_section`
-2. `_autolink` → cross-links bare title occurrences to other wiki pages
-3. `_inject_sources_section` → renders a `## Sources` section from `sources:` frontmatter
-4. `_autolink_sources_if_entity` → if the written page is an entity, also re-autolinks all source pages that mention it
-5. `done()` → server runs lint checks; results visible at `/wiki/lint`
+1. `create_file` / `update_file` → write frontmatter + body; `sources:` is merged from disk plus the session's source page (never trusted from the LLM); `_inject_sources_section` renders the `## Sources` section
+2. `done()` → `_post_process_session()` runs once: patches `sources:` on every touched page, autolinks them all, re-injects `## Sources`, rebuilds the index
+3. Server lint checks run after `done()`; results visible at `/wiki/lint`
+
+Guardrails enforced in code (not just in LOBOTOMY.md — instructions alone proved insufficient): search limited to 2 per term per session; `done()` refused if an ingest wrote no entity/concept pages or never established a source page; `update_file` refused until the session has read the page's full content (long pages are chunked at 20K chars); refusals hand back the needed file content in the same response to save a round-trip; `create_file` refuses all-lowercase titles and adopts an existing source page on re-ingest of the same raw file.
 
 ### `system_prompt()` and `LOBOTOMY.md`
 
@@ -63,10 +65,10 @@ Pages can carry an `aliases:` frontmatter list (e.g. `aliases: ["gonzales", "uc 
 
 ## Key Conventions
 
-- **`raw/` is immutable for the LLM** — code in `_write_file` blocks the LLM from writing outside `wiki/`. Raw source files live flat in `raw/` (no subdirectories). `serve.py` manages their lifecycle via `_mark_inbox_wikified`.
-- **`wiki/log.md` is append-only** — always use `prepend_log`, never `write_file` on the log.
+- **`raw/` is immutable for the LLM** — code in `_update_file` blocks the LLM from writing outside `wiki/`. Raw source files live flat in `raw/` (no subdirectories). `serve.py` manages their lifecycle via `_mark_inbox_wikified`.
+- **`wiki/log.md` is append-only** — written by `_auto_write_log_entry` at `done()`; `update_file` refuses it.
 - **No `[[wikilink]]` syntax** — standard relative markdown links only.
-- **`create_file` over `write_file`** for new wiki pages — it auto-fills `created`/`updated` dates.
+- **`create_file` for new pages, `update_file` for existing ones** — `create_file` auto-fills `created`/`updated`; `update_file` restores system-owned fields from disk.
 - Internal wiki links use paths relative to the page's location: `../entities/foo.md` from `wiki/sources/`.
 - File names: `lowercase-hyphenated-slugs.md`. Source slugs encode `{author-or-org}-{year}-{short-title}`.
 - The `## Sources` section in entity/concept pages is auto-generated from frontmatter — never write it manually.
@@ -78,7 +80,9 @@ Pages can carry an `aliases:` frontmatter list (e.g. `aliases: ["gonzales", "uc 
 {
   "admin":  { "email": "...", "password": "..." },
   "server": { "host": "127.0.0.1", "port": 8080, "https": false, "base_url": "..." },
-  "llm":    { "provider": "gemini|openai|openrouter|ollama|groq", "api_key": "...", "model": "..." },
+  "llm":    { "active": "gemini", "providers": { "gemini": { "api_key": "...", "model": "..." } },
+              "max_retries": 6, "retry_poll_interval": 300, "daily_quota_poll_interval": 1800,
+              "max_rpm": 15, "inter_request_delay": 5 },
   "email":  { "resend_api_key": "...", "from_address": "..." }
 }
 ```

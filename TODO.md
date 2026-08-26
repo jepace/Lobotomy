@@ -1,41 +1,28 @@
 # Lobotomy TODO
 
-## Completed
-- ✅ Fix todo list bugs: recurrence, notes persistence, overdue header, timezone, lowercase text
-- ✅ UI polish: month labels, context autocomplete, delete button
-- ✅ Keyboard shortcuts (R, N, ?)
-- ✅ Group headers for context and priority sorting
-- ✅ Bookmarklet popup improvements
-
-## In Progress
-(none)
+(Task management moved to its own project, DoIt — old task-feature items removed.)
 
 ## Backlog
 
-### User Settings Page
-- Create `/settings` route and template
-- Settings to persist:
-  - Dark mode toggle
-  - Font size preference
-  - Task list sort preferences (default column, direction)
-  - Password change
-- Store in user profile/database
-- Add settings icon/link to navbar
+### Data repair (one-shot scripts)
+- **Backfill lost source attributions**: before the re-ingest fix, entity pages updated in
+  a session whose source page already existed silently kept their old `sources:` list.
+  Script: for each `wiki/sources/*.md`, find entity/concept pages whose body cites it but
+  whose `sources:` frontmatter omits it; backfill and re-render `## Sources`. Dry-run first.
+- **Review queue for thin entity pages**: pages created before the "central to the story"
+  bar (reporters, one-quote spokespeople) and pages with slug-style or lowercase titles.
+  List candidates (single source + short body) for human review — not auto-delete, since
+  deleting a page the autolinker knows about leaves broken links behind.
 
-### Daily Email Digest
-- Background scheduler (APScheduler or similar)
-- Send daily email containing:
-  - Tasks due today and overdue
-  - Items in reading list
-- Use Resend API (already configured)
-- Allow enable/disable per user
-- Configurable time (morning/evening)
-- Requires: user settings for email frequency/time
+### Performance
+- `_title_alts()` cost grows ~n² with title word count (one regex alternative per
+  contiguous word sub-span). Cap or trim it — biggest remaining autolink cost.
+- Job worker shares the process (and GIL) with Flask; heavy autolink stretches stall the
+  UI. If it gets worse: move the worker to its own process (event files already provide
+  the IPC).
 
-### Nice-to-Have
-- Task keyboard navigation (arrow keys to move between rows)
-- Inline task creation with keyboard
-- Bulk recurrence pattern change
-- Task templates/quick-add buttons
-- Mobile UI improvements for touch
-- Dark mode CSS variables already in place, just needs toggle
+### Config housekeeping (live server)
+- `max_retries` is 999 in the live config — set back to ~6 now that daily-quota 429s use
+  their own slow retry interval instead of the fast ladder.
+- Revisit `max_rpm` — the 130K-token index injection is gone, so the real ceiling is
+  likely much higher than the current setting assumes.

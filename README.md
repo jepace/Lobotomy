@@ -19,22 +19,23 @@ accurate, because the cross-references, comparisons, and contradiction flags are
 |-------|----------|---------------|
 | Raw sources | `raw/` | You (human) — immutable |
 | Wiki pages | `wiki/` | The LLM |
-| Operating schema | `AGENT.md` | Defined once, evolved carefully |
+| Operating schema | `LOBOTOMY.md` | Defined once, evolved carefully |
 
 ## Setup
 
 ### Install dependencies
 
 ```sh
-pip install -r requirements.txt
+pip install -r requirements.txt      # flask, markdown — that's all
 ```
 
-On FreeBSD, flask and markdown are available as packages (faster, no compiler needed):
+On FreeBSD, both are available as packages (faster, no compiler needed):
 
 ```sh
 pkg install py311-flask py311-markdown
-pip install openai resend
 ```
+
+No LLM-provider or email SDK is needed — all API calls use the Python standard library.
 
 ### Configure
 
@@ -60,9 +61,13 @@ $EDITOR config.json
     "base_url": "https://wiki.example.com"
   },
   "llm": {
-    "provider": "gemini",
-    "api_key": "your-gemini-api-key",
-    "model": "gemini-2.5-flash-lite"
+    "active": "gemini",
+    "providers": {
+      "gemini": {
+        "api_key": "your-gemini-api-key",
+        "model": "gemini-2.5-flash-lite"
+      }
+    }
   },
   "email": {
     "resend_api_key": "",
@@ -71,14 +76,17 @@ $EDITOR config.json
 }
 ```
 
-**`llm.provider` / `llm.model`** options:
+`llm.active` names the provider to use; `llm.providers` holds one block per provider so you
+can keep keys for several and switch between them (also switchable at runtime from the
+Settings page). Provider options:
 
-| Provider | `provider` | Example `model` | Key needed |
-|----------|-----------|-----------------|------------|
-| Gemini (free tier) | `gemini` | `gemini-2.5-flash-lite` | [aistudio.google.com](https://aistudio.google.com/apikey) |
-| OpenAI | `openai` | `gpt-4o-mini` | platform.openai.com |
-| OpenRouter (free models) | `openrouter` | `google/gemini-2.0-flash-exp:free` | openrouter.ai |
-| Ollama (local) | `ollama` | `llama3.2` | none |
+| Provider | Example `model` | Key needed |
+|----------|-----------------|------------|
+| `gemini` (free tier) | `gemini-2.5-flash-lite` | [aistudio.google.com](https://aistudio.google.com/apikey) |
+| `openai` | `gpt-4o-mini` | platform.openai.com |
+| `openrouter` (free models) | `google/gemini-2.0-flash-exp:free` | openrouter.ai |
+| `groq` | `llama-3.3-70b-versatile` | console.groq.com |
+| `ollama` (local) | `llama3.2` | none |
 
 **Email verification** (optional): fill in `email.resend_api_key` and `email.from_address`
 with your [Resend](https://resend.com) credentials. Without it, accounts are auto-verified.
@@ -97,6 +105,10 @@ python3 tools/serve.py
 Open `http://your-vps-ip:8080` in any browser — including your iPhone.
 
 **VPS jail setup** — bind to all interfaces: set `"host": "0.0.0.0"` in `config.json`.
+
+**FreeBSD service**: an rc.d script lives at `contrib/freebsd/rc.d/lobotomy`. Install it to
+`/usr/local/etc/rc.d/`, then `sysrc lobotomy_enable=YES && service lobotomy start`.
+`deploy.sh` handles the rsync + rc-script install for a bastille jail.
 
 For a reverse proxy via nginx (recommended — handles TLS):
 
@@ -119,52 +131,41 @@ server {
 
 Browse to the server URL. Four tabs:
 
-- **Chat** — talk to the AI: ingest sources, query the wiki, lint, manage tasks via AI
+- **Chat** — talk to the AI: ingest sources, query the wiki, regenerate pages
 - **Wiki** — browse all pages with rendered markdown and working links
-- **Tasks** — view, add, and check off tasks without needing the AI
-- **Inbox** — paste articles or URLs to save for later; tap "Process with AI" to ingest them
+- **Reading List** — save articles and URLs for later; wikify them with one tap
+- **Settings** — theme, password, AI model switching, browser bookmarklet
 
-### Command line (optional)
+### Reading list (Pocket replacement)
 
-```sh
-python3 tools/wiki.py                      # interactive REPL
-python3 tools/wiki.py "ingest raw/file.md" # one-shot
-```
+Three ways to save an article:
 
-### Ingest a source
+1. **Bookmarklet** — grab it from Settings, tap it on any page
+2. **Push API** — `POST /api/push` from Shortcuts or any app (see `docs/api.md`)
+3. **Paste** — add a URL or paste article text directly on the Reading List page
+
+Saved items land in `raw/` (flat — no subdirectories). Tap **Wikify** on an item to ingest
+it; the badge shows when it's been synthesized into the wiki.
+
+### Ingest a source from chat
 
 1. Save the document to `raw/` as a `.txt`, `.md`, or `.pdf` file
 2. Say: `Ingest raw/your-document.pdf`
 
-The LLM will read the source, create a summary page, update entity and concept pages, and maintain
-the index and log.
-
-### Read-it-later (Pocket replacement)
-
-1. Save an article as `.md`/`.txt`, or save a URL as a single-line `.txt` file, into `raw/inbox/`
-2. Say: `Process inbox` — the LLM will triage, ingest, and update the reading list
+The LLM reads the source, creates a summary page, updates entity and concept pages, and
+maintains the index and log.
 
 ### Query the wiki
 
 Say: `What does the wiki say about [topic]?`
 
-The LLM reads `wiki/index.md`, finds relevant pages, reads them, and synthesizes a cited answer.
-It will tell you where the wiki has no coverage.
+The LLM searches the wiki, reads the relevant pages, and synthesizes a cited answer. It will
+tell you where the wiki has no coverage.
 
-### Manage tasks (Toodledo replacement)
+### Regenerate a page
 
-Tasks live in `wiki/tasks.md` with inline tags for priority, due date, context, and project.
-
-```
-- [ ] Task description #p:high #due:2026-05-01 #ctx:work #proj:project-name
-```
-
-Operations you can ask the LLM:
-- `Add a task: [description] #p:high #due:2026-05-01 #ctx:work`
-- `Show open tasks due this week`
-- `Complete task: [description]`
-- `Archive completed tasks`
-- `Prioritize my task list`
+Say: `Regenerate the [title] page` — rebuilds one page from every source that informed it.
+Normal ingest folds new sources in incrementally; regenerate is the full re-synthesis.
 
 ### Search (no LLM needed)
 
@@ -173,60 +174,48 @@ python3 tools/search.py "keyword"
 python3 tools/search.py transformer BERT GPT
 ```
 
-### Filter tasks (no LLM needed)
-
-```sh
-python3 tools/tasks.py                    # all open tasks, sorted by due date / priority
-python3 tools/tasks.py --due-today        # due today or overdue
-python3 tools/tasks.py --priority high    # high and top priority tasks
-python3 tools/tasks.py --context work     # tasks with @work context
-python3 tools/tasks.py --overdue          # past their due date
-python3 tools/tasks.py --project name     # tasks in a specific project
-```
-
 ### Health check
 
-Say: `Lint the wiki` — checks for broken links, orphan pages, stale content, contradictions, and
-coverage gaps. Suggests sources to look for.
+Visit `/wiki/lint` — checks for broken links, missing frontmatter, and pages missing from
+the index. Lint checks also run automatically at the end of every ingest.
 
 ## File Structure
 
 ```
-raw/                    Drop source documents here (never modified by LLM)
-raw/inbox/              Drop articles/URLs for read-it-later processing
+raw/                    Source documents, flat (never modified by the LLM)
 raw/assets/             Images, PDFs, attachments
 wiki/
-  index.md              Master catalog of all wiki pages
+  index.md              Master catalog of all wiki pages (auto-generated)
   log.md                Operation history (append-only)
-  overview.md           High-level synthesis, always kept current
-  reading-list.md       Read-it-later queue tracker
-  tasks.md              Task manager
   sources/              One page per ingested source
   entities/             People, orgs, products, projects
   concepts/             Ideas, techniques, frameworks
   synthesis/            Cross-source analyses and comparisons
 tools/
-  serve.py              Web server — primary interface (chat, wiki, tasks, inbox)
-  agent.py              Shared AI agent logic (provider config, tools, streaming)
+  serve.py              Web server — primary interface
+  agent.py              AI agent core: tools, agentic loop, provider abstraction
   wiki.py               CLI client (optional alternative to the web server)
+  job_queue.py          Background job queue for async wikify
+  config.py             config.json loader
+  auth.py               Login, sessions, email verification
   search.py             Keyword search CLI (no LLM needed)
-  tasks.py              Task filter CLI (no LLM needed)
+  repair_links.py       Fix broken relative links (no LLM needed)
+  lint.sh               Shell-based broken-link checker
   templates/            HTML templates for the web server
-AGENT.md               LLM operating instructions (the schema)
+contrib/freebsd/rc.d/   FreeBSD service script
+docs/api.md             Push API documentation
+LOBOTOMY.md             LLM operating instructions (the schema)
 ```
 
-## On FreeBSD
-
-All CLI tools require only Python 3 (no additional packages):
+## Command line (optional)
 
 ```sh
-pkg install python3
-python3 tools/search.py "keyword"
-python3 tools/tasks.py --due-today
+python3 tools/wiki.py                      # interactive REPL
+python3 tools/wiki.py "ingest raw/file.md" # one-shot
 ```
 
 For reading the wiki in a terminal without the web front end:
-- [`glow`](https://github.com/charmbracelet/glow): `pkg install glow`, then `glow wiki/overview.md`
+- [`glow`](https://github.com/charmbracelet/glow): `pkg install glow`, then `glow wiki/index.md`
 - [`mdcat`](https://github.com/swsnr/mdcat): terminal markdown renderer with image support
 
 ## Design Principles
@@ -235,6 +224,6 @@ For reading the wiki in a terminal without the web front end:
 - **Contradictions are surfaced, not resolved** — the LLM flags disagreements; humans decide
 - **Every claim has provenance** — pages cite which source supports each claim
 - **The log is append-only** — complete audit trail of all LLM operations
-- **Cold-start friendly** — a fresh LLM session can fully orient from `AGENT.md` alone
+- **Cold-start friendly** — a fresh LLM session can fully orient from `LOBOTOMY.md` alone
 - **No special tooling required** — all wiki content is standard markdown, readable everywhere
 - **Viewer-agnostic** — works with any markdown renderer, no Obsidian required

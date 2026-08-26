@@ -193,14 +193,11 @@ So: one `lookup_titles` call after Step 3, then act on the results. EXISTS → `
 that path and `update_file` it. NO PAGE → `create_file`. Do not re-verify with a search;
 the lookup is authoritative.
 
-**Ingest does not use `search_wiki` at all.** `lookup_titles` answers what exists, and an
-existing page is updated from what you already read — never rebuilt by hunting down its old
-sources. Reach for `search_wiki` only if a name is genuinely ambiguous and the lookup could
-not settle it.
-
-**Never search for a term more than twice in a session.** The server enforces this and
-will refuse the third call. If two searches find nothing, the answer is "it does not
-exist" — create the page and move on.
+**During ingest, `search_wiki` has exactly one legitimate use**: a name so ambiguous the
+lookup could not settle it. Even then, **two searches per term maximum — the server refuses
+the third.** If two searches find nothing, it does not exist: create the page and move on.
+Never use search to re-check a lookup result, and never use it to hunt down a page's older
+sources — an existing page is updated from what you already read, not rebuilt.
 
 **The lookup replaces the search, not the work.** Answering "does it exist?" cheaply does
 not mean skipping a page. Every entity and concept in the source still gets a page written
@@ -212,8 +209,8 @@ The file must be in `raw/`. If the user gives pasted text, ask them to save it
 to `raw/` first as a `.txt` or `.md` file.
 
 ### Step 2 — Read the source completely
-Read the entire file before writing anything. If it is very long (>20,000 words), read it in
-sections sequentially before proceeding.
+Read the entire file before writing anything. If `read_file` returns a `[TRUNCATED …]`
+notice, keep calling it with the offset it names until you reach the end of the file.
 
 ### Step 3 — Create a source summary document
 **One source page per ingest, exactly.** Do not create source pages for URLs or articles mentioned inside the raw file — only for the raw file itself. Do not call `create_file` with `type: source` more than once per session. **Source pages are immutable after creation — never call `update_file` on a `wiki/sources/` page.**
@@ -266,12 +263,8 @@ pass **all of those names together** to `lookup_titles` in one call. That single
 which already have pages and which do not. Do not call `search_wiki` for this, and do not make
 one lookup call per name.
 
-List every existing document that:
-- Is mentioned in the new source
-- Overlaps with entities or concepts in the source
-- Could receive new citations or updated claims
-
-List these explicitly before modifying any of them.
+The results are your worklist for Steps 5 and 6: every EXISTS entry gets updated, every
+NO PAGE entry gets created.
 
 ### Step 5 — Update or create entity documents
 
@@ -294,8 +287,8 @@ For each entity (person, organization, product, project) on that list:
   1. `read_file` the existing entity page. It already synthesizes every source ingested before
      now; treat it as correct.
   2. `update_file` with that page's content plus whatever this new source adds or changes.
-     Preserve existing material that this source does not contradict. Do not set `sources:` —
-     it is managed automatically. Preserve the original `created` date.
+     Preserve existing material that this source does not contradict. Do not set `sources:`
+     or `created:` — both are managed automatically.
   **Do not read the pages listed in `sources:`, and do not search for more sources.** Their
   content is already reflected in the page you just read. Re-deriving the page from all of its
   sources is the Regenerate Workflow (Section 6), which runs only when the user asks for it.
@@ -324,8 +317,8 @@ For each concept, technique, framework, or term on that list:
   1. `read_file` the existing concept page. It already synthesizes every source ingested before
      now; treat it as correct.
   2. `update_file` with that page's content plus whatever this new source adds or changes.
-     Preserve existing material that this source does not contradict. Do not set `sources:` —
-     it is managed automatically. Preserve the original `created` date.
+     Preserve existing material that this source does not contradict. Do not set `sources:`
+     or `created:` — both are managed automatically.
   **Do not read the pages listed in `sources:`, and do not search for more sources.** Their
   content is already reflected in the page you just read. Re-deriving the page from all of its
   sources is the Regenerate Workflow (Section 6), which runs only when the user asks for it.
@@ -409,12 +402,11 @@ When a new source contradicts an existing document:
 
 ---
 
-## 9. Cold-Start Checklist
+## 9. Cold Start
 
-If you are a fresh LLM session with no context beyond this file and the wiki directory:
-
-1. Read this file (`LOBOTOMY.md`) completely — you have done so
-Do not modify any file until the user gives an explicit instruction.
+If you are a fresh LLM session, reading this file is the whole orientation. The
+orientation message supplies the rest: today's date, the wiki's size, and the list of
+existing tags. Do not modify any file until the user gives an explicit instruction.
 
 ---
 
