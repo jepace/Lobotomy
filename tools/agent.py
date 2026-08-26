@@ -471,7 +471,7 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
 
 def _atomic_write(p: Path, content: str) -> None:
     """Write content to p atomically: write to a sibling .tmp file, then rename."""
-    global _title_map_cache
+    global _title_map_cache, _title_map_built_at
     # Capture pre-write state to decide below whether the title map cache actually needs
     # to be thrown away. Reading one small file is cheap; rebuilding + re-linking against
     # the whole corpus is not (~20s at a few thousand pages), and most writes to wiki/ —
@@ -496,6 +496,15 @@ def _atomic_write(p: Path, content: str) -> None:
         _new_fields = _parse_title_fields(content)
         if _new_fields != _old_fields:
             _title_map_cache = None
+        elif _title_map_cache is not None:
+            # This write already went through the vetting above and doesn't need to
+            # invalidate the cache — but the file's mtime just advanced, and the backstop
+            # staleness check in _build_title_map() only looks at raw mtimes. Without this,
+            # every KNOWN-safe write (notably the autolinker's own, which happen on almost
+            # every page touched in a session) would advance a file's mtime past
+            # _title_map_built_at and make the very next lookup misdiagnose it as a bypass,
+            # forcing a full rebuild per page — exactly the cost this cache exists to avoid.
+            _title_map_built_at = time.time()
     except Exception:
         try:
             os.unlink(tmp_path)
