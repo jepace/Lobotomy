@@ -1618,26 +1618,54 @@ def api_search():
     })
 
 
+def _save_status_page(msg: str, ok: bool):
+    """Tiny status page for the bookmarklet popup. Auto-closes on success;
+    stays open on error so the user actually sees what went wrong."""
+    close_js = "setTimeout(function(){window.close()},1400);" if ok else ""
+    color = "#28a745" if ok else "#dc3545"
+    from markupsafe import escape
+    return (
+        f"<!doctype html><meta charset='utf-8'><title>Lobotomy</title>"
+        f"<body style='font:15px -apple-system,system-ui,sans-serif;background:#1c1c1e;"
+        f"color:#eee;display:flex;align-items:center;justify-content:center;height:90vh;margin:0'>"
+        f"<div style='text-align:center;padding:0 16px'>"
+        f"<div style='font-size:28px;color:{color}'>{'✓' if ok else '✕'}</div>"
+        f"<div>{escape(msg)}</div></div>"
+        f"<script>{close_js}</script></body>"
+    ), (200 if ok else 400)
+
+
 @app.route("/save")
 def save_redirect():
     """
     Bookmarklet-friendly save endpoint. Accepts GET with query params so the
-    bookmarklet can just set location.href — no fetch(), no CORS, no CSP issues.
+    bookmarklet navigates here — no fetch(), so page CSP/CORS cannot block it.
 
-      /save?url=<url>&title=<title>&key=<push_key>
+      /save?url=<url>&title=<title>&key=<push_key>[&popup=1]
 
-    Saves the item and redirects back to the original URL with a fragment so
-    the user sees a visual confirmation via the browser's back-navigation.
+    With popup=1 (the bookmarklet's normal mode) it returns a tiny status page
+    that auto-closes, so the article tab is never touched. Without it (the
+    fallback when the popup is blocked) it redirects back to the original URL.
     """
     url   = request.args.get("url",   "").strip()
     title = request.args.get("title", "").strip()
     key   = request.args.get("key",   "").strip()
+    popup = request.args.get("popup") == "1"
+
+    # These land inside YAML frontmatter — newlines would inject fields, and a
+    # double quote in a page title (very common) would corrupt the title: line.
+    url   = re.sub(r"\s+", "", url)
+    title = re.sub(r"\s+", " ", title).replace('"', "'")[:300]
 
     push_key = cfg_get("api", "push_key", "").strip()
     if not push_key or key != push_key:
+        if popup:
+            page, code = _save_status_page("Bad or missing key — re-drag the bookmarklet from Settings", ok=False)
+            return page, 403
         return "Unauthorized", 403
     if not url:
-        return "Missing url", 400
+        return (_save_status_page("No URL received", ok=False) if popup
+                else ("Missing url", 400))
 
     # Reuse the same save logic as /api/push
     inbox_dir = RAW_DIR
@@ -1647,6 +1675,8 @@ def save_redirect():
         try:
             meta, _ = _parse_frontmatter(existing.read_text(encoding="utf-8", errors="replace"))
             if meta.get("url", "").strip() == url:
+                if popup:
+                    return _save_status_page("Already in your reading list", ok=True)
                 return redirect(url + "#lobotomy-saved")
         except Exception:
             pass
@@ -1670,6 +1700,8 @@ def save_redirect():
     _atomic_write(dest, "\n".join(fm))
     _fetch_and_patch(dest, url)
 
+    if popup:
+        return _save_status_page("Saved — fetching article in background", ok=True)
     return redirect(url + "#lobotomy-saved")
 
 

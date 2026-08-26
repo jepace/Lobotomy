@@ -4,12 +4,16 @@
   var base = {{ base_url | tojson }};
   var key  = {{ push_key | tojson }};
 
-  // Bookmarklet: just a redirect — no fetch, no CORS, no CSP issues.
-  var bm = 'javascript:location.href=' +
-    JSON.stringify(base + '/save?key=' + encodeURIComponent(key) +
-      '&url=') +
-    '+encodeURIComponent(location.href)' +
-    '+"&title="+encodeURIComponent(document.title);void 0';
+  // Bookmarklet strategy: pure navigation, never fetch() — page CSP/CORS cannot
+  // block it on any site. Normal mode opens a small popup to /save?popup=1 that
+  // shows "Saved" and closes itself, so the article tab is never reloaded. If
+  // the popup is blocked, fall back to navigating the tab (server redirects back).
+  var save = JSON.stringify(base + '/save?key=' + encodeURIComponent(key));
+  var bm = 'javascript:(function(){var u=' + save +
+    "+'&url='+encodeURIComponent(location.href)" +
+    "+'&title='+encodeURIComponent(document.title.slice(0,300));" +
+    "var w=window.open(u+'&popup=1','lobotomy_save','popup,width=380,height=180');" +
+    'if(!w)location.href=u})();';
 
   var bmLink = document.getElementById('bookmarklet-link') || document.getElementById('bm-link');
   if (bmLink) bmLink.href = bm;
