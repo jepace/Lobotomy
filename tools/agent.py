@@ -84,10 +84,16 @@ def get_client_and_model():
 # ---------------------------------------------------------------------------
 
 class _LLMError(Exception):
-    def __init__(self, msg: str, retryable: bool = False, retry_after: float = None):
+    def __init__(self, msg: str, retryable: bool = False, retry_after: float = None,
+                 long_backoff: bool = False):
         super().__init__(msg)
-        self.retryable   = retryable
-        self.retry_after = retry_after
+        self.retryable    = retryable
+        self.retry_after  = retry_after
+        # A daily quota will not clear on the normal retry ladder's timescale (seconds to
+        # a few minutes) — it resets on its own schedule, hours away. Still worth retrying
+        # (unattended, so it self-heals whenever that happens) but at a much coarser
+        # interval; see _daily_quota_poll_interval().
+        self.long_backoff = long_backoff
 
 
 def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
@@ -149,21 +155,18 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
             # thing that says whether throttling or shrinking requests is the fix.
             if raw_body and raw_body != msg:
                 log.warning("LLM 429 detail (payload was %dKB): %s", len(data) // 1024, raw_body[:1200])
-            # A per-day quota will not clear on the retry ladder's timescale — Gemini's
-            # free-tier daily cap resets once every 24h, not once a minute. Both retry
-            # loops (_create, stream_agent_turn) sleep inside the single job-queue worker
-            # thread, so retrying this anyway doesn't just waste calls against a wall that
-            # won't move: it blocks every other queued job for as long as it keeps trying
-            # (previously: up to max_retries x 60s before even reaching phase 2 — one job
-            # was observed retrying for 3+ hours straight against an exhausted daily quota).
-            # Fail this job immediately instead; the quota resets on its own schedule and
-            # the user can re-run when it does.
+            # A per-day quota won't clear on the normal retry ladder's timescale (seconds
+            # to minutes) — it resets on its own schedule, hours away. A single-user queue
+            # blocking on this is fine (every job would fail identically regardless of
+            # order), so the right behavior is to keep retrying unattended rather than give
+            # up — just at a much coarser interval, so it self-heals once quota resets
+            # without hammering the API every 60s for hours in the meantime (previously
+            # observed: 226+ attempts, 3+ hours, before phase 1 would even exhaust).
             if raw_body and re.search(r'"quotaId"\s*:\s*"[^"]*PerDay[^"]*"', raw_body):
                 raise _LLMError(
-                    f"Daily API quota exhausted for this model/provider — it will not recover "
-                    f"by retrying. Wait for the quota to reset (see provider dashboard) or switch "
-                    f"model/provider in config.json, then try again. Detail: {msg}",
-                    retryable=False,
+                    f"Daily API quota exhausted — will keep retrying at a slower interval "
+                    f"until it resets. Detail: {msg}",
+                    retryable=True, long_backoff=True,
                 )
             raise _LLMError(f"Rate limited: {msg}", retryable=True, retry_after=retry_after)
         if code >= 500:
@@ -2338,6 +2341,18 @@ def _retry_poll_interval() -> int:
     return cfg_int("llm", "retry_poll_interval", default=300)
 
 
+def _daily_quota_poll_interval() -> int:
+    """Seconds between retries once a per-day quota is confirmed exhausted.
+
+    Deliberately much coarser than the normal retry ladder or retry_poll_interval: a
+    daily quota resets on its own schedule, hours away, so retrying every 60s or even
+    every 5 minutes (the retry_poll_interval default) accomplishes nothing but log spam
+    and API calls that fail identically. 30 minutes means at most ~48 wasted calls over
+    a full day, while still resuming within 30 minutes of whenever it actually resets.
+    """
+    return cfg_int("llm", "daily_quota_poll_interval", default=1800)
+
+
 def _rpm_max() -> int:
     return cfg_int("llm", "max_rpm", default=0)  # 0 = disabled
 
@@ -2384,6 +2399,8 @@ def _rpm_wait_streaming():
 
 def _retry_delay(attempt: int, exc) -> float:
     """Seconds to wait before retry (1-based attempt). Respects Retry-After header."""
+    if isinstance(exc, _LLMError) and exc.long_backoff:
+        return float(_daily_quota_poll_interval())
     ladder = [60, 60, 60, 60]
     delay = float(ladder[min(attempt - 1, len(ladder) - 1)])
     if isinstance(exc, _LLMError) and exc.retry_after:
@@ -2416,6 +2433,7 @@ def _create(client: dict, messages: list, system: str) -> dict:
     }
     max_r = _max_retries()
     poll  = _retry_poll_interval()
+    last_exc = None  # carried into phase 2 to decide its first sleep; updated every attempt
 
     # Phase 1: exponential backoff
     for attempt in range(max_r + 1):
@@ -2427,12 +2445,16 @@ def _create(client: dict, messages: list, system: str) -> dict:
         except Exception as e:
             if not _is_retryable(e):
                 raise
+            last_exc = e
             if attempt < max_r:
                 time.sleep(_retry_delay(attempt + 1, e))
 
-    # Phase 2: poll every retry_poll_interval until provider recovers
+    # Phase 2: poll until provider recovers. A daily-quota error uses the coarser
+    # long-backoff interval instead of retry_poll_interval — see _daily_quota_poll_interval.
     while True:
-        time.sleep(poll)
+        delay = (_daily_quota_poll_interval()
+                 if isinstance(last_exc, _LLMError) and last_exc.long_backoff else poll)
+        time.sleep(delay)
         _rpm_wait_sync()
         try:
             result = _llm_post(client["endpoint"], client["api_key"], payload)
@@ -2441,6 +2463,7 @@ def _create(client: dict, messages: list, system: str) -> dict:
         except Exception as e:
             if not _is_retryable(e):
                 raise
+            last_exc = e
 
 
 def run_agent_turn(client: dict, model: str, messages: list, system: str) -> list:
@@ -2604,6 +2627,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
         max_r = _max_retries()
         poll  = _retry_poll_interval()
         resp  = None
+        last_exc = None  # carried into phase 2 to pick its delay; updated every attempt
 
         # Phase 1: exponential backoff
         for attempt in range(max_r + 1):
@@ -2621,6 +2645,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                     yield json.dumps({"type": "error", "content": _error_message(e)}) + "\n"
                     yield json.dumps({"type": "done"}) + "\n"
                     return
+                last_exc = e
                 if attempt == max_r:
                     break  # exhausted phase 1 — fall through to phase 2
                 delay = _retry_delay(attempt + 1, e)
@@ -2630,20 +2655,27 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                                   "delay": int(delay), "max": max_r}) + "\n"
                 time.sleep(delay)
 
-        # Phase 2: poll indefinitely until provider recovers
+        # Phase 2: poll indefinitely until provider recovers. A daily-quota error uses the
+        # coarser long-backoff interval instead of retry_poll_interval — see
+        # _daily_quota_poll_interval. Re-evaluated every iteration from the most recently
+        # caught exception, so it reverts to normal pacing if a later attempt hits a
+        # different, non-daily-quota error.
         if resp is None:
             poll_attempt = 0
             while True:
                 poll_attempt += 1
-                log.warning("LLM unavailable — polling indefinitely (attempt %d)", poll_attempt)
+                delay = (_daily_quota_poll_interval()
+                         if isinstance(last_exc, _LLMError) and last_exc.long_backoff else poll)
+                log.warning("LLM unavailable — polling indefinitely (attempt %d, delay %ds)",
+                            poll_attempt, delay)
                 yield json.dumps({
                     "type":    "retrying",
                     "attempt": poll_attempt,
-                    "delay":   poll,
+                    "delay":   delay,
                     "max":     None,
-                    "msg":     f"Provider unavailable — retrying in {poll}s (attempt {poll_attempt})",
+                    "msg":     f"Provider unavailable — retrying in {delay}s (attempt {poll_attempt})",
                 }) + "\n"
-                time.sleep(poll)
+                time.sleep(delay)
                 yield from _rpm_wait_streaming()
                 try:
                     resp = _llm_post(client["endpoint"], client["api_key"], payload)
@@ -2655,6 +2687,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                         yield json.dumps({"type": "error", "content": _error_message(e)}) + "\n"
                         yield json.dumps({"type": "done"}) + "\n"
                         return
+                    last_exc = e
 
         try:
             msg = resp["choices"][0]["message"]

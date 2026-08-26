@@ -26,6 +26,7 @@
     "max_retries": 6,
     "retry_base_delay": 5,
     "retry_poll_interval": 300,
+    "daily_quota_poll_interval": 1800,
     "max_rpm": 15,
     "inter_request_delay": 5
   },
