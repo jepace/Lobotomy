@@ -234,19 +234,25 @@ Required sections:
   "Film Criticism", not "film-criticism". This list is permanent — the page it's on cannot
   be edited afterward — and it becomes the title of a page in Step 5, so get the form right
   the first time.
-  This list drives page creation in Step 5, so apply judgement here rather than listing
-  every name that appears. **Include** an entity when the source makes substantive claims
-  *about* it — its actions, positions, history, or role in the events described.
+  This list drives page creation in Step 5, so apply real judgement here — the bar is
+  **central to the story**, not merely present in it. Most named people in most articles do
+  not belong on this list.
+  **Include** an entity only when its own actions, decisions, or role *are* what the source
+  is about — the people or organizations the story could not be told without.
   **Exclude**:
   - the article's byline or reporter — writing the piece is not the same as being a
-    subject of it. A journalist who *is* discussed by the source belongs on the list.
-  - people quoted once for reaction or colour, with nothing else said about them
+    subject of it. A journalist who *is* the story's subject belongs on the list.
+  - anyone quoted for reaction, explanation, or expert color, no matter how substantial
+    the quote — a spokesperson explaining a decision, an analyst commenting on it, an
+    official confirming a number. Being quoted well is not the same as being central.
   - names mentioned only in passing, with no claim attached
   - the publication or outlet, when it is only the venue this source appeared in
 
-  The test: could you write more than a sentence or two about this entity from what this
-  source actually says? If not, leave it off — it will be added later by a source that
-  does have something to say about it.
+  The test is not "can I write a sentence about this person" — nearly everyone quoted
+  passes that. The test is: **is this person's own conduct what the article is reporting
+  on?** If the story would still be essentially the same article with this name replaced
+  by "an official" or "a spokesperson," leave it off. It will be added later by a source
+  that is actually about them.
 - **Concepts**: bulleted list of important concepts and terms. Bare names only — same rule
   as Entities: natural human-readable form, never a slug. Write "Sex in Cinema", not
   "sex-in-cinema"; "Horror Films", not "horror-films". Apply the same test: a concept the
