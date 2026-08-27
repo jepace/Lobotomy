@@ -30,12 +30,19 @@ load_rc_config "$name"
 : ${lobotomy_dir:="/var/www/Lobotomy"}
 : ${lobotomy_python:="/usr/local/bin/python3"}
 : ${lobotomy_logfile:="/var/log/lobotomy.log"}
+# App-level rotated log (server.log's replacement location). Deliberately NOT inside
+# lobotomy_dir: that tree is root-owned (deploy.sh rsyncs as root), so www can append to
+# an open file there but cannot rotate it — rename needs directory write access, which
+# www never gets on a root-owned tree. This directory is created and chowned below,
+# exactly like the pidfile directory, so rotation actually works.
+: ${lobotomy_app_logdir:="/var/log/lobotomy"}
 
 pidfile="/var/run/${name}/${name}.pid"
 procname="${lobotomy_python}"
 
 command="/usr/sbin/daemon"
 command_args="-f -p ${pidfile} -o ${lobotomy_logfile} -u ${lobotomy_runas_user} \
+    /usr/bin/env LOBOTOMY_LOG_FILE=${lobotomy_app_logdir}/server.log \
     ${lobotomy_python} ${lobotomy_dir}/tools/serve.py"
 
 start_precmd="lobotomy_precmd"
@@ -48,6 +55,13 @@ lobotomy_precmd()
 
 	touch "${lobotomy_logfile}"
 	chown "${lobotomy_runas_user}:${lobotomy_runas_group}" "${lobotomy_logfile}"
+
+	install -d -o "${lobotomy_runas_user}" -g "${lobotomy_runas_group}" -m 750 \
+		"${lobotomy_app_logdir}"
+	# A server.log left over from before this directory existed, or from a run as a
+	# different user, would otherwise sit there un-rotatable forever (same underlying
+	# problem this fix exists for) — pick up ownership of anything already inside.
+	chown -R "${lobotomy_runas_user}:${lobotomy_runas_group}" "${lobotomy_app_logdir}"
 
 	chown -R "${lobotomy_runas_user}:${lobotomy_runas_group}" \
 		"${lobotomy_dir}/wiki" \

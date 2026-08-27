@@ -5,9 +5,9 @@ Lobotomy — Web server
 Mobile-friendly web app: chat with AI, browse wiki, capture articles.
 
 Requirements:
-  pip install flask markdown openai resend
+  pip install flask markdown
   -- or on FreeBSD --
-  pkg install py311-flask py311-markdown && pip install openai resend
+  pkg install py311-flask py311-markdown
 
 Configuration: copy config.json.example to config.json and edit it.
 
@@ -55,7 +55,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 # ---------------------------------------------------------------------------
 
 def _setup_logging() -> None:
-    _log_file = Path(__file__).resolve().parent.parent / "server.log"
+    # Defaults to server.log next to the repo — fine for local/dev use, where you own
+    # every file involved. Under the FreeBSD rc.d service (contrib/freebsd/rc.d/lobotomy),
+    # the repo tree is root-owned (deploy.sh rsyncs as root) but the process runs as
+    # www — it can append to an already-open file, but RotatingFileHandler's rollover
+    # needs write+execute on the *directory* to rename into it, which www does not have
+    # there. That failed silently-but-loudly forever once the file hit its size cap: every
+    # subsequent log call retried the rotation, failed, and dumped a full traceback to
+    # stderr (which daemon(8) redirects into lobotomy_logfile) — flooding that file far
+    # faster than actual app activity. The rc.d script sets LOBOTOMY_LOG_FILE to a
+    # dedicated, precmd-owned directory to avoid this; local/dev runs are unaffected.
+    _log_file = Path(os.environ.get("LOBOTOMY_LOG_FILE")
+                      or (Path(__file__).resolve().parent.parent / "server.log"))
     fmt = logging.Formatter(
         "%(asctime)s  %(name)-22s  %(levelname)-8s  %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
