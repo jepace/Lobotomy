@@ -96,6 +96,9 @@
     <h1>{{ title }}</h1>
     <a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;" href="/wiki/{{ current_path }}/edit">Edit</a>
     {% if current_path %}
+    <button class="chat-about" type="button"
+            style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;cursor:pointer;"
+            onclick="copyPlainText(this)">Copy Text</button>
     <button id="share-btn" class="chat-about" type="button"
             style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;cursor:pointer;"
             data-shared="{{ 'true' if share_url else 'false' }}"
@@ -138,6 +141,25 @@ function toast(text) {
   });
   document.body.appendChild(e);
   setTimeout(() => e.remove(), 2200);
+}
+
+async function copyPlainText(btn) {
+  const path = {{ current_path | tojson }};
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/api/wiki/${path}/text`);
+    const d = await r.json();
+    if (!d.ok) { toast(d.error || 'Failed to get text'); return; }
+    try {
+      await navigator.clipboard.writeText(d.text);
+      toast('Copied as plain text');
+    } catch (e) {
+      window.prompt('Copy this text:', d.text);
+    }
+  } catch (e) {
+    toast('Network error');
+  }
+  btn.disabled = false;
 }
 
 async function toggleShare(btn) {

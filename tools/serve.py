@@ -719,6 +719,52 @@ def render_md_shareable(path: Path) -> str:
     return md_lib.markdown(text, extensions=_MD_EXTENSIONS)
 
 
+def _links_to_plain_text(text: str) -> str:
+    """Like _strip_internal_links, but for output with no hyperlinks at all (plain text
+    has no href to carry a URL in) — an external link keeps its URL visible in
+    parentheses so it's still usable after pasting; an internal one is just its label."""
+    def _repl(m):
+        label, target = m.group(1), m.group(2).strip()
+        if re.match(r"^(https?://|mailto:)", target, re.IGNORECASE):
+            return f"{label} ({target})" if target.lower() != label.lower() else label
+        return label
+    return _MD_LINK_RE.sub(_repl, text)
+
+
+def render_md_plaintext(path: Path) -> str:
+    """Page content as clean plain text: title, links resolved per _links_to_plain_text
+    (external kept and visible, internal dropped), markdown syntax removed — meant for
+    pasting into an email or anywhere else that isn't rendering markdown."""
+    if not path.exists():
+        return ""
+    raw = path.read_text(encoding="utf-8")
+    meta, _ = _parse_frontmatter(raw)
+    body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", raw, flags=re.DOTALL)
+    body = _links_to_plain_text(body)
+
+    lines = []
+    for line in body.split("\n"):
+        m = re.match(r"^(#{1,6})\s+(.*)", line)
+        if m:
+            lines.append(m.group(2).strip())
+            continue
+        line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)   # **bold**
+        line = re.sub(r"(?<!\*)\*([^*]+?)\*(?!\*)", r"\1", line)  # *italic*
+        line = re.sub(r"(?<!\w)_(.+?)_(?!\w)", r"\1", line)  # _italic_
+        line = re.sub(r"`([^`]+)`", r"\1", line)        # `code`
+        line = re.sub(r"^>\s?", "", line)                # > blockquote
+        lines.append(line.rstrip())
+    body = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+    title = path.stem.replace("-", " ").title()
+    parts = [title, ""]
+    url = meta.get("url", "").strip()
+    if url:
+        parts += [f"Original article: {url}", ""]
+    parts.append(body)
+    return "\n".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Share links — public, unauthenticated, opt-in per page
 # ---------------------------------------------------------------------------
@@ -1422,6 +1468,15 @@ def wiki_unshare(page_path):
         _save_share_tokens(remaining)
         log.info("Share link revoked for %s", wiki_rel)
     return {"ok": True}
+
+
+@app.route("/api/wiki/<path:page_path>/text")
+@require_login
+def wiki_plaintext(page_path):
+    """Plain-text version of a page for copy/paste (email, Notes, anywhere that isn't
+    rendering markdown) — no login bypass, no persistent state, just a conversion."""
+    p = _resolve_wiki_page_or_404(page_path)
+    return {"ok": True, "title": p.stem.replace("-", " ").title(), "text": render_md_plaintext(p)}
 
 
 @app.route("/share/<token>")
