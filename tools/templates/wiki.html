@@ -95,6 +95,12 @@
     <a href="/wiki/" style="color:var(--accent); text-decoration:none; font-size:22px; line-height:1;">‹</a>
     <h1>{{ title }}</h1>
     <a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;" href="/wiki/{{ current_path }}/edit">Edit</a>
+    {% if current_path %}
+    <button id="share-btn" class="chat-about" type="button"
+            style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;cursor:pointer;"
+            data-shared="{{ 'true' if share_url else 'false' }}"
+            onclick="toggleShare(this)">{{ 'Unshare' if share_url else 'Share' }}</button>
+    {% endif %}
     <a class="chat-about" href="/chat" onclick="setChatPrompt('Tell me about {{ title }}')">Ask AI</a>
   </div>
 
@@ -119,6 +125,56 @@
 <script>
 function setChatPrompt(text) {
   sessionStorage.setItem('chatPrompt', text);
+}
+
+function toast(text) {
+  const e = document.createElement('div');
+  e.textContent = text;
+  Object.assign(e.style, {
+    position: 'fixed', top: '12px', right: '12px', zIndex: 2147483647,
+    padding: '10px 14px', background: 'var(--accent)', color: '#fff',
+    borderRadius: '8px', font: '14px -apple-system,system-ui,sans-serif',
+    boxShadow: '0 2px 12px rgba(0,0,0,.3)',
+  });
+  document.body.appendChild(e);
+  setTimeout(() => e.remove(), 2200);
+}
+
+async function toggleShare(btn) {
+  const path = {{ current_path | tojson }};
+  const shared = btn.dataset.shared === 'true';
+  btn.disabled = true;
+  try {
+    if (shared) {
+      const r = await fetch(`/api/wiki/${path}/unshare`, {method: 'POST'});
+      const d = await r.json();
+      if (d.ok) {
+        btn.dataset.shared = 'false';
+        btn.textContent = 'Share';
+        toast('Link revoked');
+      } else {
+        toast(d.error || 'Failed to revoke');
+      }
+    } else {
+      const r = await fetch(`/api/wiki/${path}/share`, {method: 'POST'});
+      const d = await r.json();
+      if (d.ok) {
+        btn.dataset.shared = 'true';
+        btn.textContent = 'Unshare';
+        try {
+          await navigator.clipboard.writeText(d.url);
+          toast('Link copied — anyone with it can view this page');
+        } catch (e) {
+          window.prompt('Share link (copy it):', d.url);
+        }
+      } else {
+        toast(d.error || 'Failed to create link');
+      }
+    }
+  } catch (e) {
+    toast('Network error');
+  }
+  btn.disabled = false;
 }
 
 // Wiki search

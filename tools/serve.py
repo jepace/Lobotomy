@@ -22,6 +22,7 @@ import logging
 import logging.handlers
 import os
 import re
+import secrets
 import sys
 from pathlib import Path
 
@@ -686,6 +687,69 @@ def render_md(path: Path) -> str:
     )
     return html
 
+
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
+
+
+def _strip_internal_links(text: str) -> str:
+    """Unwrap every markdown link that doesn't point at the open internet, leaving just
+    its display text. Used only for the public share view: every internal wiki link
+    (`../entities/foo.md`, an autolinked `## Sources` entry, anything relative) points at
+    a page behind login that a share recipient can't reach anyway, and the raw path would
+    leak the private wiki's structure. A genuine http(s)/mailto link — the source
+    article's own citations, say — is left as a real, working link.
+    """
+    def _repl(m):
+        label, target = m.group(1), m.group(2).strip()
+        if re.match(r"^(https?://|mailto:)", target, re.IGNORECASE):
+            return m.group(0)
+        return label
+    return _MD_LINK_RE.sub(_repl, text)
+
+
+def render_md_shareable(path: Path) -> str:
+    """Like render_md, but for the public, unauthenticated /share/<token> view: every
+    internal wiki link is stripped to plain text rather than rewritten to an app URL."""
+    if not path.exists():
+        return "<p><em>Page not found.</em></p>"
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
+    text = _strip_internal_links(text)
+    text = _ensure_blank_line_before_lists(text)
+    return md_lib.markdown(text, extensions=_MD_EXTENSIONS)
+
+
+# ---------------------------------------------------------------------------
+# Share links — public, unauthenticated, opt-in per page
+# ---------------------------------------------------------------------------
+# A page is only ever reachable via /share/<token> after an explicit Share click on
+# that specific page — never by guessing or deriving from its normal /wiki/ path, which
+# stays behind login like everything else. Same storage convention as auth.py's
+# wiki/.user.json etc.: small JSON file inside wiki/, already covered by the FreeBSD
+# service's `chown -R www wiki/` (contrib/freebsd/rc.d/lobotomy), and never matched by
+# the *.md glob that feeds the title map or the wiki index, so it's otherwise invisible
+# to the rest of the app.
+
+_SHARE_TOKENS_FILE = WIKI_DIR / ".share_tokens.json"
+
+
+def _load_share_tokens() -> dict:
+    try:
+        return json.loads(_SHARE_TOKENS_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_share_tokens(tokens: dict) -> None:
+    _SHARE_TOKENS_FILE.write_text(json.dumps(tokens, indent=2), encoding="utf-8")
+
+
+def _share_token_for_path(wiki_rel: str) -> "str | None":
+    for token, entry in _load_share_tokens().items():
+        if entry.get("path") == wiki_rel:
+            return token
+    return None
+
 def render_md_raw(text: str) -> str:
     """Render markdown from string content (for raw files)."""
     text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
@@ -1261,14 +1325,17 @@ def wiki_page(page_path):
             if (REPO_ROOT / s).exists():
                 raw_source_url = "/" + s
                 break
+    wiki_rel = str(p.relative_to(WIKI_DIR))
+    share_token = _share_token_for_path(wiki_rel)
     return render_template(
         "wiki.html",
         content=render_md(p),
         title=p.stem.replace("-", " ").title(),
         sections=wiki_sections(),
-        current_path=str(p.relative_to(WIKI_DIR)),
+        current_path=wiki_rel,
         source_url=source_url,
         raw_source_url=raw_source_url,
+        share_url=(url_for("share_page", token=share_token, _external=True) if share_token else None),
     )
 
 
@@ -1314,6 +1381,66 @@ def wiki_save(page_path):
     # old title until something unrelated happened to invalidate it, or the server restarted.
     _atomic_write(p, content)
     return {"ok": True}
+
+
+def _resolve_wiki_page_or_404(page_path: str) -> Path:
+    p = WIKI_DIR / page_path
+    if not p.suffix:
+        p = p.with_suffix(".md")
+    try:
+        p.resolve().relative_to(WIKI_DIR.resolve())
+    except ValueError:
+        abort(404)
+    if not p.exists():
+        abort(404)
+    return p
+
+
+@app.route("/api/wiki/<path:page_path>/share", methods=["POST"])
+@require_login
+def wiki_share(page_path):
+    p = _resolve_wiki_page_or_404(page_path)
+    wiki_rel = str(p.relative_to(WIKI_DIR))
+    token = _share_token_for_path(wiki_rel)
+    if not token:
+        tokens = _load_share_tokens()
+        token = secrets.token_urlsafe(20)
+        tokens[token] = {"path": wiki_rel, "created": datetime.datetime.now().isoformat(timespec="seconds")}
+        _save_share_tokens(tokens)
+        log.info("Share link created for %s", wiki_rel)
+    return {"ok": True, "url": url_for("share_page", token=token, _external=True)}
+
+
+@app.route("/api/wiki/<path:page_path>/unshare", methods=["POST"])
+@require_login
+def wiki_unshare(page_path):
+    p = _resolve_wiki_page_or_404(page_path)
+    wiki_rel = str(p.relative_to(WIKI_DIR))
+    tokens = _load_share_tokens()
+    remaining = {t: e for t, e in tokens.items() if e.get("path") != wiki_rel}
+    if len(remaining) != len(tokens):
+        _save_share_tokens(remaining)
+        log.info("Share link revoked for %s", wiki_rel)
+    return {"ok": True}
+
+
+@app.route("/share/<token>")
+def share_page(token):
+    """Public, unauthenticated view of one explicitly-shared page. No login, no nav back
+    into the wiki, no internal links — see render_md_shareable for what's stripped."""
+    entry = _load_share_tokens().get(token)
+    if not entry:
+        abort(404)
+    p = WIKI_DIR / entry["path"]
+    if not p.exists():
+        abort(404)
+    meta, _ = _parse_frontmatter(p.read_text(encoding="utf-8", errors="replace"))
+    return render_template(
+        "share.html",
+        title=p.stem.replace("-", " ").title(),
+        content=render_md_shareable(p),
+        source_url=meta.get("url", "").strip() or None,
+    )
 
 
 @app.route("/wiki/lint")
