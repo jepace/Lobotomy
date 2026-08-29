@@ -102,7 +102,8 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, run_agent_turn, system_prompt,
                    _fix_wiki_links, _rebuild_index, _validate_ingest,
-                   heal_index_if_stale, _atomic_write, search_wiki_core)
+                   heal_index_if_stale, _atomic_write, search_wiki_core,
+                   _normalize_capture_url)
 
 from job_queue import JobQueue
 from auth  import (user_exists, create_user, authenticate, get_user, update_password,
@@ -1849,7 +1850,7 @@ def save_redirect():
 
     # These land inside YAML frontmatter — newlines would inject fields, and a
     # double quote in a page title (very common) would corrupt the title: line.
-    url   = re.sub(r"\s+", "", url)
+    url   = _normalize_capture_url(re.sub(r"\s+", "", url))
     title = re.sub(r"\s+", " ", title).replace('"', "'")[:300]
 
     # Errors deliberately return non-image responses even in beacon mode: the
@@ -1926,7 +1927,7 @@ def api_push():
         return err
 
     data       = request.get_json(silent=True) or {}
-    url        = (data.get("url")     or "").strip()
+    url        = _normalize_capture_url((data.get("url") or "").strip())
     title      = (data.get("title")   or "").strip()
     content    = (data.get("content") or "").strip()
     tags       = data.get("tags")   or []
@@ -2333,7 +2334,7 @@ def inbox_clip():
     Fetches the article, saves full content as .md (falls back to .url if fetch fails).
     Returns a lightweight dark-mode confirmation page.
     """
-    url   = request.args.get("url",   "").strip()
+    url   = _normalize_capture_url(request.args.get("url", "").strip())
     title = request.args.get("title", "").strip()
     if not url:
         return "Missing url parameter", 400
@@ -2434,7 +2435,7 @@ def inbox_add():
     # If the content is just a bare URL, save immediately and fetch in background
     is_url = content.startswith("http") and "\n" not in content and " " not in content.strip()
     if is_url:
-        url = content
+        url = _normalize_capture_url(content)
         title = url.rstrip("/").split("/")[-1].split("?")[0].replace("-", " ").replace("_", " ") or url
         slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "article"
         base_name = name or f"{slug}.md"

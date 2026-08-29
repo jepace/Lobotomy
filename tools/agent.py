@@ -194,6 +194,50 @@ _WIKI_READ_LIMIT = 20_000  # chars for wiki pages — generous but prevents cont
 
 _WIKI_META_STEMS = {"log", "index"}
 
+def _set_fm_field(content: str, field: str, line: str) -> str:
+    """Set one frontmatter field to an exact line — replacing it if present, otherwise
+    inserting it just before the closing `---`.
+
+    Deliberately does NOT anchor on a sibling field. The previous implementation
+    re-inserted a restored `created:` immediately after `updated:`, which silently did
+    nothing whenever the LLM had omitted `updated:` too — so a page with a perfectly good
+    created: date on disk lost it, and then had nothing to restore from on every
+    subsequent write. Inserting relative to the frontmatter block itself has no such
+    dependency.
+    """
+    import re
+    if re.search(r"^" + re.escape(field) + r":", content, re.MULTILINE):
+        # lambda replacement: `line` may contain backslashes or \g-like sequences that
+        # re.sub would otherwise interpret as group references.
+        return re.sub(r"^" + re.escape(field) + r":.*", lambda _m: line,
+                      content, flags=re.MULTILINE, count=1)
+    m = re.match(r"^---\s*\n.*?\n(---\s*\n)", content, re.DOTALL)
+    if not m:
+        return content
+    at = m.start(1)
+    return content[:at] + line + "\n" + content[at:]
+
+
+def _normalize_capture_url(url: str) -> str:
+    """Unwrap a browser reader-mode URL to the real article URL.
+
+    Firefox Reader View sets location.href to `about:reader?url=<percent-encoded>`, so a
+    bookmarklet or share-sheet capture made while actually reading an article records the
+    reader wrapper instead of the article. That value then flows into the raw file's and
+    source page's `url:` frontmatter, where it breaks the Original-article link, the
+    reading-list link, and the `## Sources` entry that _inject_sources_section renders
+    from it. Normalize once, at capture.
+    """
+    if not url:
+        return url
+    m = re.match(r"^about:reader\?(.*)$", url.strip(), re.IGNORECASE | re.DOTALL)
+    if not m:
+        return url
+    import urllib.parse
+    inner = urllib.parse.parse_qs(m.group(1)).get("url", [""])[0].strip()
+    return inner if inner.startswith(("http://", "https://")) else url
+
+
 def _strip_system_fm_fields(text: str) -> str:
     """Remove created:/raw_source: from frontmatter — system-managed, the LLM has no use
     for them. Shared by _read_file (what the LLM sees) and _update_file's read-coverage
@@ -667,36 +711,30 @@ def _update_file(path: str, content: str) -> str:
     if wiki_rel not in _ctx()._session_entity_pages and wiki_rel not in _ctx()._session_updated_pages:
         _ctx()._session_updated_pages.append(wiki_rel)
     # Restore system-owned scalar fields from disk — never trust LLM-supplied values.
+    # Every write goes through _set_fm_field, which replaces-or-inserts against the
+    # frontmatter block itself, so a field the LLM omitted can always be put back
+    # regardless of which other fields are present.
     if not is_new:
+        import datetime as _dt
         _disk_existing = p.read_text(encoding="utf-8", errors="replace")
         for _field in ("created", "raw_source"):
             _disk_m = _re.search(r"^" + _field + r":[ \t]*\S.*", _disk_existing, _re.MULTILINE)
             if _disk_m:
-                if _re.search(r"^" + _field + r":", content, _re.MULTILINE):
-                    content = _re.sub(r"^" + _field + r":.*", _disk_m.group(0), content, flags=_re.MULTILINE)
-                else:
-                    content = _re.sub(r"^(updated:.*)", r"\1\n" + _disk_m.group(0), content, flags=_re.MULTILINE, count=1)
+                content = _set_fm_field(content, _field, _disk_m.group(0))
             elif _field == "created" and not _re.search(r"^created:", content, _re.MULTILINE):
-                # created: missing on disk too — there is nothing to restore, and this
-                # instruction set now explicitly tells the LLM never to supply it, so
-                # without this the field would stay permanently absent on every future
-                # write of this page. Backfill from the file's own mtime: not the true
-                # original creation date (unknowable at this point), but the best
-                # evidence actually available, and closer to reality than "today" would
-                # be for a page that may be old.
-                import datetime as _dt
+                # Missing on disk too — nothing to restore, and the LLM is told never to
+                # supply it, so without this the field stays permanently absent on every
+                # future write. Backfill from the file's own mtime: not the true original
+                # creation date (unknowable now), but the best evidence available, and
+                # closer to reality than "today" for a page that may be old.
                 _backfill = _dt.date.fromtimestamp(p.stat().st_mtime).isoformat()
                 log.warning("update_file: %s had no created: on disk — backfilling %s from mtime",
                             path, _backfill)
-                content = _re.sub(r"^(type:.*)", r"\1\ncreated: " + _backfill,
-                                   content, flags=_re.MULTILINE, count=1)
-        # updated: is not system-restored (it's meant to be freshly supplied on every
-        # write) but omitting it should not be possible to get wrong — if the LLM left
-        # it out, fill it in rather than let the page go out with the field missing.
-        if not _re.search(r"^updated:", content, _re.MULTILINE):
-            import datetime as _dt2
-            content = _re.sub(r"^(created:.*)", r"\1\nupdated: " + _dt2.date.today().isoformat(),
-                               content, flags=_re.MULTILINE, count=1)
+                content = _set_fm_field(content, "created", f"created: {_backfill}")
+        # updated: is meant to be freshly supplied by the LLM on every write, so it is not
+        # restored from disk — but omitting it must not silently drop the field.
+        if not _re.search(r"^updated:[ \t]*\S", content, _re.MULTILINE):
+            content = _set_fm_field(content, "updated", f"updated: {_dt.date.today().isoformat()}")
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
