@@ -15,6 +15,18 @@ Fixes two classes of problems:
    All resolved by computing the correct relative path from the page's
    actual location to the target file.
 
+3. Junk-scheme links the LLM wrote directly into body text — e.g.
+       [previous ruling](about:reader?url=https%3A%2F%2F...)
+   a browser-internal URL (Firefox Reader View, chrome://, moz-extension://,
+   view-source:, javascript:) that got copied verbatim from the raw source
+   into a quote or citation. agent.py's _strip_broken_wiki_links() already
+   catches this going forward at write time, but wiki/sources/ pages are
+   immutable after creation — a page written before that scheme was covered,
+   or whose raw source carried an unusual scheme, keeps it forever with no
+   normal write path to self-heal. This pass strips the link to plain text,
+   matching what should have happened at creation time; a real http(s)/mailto
+   link is left alone.
+
 Run from the repo root:
   python3 tools/repair_links.py [--dry-run]
 """
@@ -85,6 +97,19 @@ def _repair_path(page: Path, link_path: str) -> str | None:
     return None
 
 
+# --- Fix 3: junk-scheme links (about:, chrome:, moz-extension:, javascript:, ...) -------
+# Any absolute URI (RFC 3986 scheme prefix) that isn't http(s)/mailto is not a wiki page
+# and never will be — strip it to plain text rather than try to relocate it.
+
+_scheme_re = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+
+
+def _is_junk_scheme(link_path: str) -> bool:
+    if link_path.startswith(("http", "mailto", "#")):
+        return False
+    return bool(_scheme_re.match(link_path))
+
+
 fixed_files = fixed_links = 0
 
 for f in sorted(WIKI_DIR.rglob("*.md")):
@@ -110,15 +135,30 @@ for f in sorted(WIKI_DIR.rglob("*.md")):
     new_text = link_re.sub(_path_replacer, new_text)
     n2 = count[0]
 
-    total = n1 + n2
+    # Pass 3: junk-scheme links -> plain text. subn()'s own count is how many times the
+    # pattern matched, not how many replacements actually changed anything (link_re
+    # matches every link in the file) -- count explicitly, same as pass 2, or every
+    # ordinary link would be misreported as a "fix".
+    junk_count = [0]
+    def _junk_replacer(m, _jc=junk_count):
+        display, link_path = m.group(1), m.group(2)
+        if _is_junk_scheme(link_path):
+            _jc[0] += 1
+            return display
+        return m.group(0)
+
+    new_text = link_re.sub(_junk_replacer, new_text)
+    n3 = junk_count[0]
+
+    total = n1 + n2 + n3
     if total:
         fixed_links += total
         fixed_files += 1
         rel = f.relative_to(WIKI_DIR)
         if DRY_RUN:
-            print(f"  [dry-run] {rel}: would fix {total} ({n1} nested, {n2} bad-path)")
+            print(f"  [dry-run] {rel}: would fix {total} ({n1} nested, {n2} bad-path, {n3} junk-scheme)")
         else:
             f.write_text(new_text, encoding="utf-8")
-            print(f"  {rel}: fixed {total} ({n1} nested, {n2} bad-path)")
+            print(f"  {rel}: fixed {total} ({n1} nested, {n2} bad-path, {n3} junk-scheme)")
 
 print(f"\n{'[dry-run] ' if DRY_RUN else ''}Repaired {fixed_links} links across {fixed_files} files.")

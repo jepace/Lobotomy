@@ -676,6 +676,27 @@ def _update_file(path: str, content: str) -> str:
                     content = _re.sub(r"^" + _field + r":.*", _disk_m.group(0), content, flags=_re.MULTILINE)
                 else:
                     content = _re.sub(r"^(updated:.*)", r"\1\n" + _disk_m.group(0), content, flags=_re.MULTILINE, count=1)
+            elif _field == "created" and not _re.search(r"^created:", content, _re.MULTILINE):
+                # created: missing on disk too — there is nothing to restore, and this
+                # instruction set now explicitly tells the LLM never to supply it, so
+                # without this the field would stay permanently absent on every future
+                # write of this page. Backfill from the file's own mtime: not the true
+                # original creation date (unknowable at this point), but the best
+                # evidence actually available, and closer to reality than "today" would
+                # be for a page that may be old.
+                import datetime as _dt
+                _backfill = _dt.date.fromtimestamp(p.stat().st_mtime).isoformat()
+                log.warning("update_file: %s had no created: on disk — backfilling %s from mtime",
+                            path, _backfill)
+                content = _re.sub(r"^(type:.*)", r"\1\ncreated: " + _backfill,
+                                   content, flags=_re.MULTILINE, count=1)
+        # updated: is not system-restored (it's meant to be freshly supplied on every
+        # write) but omitting it should not be possible to get wrong — if the LLM left
+        # it out, fill it in rather than let the page go out with the field missing.
+        if not _re.search(r"^updated:", content, _re.MULTILINE):
+            import datetime as _dt2
+            content = _re.sub(r"^(created:.*)", r"\1\nupdated: " + _dt2.date.today().isoformat(),
+                               content, flags=_re.MULTILINE, count=1)
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
@@ -2050,9 +2071,13 @@ def _validate_ingest(args: dict) -> str:
         else:
             missing_fm.append(f"{f.relative_to(WIKI_DIR)}: no frontmatter")
 
-        # Check internal links
+        # Check internal links. Any absolute URI (a scheme prefix like http:, mailto:,
+        # about:, chrome:) is not a relative wiki path and must not be resolved as one —
+        # it's either a working external link, or a junk link repair_links.py's
+        # junk-scheme pass strips separately. Only report links that look like they were
+        # meant to resolve inside wiki/ and don't.
         for link_text, link_path in re.findall(r'\[([^\]]+)\]\(([^)]+)\)', text):
-            if link_path.startswith("http") or link_path.startswith("#"):
+            if link_path.startswith("#") or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", link_path):
                 continue
             target = (f.parent / link_path).resolve()
             if not target.exists():

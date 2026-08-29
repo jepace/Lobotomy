@@ -1527,8 +1527,10 @@ def wiki_lint():
             else:
                 missing_fm.append({"file": rel, "missing": "no frontmatter"})
 
+        # Any absolute URI (scheme prefix — http:, mailto:, about:, chrome:, ...) is not a
+        # relative wiki path; only report links that look wiki-internal and don't resolve.
         for link_text, link_path in _re.findall(r'\[([^\]]+)\]\(([^)]+)\)', text):
-            if link_path.startswith(("http", "#", "mailto")):
+            if link_path.startswith("#") or _re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", link_path):
                 continue
             target = (f.parent / link_path).resolve()
             if not target.exists():
