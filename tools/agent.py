@@ -684,11 +684,11 @@ def _update_file(path: str, content: str) -> str:
                 f"Error: update_file refused — you have only read the first {_covered} of "
                 f"{_full_len} chars of {path}. Writing now would silently discard everything "
                 f"after that point.\n\n"
-                f"If you are simply ADDING this source's information, do not rewrite the page "
-                f"at all — call append_section(path, section, text) instead. It needs no read "
-                f"coverage and cannot lose existing content.\n\n{_next_msg} If you really must "
-                f"revise existing text, once you have seen the whole page merge your changes "
-                f"into the FULL content and call update_file again.\n\n"
+                f"Do not read the whole page for this. Work one section at a time: "
+                f"read_section(path, section), then update_section(path, section, content) "
+                f"with this source merged into that section's existing prose.\n\n{_next_msg} "
+                f"If you really must revise the page as a whole, once you have seen all of it "
+                f"merge your changes into the FULL content and call update_file again.\n\n"
                 f'<file path="{path}" offset="{_covered}">\n{_next_chunk}\n</file>'
             )
     except ValueError:
@@ -722,10 +722,10 @@ def _update_file(path: str, content: str) -> str:
             f"Error: update_file refused — this would cut the page body by {_pct}% "
             f"({len(_disk_body)} chars on disk, {len(_new_body)} in what you sent). An ingest "
             f"adds a source's information to a page; it does not shorten it.\n\n"
-            f"This page is too large to rewrite wholesale. Use "
-            f"append_section(path, section, text) to add just the new material — it does not "
-            f"reproduce the existing page, so nothing can be lost, and it works at any page "
-            f"size. That is almost certainly what you want here.\n\n"
+            f"This page is too large to rewrite wholesale. Work one section at a time "
+            f"instead: read_section(path, section), then update_section(path, section, "
+            f"content) with the new information merged into that section's existing prose. "
+            f"That keeps the page a synthesis and stays within limits at any size.\n\n"
             f"If you genuinely believe the page should be this much shorter, that is a "
             f"rewrite, not an ingest: leave it alone and tell the user it needs a regenerate."
         )
@@ -767,6 +767,139 @@ def _update_file(path: str, content: str) -> str:
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
     return f"Written {len(content)} bytes to {path}"
+
+
+def _find_section(body: str, section: str):
+    """Locate a section by heading. Returns (heading_line, content_start, content_end)
+    where content spans from just after the heading to just before the next heading at
+    the same or a higher level, or None if the heading isn't present."""
+    hm = re.search(r"^(#{1,6})[ \t]*" + re.escape(section) + r"[ \t]*$",
+                   body, re.MULTILINE | re.IGNORECASE)
+    if not hm:
+        return None
+    level = len(hm.group(1))
+    nxt = re.compile(r"^#{1," + str(level) + r"}[ \t]*\S", re.MULTILINE)
+    nm = nxt.search(body, hm.end())
+    return hm.group(0), hm.end(), (nm.start() if nm else len(body))
+
+
+def _section_guard(path: str):
+    """Shared validation for the section tools. Returns (Path, error_string_or_None)."""
+    p = REPO_ROOT / path
+    try:
+        p.resolve().relative_to(WIKI_DIR.resolve())
+    except ValueError:
+        return p, f"Error: only pages inside wiki/ can be edited. Got: {path}"
+    if not p.exists():
+        return p, f"Error: refused — {path} does not exist. Use create_file for new pages."
+    for _reserved in ("log.md", "index.md"):
+        if p.resolve() == (WIKI_DIR / _reserved).resolve():
+            return p, f"Error: refused on wiki/{_reserved} — it is managed automatically."
+    try:
+        p.resolve().relative_to((WIKI_DIR / "sources").resolve())
+        return p, ("Error: refused — wiki/sources/ pages are immutable. Add the information "
+                   "to the relevant entity or concept page instead.")
+    except ValueError:
+        pass
+    return p, None
+
+
+def _read_section(args: dict) -> str:
+    """Return one section of a page, so it can be rewritten without loading the whole page."""
+    path    = args.get("path", "")
+    section = (args.get("section") or "").strip()
+    if not path or not section:
+        return ('Error: read_section requires "path" and "section".')
+    p, err = _section_guard(path)
+    if err:
+        return err
+
+    content = p.read_text(encoding="utf-8", errors="replace")
+    fm_m = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
+    body = content[fm_m.end():] if fm_m else content
+    found = _find_section(body, section)
+    if not found:
+        heads = re.findall(r"^#{1,6}[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE)
+        return (f"Error: {path} has no section '{section}'. Its sections are: "
+                f"{', '.join(heads) if heads else '(none)'}. Use append_section to add a new one.")
+    heading, start, end = found
+    wiki_rel = str(p.relative_to(WIKI_DIR))
+    _ctx()._session_read_sections.add((wiki_rel, section.strip().lower()))
+    return f"{heading}\n{body[start:end].strip()}"
+
+
+def _update_section(args: dict) -> str:
+    """Replace the contents of one section, leaving the rest of the page untouched.
+
+    This is the tool that keeps ingest a synthesis rather than a changelog on pages too
+    large to rewrite whole. update_file forces re-emitting every character, which stops
+    working past ~35-40K chars; append_section avoids that but only ever adds, so a page
+    accumulates paragraphs instead of being rewritten. Rewriting a single section is
+    bounded enough to always fit and still merges new information into existing prose.
+    """
+    import datetime as _dt
+    path    = args.get("path", "")
+    section = (args.get("section") or "").strip()
+    new_text = (args.get("content") or "").strip()
+    if not path or not section or not new_text:
+        return ('Error: update_section requires "path", "section" and "content" '
+                "(the section's full new text, excluding its heading).")
+    p, err = _section_guard(path)
+    if err:
+        return err
+    if section.strip().lower() == "sources":
+        return ("Error: refused — the ## Sources section is generated from the sources: "
+                "frontmatter and must not be edited.")
+
+    content = p.read_text(encoding="utf-8", errors="replace")
+    fm_m = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
+    frontmatter, body = (fm_m.group(1), content[fm_m.end():]) if fm_m else ("", content)
+    found = _find_section(body, section)
+    if not found:
+        heads = re.findall(r"^#{1,6}[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE)
+        return (f"Error: {path} has no section '{section}'. Its sections are: "
+                f"{', '.join(heads) if heads else '(none)'}. Use append_section to add a new one.")
+    heading, start, end = found
+    old_text = body[start:end].strip()
+
+    # Same reasoning as update_file's read-before-write rule, scoped to the section: a
+    # rewrite composed without seeing the current text would silently discard it. Hand the
+    # section back in the refusal so the retry costs no extra round-trip.
+    wiki_rel = str(p.relative_to(WIKI_DIR))
+    if (wiki_rel, section.strip().lower()) not in _ctx()._session_read_sections:
+        _ctx()._session_read_sections.add((wiki_rel, section.strip().lower()))
+        return (
+            f"Error: update_section refused — you had not read '{section}' in {path} this "
+            f"session, so your rewrite would discard what is there. Its current content is "
+            f"below and is now marked as read. Merge your changes into it and call "
+            f"update_section again.\n\n{heading}\n{old_text}"
+        )
+    if len(old_text) >= 800 and len(new_text) < len(old_text) * 0.6:
+        _pct = 100 - int(len(new_text) / len(old_text) * 100)
+        log.warning("update_section: refused %s '%s' — would shrink %d%% (%d -> %d chars)",
+                    path, section, _pct, len(old_text), len(new_text))
+        return (
+            f"Error: update_section refused — this would cut '{section}' by {_pct}% "
+            f"({len(old_text)} chars now, {len(new_text)} in what you sent). Folding in a new "
+            f"source should preserve what is already there. Resend the section's existing "
+            f"content with your additions merged in."
+        )
+
+    addition = _strip_broken_wiki_links(new_text, p)
+    new_body = body[:start] + "\n\n" + addition + "\n\n" + body[end:].lstrip("\n")
+    new_content = frontmatter + new_body
+    if not new_content.endswith("\n"):
+        new_content += "\n"
+    new_content = _set_fm_field(new_content, "updated", f"updated: {_dt.date.today().isoformat()}")
+    if p.parent.name in ("entities", "concepts", "synthesis"):
+        new_content = _merge_sources_field(new_content, p)
+    new_content = _inject_sources_section(new_content, p)
+
+    if wiki_rel not in _ctx()._session_entity_pages and wiki_rel not in _ctx()._session_updated_pages:
+        _ctx()._session_updated_pages.append(wiki_rel)
+    _atomic_write(p, new_content)
+    return (f"Rewrote '{section}' in {path} ({len(old_text)} -> {len(addition)} chars, "
+            f"page now {len(new_content)} bytes)")
 
 
 def _append_section(args: dict) -> str:
@@ -898,6 +1031,7 @@ def _ctx():
         t._session_updated_pages = []
         t._session_read_pages = set()
         t._session_read_coverage = {}
+        t._session_read_sections = set()
         t._session_tool_calls = []
         t._session_search_counts = {}
         t._done_refusals = 0
@@ -914,6 +1048,7 @@ def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
     t._session_updated_pages = []
     t._session_read_pages = set()
     t._session_read_coverage = {}
+    t._session_read_sections = set()
     t._session_tool_calls = []
     t._session_search_counts = {}
     t._done_refusals = 0
@@ -2467,6 +2602,8 @@ TOOL_FNS = {
     # can correct, never a KeyError that unwinds the whole agent loop.
     "read_file":       lambda a: _read_file(a.get("path", ""), int(a.get("offset", 0) or 0)),
     "update_file":      lambda a: _update_file(a.get("path", ""), a.get("content", "")),
+    "read_section":     _read_section,
+    "update_section":   _update_section,
     "append_section":   _append_section,
     "list_dir":         lambda a: _list_dir(a.get("directory", "")),
     "fetch_url":        lambda a: _fetch_url(a.get("url", "")),
@@ -2502,14 +2639,54 @@ TOOL_DEFS = [
     {
         "type": "function",
         "function": {
+            "name":        "read_section",
+            "description": (
+                "Return one section of a wiki page. Use with update_section to revise a "
+                "single section of a page too large to read or rewrite in full."
+            ),
+            "parameters":  {
+                "type": "object",
+                "properties": {
+                    "path":    {"type": "string", "description": "e.g. wiki/entities/donald-trump.md"},
+                    "section": {"type": "string", "description": 'Heading, e.g. "Claims & Positions"'},
+                },
+                "required": ["path", "section"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name":        "update_section",
+            "description": (
+                "Rewrite one section of a page, merging new information into the text already "
+                "there. THIS IS THE PREFERRED WAY to fold a source into an existing page: it "
+                "produces a synthesis rather than a running list, and unlike update_file it "
+                "stays within limits no matter how large the page has grown. Read the section "
+                "first (read_section), then send its complete new text."
+            ),
+            "parameters":  {
+                "type": "object",
+                "properties": {
+                    "path":    {"type": "string", "description": "e.g. wiki/entities/donald-trump.md"},
+                    "section": {"type": "string", "description": 'Heading to rewrite, e.g. "Claims & Positions"'},
+                    "content": {"type": "string",
+                                "description": "The section's full new text, excluding its heading. Plain text, no links."},
+                },
+                "required": ["path", "section", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name":        "append_section",
             "description": (
-                "Add text to one section of an existing wiki page without rewriting the rest. "
-                "PREFER THIS over update_file when adding a source's information to a page — "
-                "it does not require reading the whole page first, cannot truncate or lose "
-                "existing content, and works no matter how large the page has grown. Creates "
-                "the section if it does not exist. Use update_file only when you genuinely "
-                "need to revise text that is already on the page."
+                "Add text to a page under a heading, creating the heading if absent. Use only "
+                "for material that belongs in a NEW section, or when there is genuinely "
+                "nothing to merge with. To fold a source into a section that already has "
+                "content, use update_section instead — appending accumulates paragraphs "
+                "where the wiki wants a synthesis."
             ),
             "parameters":  {
                 "type": "object",

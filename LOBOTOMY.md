@@ -316,19 +316,24 @@ For each entity (person, organization, product, project) on that list:
   immediately and treat as new. Do NOT search again. Do NOT try capitalization variants. Do NOT
   add `in:entities`, `in:concepts`, or `in:synthesis` modifiers as additional attempts. The server
   enforces this limit and will refuse the third call.
-- **If a document exists**, fold the new source into it — do not rebuild it from scratch.
-  **Prefer `append_section`**: give it the page, the heading to add under, and just the new
-  text. It never reproduces the existing page, so nothing can be lost or truncated, it needs
-  no prior `read_file`, and it keeps working on pages far too large to rewrite. Creates the
-  section if it doesn't exist.
+- **If a document exists**, fold the new source into it — do not rebuild it from scratch,
+  and do not merely tack a paragraph onto the end. The page should read as one synthesis
+  that happens to be informed by many sources, not as a pile of per-source additions.
 
-  Use `update_file` only when you must revise wording already on the page:
-  1. `read_file` the existing entity page in full. It already synthesizes every source
-     ingested before now; treat it as correct.
-  2. `update_file` with that page's content plus whatever this new source adds or changes.
-     Preserve existing material that this source does not contradict. Do not set `sources:`
-     or `created:` — both are managed automatically. On a large page this means re-emitting
-     every character, which is why appending is preferred.
+  **Work section by section** — this is the normal path, and the only one that stays within
+  limits on a large page:
+  1. `read_section` the section this source bears on (e.g. "Claims & Positions").
+  2. Rewrite that section's prose so the new information is *merged into* it — extending a
+     sentence, qualifying a claim, adding a detail where it belongs — and send it with
+     `update_section`. Preserve everything the new source does not contradict.
+  3. Repeat for each section the source touches. Most sources touch one or two.
+
+  `update_file` (whole page at once) is fine on a short page and is what the Regenerate
+  Workflow uses, but on a large page it forces re-emitting every character and will be
+  refused. `append_section` only adds — reach for it when the material genuinely belongs in
+  a new section, not as a way to avoid merging.
+
+  Do not set `sources:` or `created:` — both are managed automatically.
   **Do not read the pages listed in `sources:`, and do not search for more sources.** Their
   content is already reflected in the page you just read. Re-deriving the page from all of its
   sources is the Regenerate Workflow (Section 6), which runs only when the user asks for it.
@@ -353,19 +358,24 @@ For each concept, technique, framework, or term on that list:
   immediately and treat as new. Do NOT search again. Do NOT try capitalization variants. Do NOT
   add scope modifiers as additional attempts. The server enforces this limit and will refuse the
   third call.
-- **If a document exists**, fold the new source into it — do not rebuild it from scratch.
-  **Prefer `append_section`**: give it the page, the heading to add under, and just the new
-  text. It never reproduces the existing page, so nothing can be lost or truncated, it needs
-  no prior `read_file`, and it keeps working on pages far too large to rewrite. Creates the
-  section if it doesn't exist.
+- **If a document exists**, fold the new source into it — do not rebuild it from scratch,
+  and do not merely tack a paragraph onto the end. The page should read as one synthesis
+  that happens to be informed by many sources, not as a pile of per-source additions.
 
-  Use `update_file` only when you must revise wording already on the page:
-  1. `read_file` the existing concept page in full. It already synthesizes every source
-     ingested before now; treat it as correct.
-  2. `update_file` with that page's content plus whatever this new source adds or changes.
-     Preserve existing material that this source does not contradict. Do not set `sources:`
-     or `created:` — both are managed automatically. On a large page this means re-emitting
-     every character, which is why appending is preferred.
+  **Work section by section** — this is the normal path, and the only one that stays within
+  limits on a large page:
+  1. `read_section` the section this source bears on (e.g. "Claims & Positions").
+  2. Rewrite that section's prose so the new information is *merged into* it — extending a
+     sentence, qualifying a claim, adding a detail where it belongs — and send it with
+     `update_section`. Preserve everything the new source does not contradict.
+  3. Repeat for each section the source touches. Most sources touch one or two.
+
+  `update_file` (whole page at once) is fine on a short page and is what the Regenerate
+  Workflow uses, but on a large page it forces re-emitting every character and will be
+  refused. `append_section` only adds — reach for it when the material genuinely belongs in
+  a new section, not as a way to avoid merging.
+
+  Do not set `sources:` or `created:` — both are managed automatically.
   **Do not read the pages listed in `sources:`, and do not search for more sources.** Their
   content is already reflected in the page you just read. Re-deriving the page from all of its
   sources is the Regenerate Workflow (Section 6), which runs only when the user asks for it.
