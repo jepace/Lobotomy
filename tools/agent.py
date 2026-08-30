@@ -676,6 +676,31 @@ def _update_file(path: str, content: str) -> str:
                 f"full file with your changes incorporated."
             )
 
+    # update_file replaces the WHOLE file, so the body must be re-emitted in full on every
+    # write. On a page that keeps growing, that eventually collides with the model's
+    # max_tokens output budget, and the failure is not always loud: rather than being cut
+    # off mid-JSON (which surfaces as a parse error), the model may quietly condense the
+    # page to fit and hand back a valid but much shorter file. Nothing else here would
+    # notice — the existing never-shrink rule covers only sources: frontmatter, not the
+    # body. An ingest is supposed to ADD information, so a large drop means loss.
+    _disk_body = _re.sub(r"^---\s*\n.*?\n---\s*\n", "",
+                         p.read_text(encoding="utf-8", errors="replace"), flags=_re.DOTALL)
+    _new_body = _re.sub(r"^---\s*\n.*?\n---\s*\n", "", content, flags=_re.DOTALL)
+    if len(_disk_body) >= 2000 and len(_new_body) < len(_disk_body) * 0.6:
+        _pct = 100 - int(len(_new_body) / len(_disk_body) * 100)
+        log.warning("update_file: refused %s — body would shrink %d%% (%d -> %d chars)",
+                    path, _pct, len(_disk_body), len(_new_body))
+        return (
+            f"Error: update_file refused — this would cut the page body by {_pct}% "
+            f"({len(_disk_body)} chars on disk, {len(_new_body)} in what you sent). An ingest "
+            f"adds a source's information to a page; it does not shorten it.\n\n"
+            f"If your response was running long and you condensed or truncated the page to "
+            f"fit, that is the problem — resend the COMPLETE existing body with only your "
+            f"additions merged in. If you genuinely believe the page should be this much "
+            f"shorter, that is a rewrite, not an ingest: leave it alone and tell the user it "
+            f"needs a regenerate."
+        )
+
     _subdir = p.parent.name
     if _subdir in ("entities", "concepts", "synthesis"):
         # Always preserve sources already on disk — the LLM must never shrink this list.
@@ -2790,6 +2815,13 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
             time.sleep(_inter_delay)
         try:
             msg = resp["choices"][0]["message"]
+            # finish_reason "length" means the model hit max_tokens mid-response. On a
+            # whole-file update_file that usually truncates the tool-call JSON into a
+            # parse error with no obvious cause, so name the real reason in the log.
+            if (resp["choices"][0].get("finish_reason") or "") == "length":
+                log.warning("LLM response hit max_tokens (finish_reason=length) — output was "
+                            "cut off. If this is an update_file on a large page, the page has "
+                            "outgrown a single-response rewrite.")
         except (KeyError, IndexError) as e:
             log.error("Malformed LLM response: %s  raw=%s", e, str(resp)[:500])
             raise _LLMError(f"Malformed response from LLM: {e}")
@@ -3003,6 +3035,13 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
 
         try:
             msg = resp["choices"][0]["message"]
+            # finish_reason "length" means the model hit max_tokens mid-response. On a
+            # whole-file update_file that usually truncates the tool-call JSON into a
+            # parse error with no obvious cause, so name the real reason in the log.
+            if (resp["choices"][0].get("finish_reason") or "") == "length":
+                log.warning("LLM response hit max_tokens (finish_reason=length) — output was "
+                            "cut off. If this is an update_file on a large page, the page has "
+                            "outgrown a single-response rewrite.")
         except (KeyError, IndexError) as e:
             log.error("Malformed LLM response: %s  raw=%s", e, str(resp)[:500])
             yield json.dumps({"type": "error",
