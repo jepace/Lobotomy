@@ -276,7 +276,14 @@ Required sections:
   use. In an article about a mesh-networking project, "LoRa" and "Mesh Network" are the
   subject matter; "Radio Frequency", "Open Source Software" and "Emergency Communications"
   are background terms any reader already understands and the article never explains. List
-  the first kind, not the second. A good list is usually two to four names.
+  the first kind, not the second.
+
+  The test, for each candidate: **can you state what this specific source adds to the
+  concept?** If you can — a definition it gives, a mechanism it explains, a claim it makes
+  about how the concept works — list it. If the best you can say is "the article mentions
+  it" or "it's related to the topic", leave it off. Judge each name on that question alone;
+  there is no target number, and a source that genuinely explains eight concepts should
+  list eight.
 
   If the source's subject is better understood as a concept than an entity, list it here
   instead — but list it somewhere; the subject never goes unlisted.
