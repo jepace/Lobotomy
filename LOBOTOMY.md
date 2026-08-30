@@ -320,13 +320,22 @@ For each entity (person, organization, product, project) on that list:
   and do not merely tack a paragraph onto the end. The page should read as one synthesis
   that happens to be informed by many sources, not as a pile of per-source additions.
 
-  **Work section by section** — this is the normal path, and the only one that stays within
-  limits on a large page:
-  1. `read_section` the section this source bears on (e.g. "Claims & Positions").
-  2. Rewrite that section's prose so the new information is *merged into* it — extending a
-     sentence, qualifying a claim, adding a detail where it belongs — and send it with
-     `update_section`. Preserve everything the new source does not contradict.
-  3. Repeat for each section the source touches. Most sources touch one or two.
+  **Read the whole page, then write section by section:**
+  1. `read_file` the page. Reading is cheap — it is writing that is limited — and you can
+     only place new information well, or notice it is already covered somewhere else on the
+     page, if you have seen all of it. If the page is long enough to come back
+     `[TRUNCATED …]`, keep calling `read_file` with the offset it names until you reach the
+     end.
+  2. Decide where each piece of new information belongs.
+  3. For each section that changes, send its full new text with `update_section` — the new
+     information *merged into* the existing prose, extending a sentence, qualifying a claim,
+     adding a detail where it fits. Preserve everything the source does not contradict.
+     Most sources change one or two sections.
+
+  Writing is what is bounded, not reading: `update_section` sends only one section, so it
+  works at any page size. Use `read_section` instead of `read_file` only when a page is so
+  large that reading it whole is wasteful — you lose the ability to spot duplication, so
+  prefer the full read when it is practical.
 
   **Choosing which section.** Default to one that already exists — the templates in
   Section 3 cover most material, and merging into an existing section is what makes the page
@@ -375,13 +384,22 @@ For each concept, technique, framework, or term on that list:
   and do not merely tack a paragraph onto the end. The page should read as one synthesis
   that happens to be informed by many sources, not as a pile of per-source additions.
 
-  **Work section by section** — this is the normal path, and the only one that stays within
-  limits on a large page:
-  1. `read_section` the section this source bears on (e.g. "Claims & Positions").
-  2. Rewrite that section's prose so the new information is *merged into* it — extending a
-     sentence, qualifying a claim, adding a detail where it belongs — and send it with
-     `update_section`. Preserve everything the new source does not contradict.
-  3. Repeat for each section the source touches. Most sources touch one or two.
+  **Read the whole page, then write section by section:**
+  1. `read_file` the page. Reading is cheap — it is writing that is limited — and you can
+     only place new information well, or notice it is already covered somewhere else on the
+     page, if you have seen all of it. If the page is long enough to come back
+     `[TRUNCATED …]`, keep calling `read_file` with the offset it names until you reach the
+     end.
+  2. Decide where each piece of new information belongs.
+  3. For each section that changes, send its full new text with `update_section` — the new
+     information *merged into* the existing prose, extending a sentence, qualifying a claim,
+     adding a detail where it fits. Preserve everything the source does not contradict.
+     Most sources change one or two sections.
+
+  Writing is what is bounded, not reading: `update_section` sends only one section, so it
+  works at any page size. Use `read_section` instead of `read_file` only when a page is so
+  large that reading it whole is wasteful — you lose the ability to spot duplication, so
+  prefer the full read when it is practical.
 
   **Choosing which section.** Default to one that already exists — the templates in
   Section 3 cover most material, and merging into an existing section is what makes the page

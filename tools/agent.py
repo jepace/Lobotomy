@@ -879,8 +879,16 @@ def _update_section(args: dict) -> str:
     # Same reasoning as update_file's read-before-write rule, scoped to the section: a
     # rewrite composed without seeing the current text would silently discard it. Hand the
     # section back in the refusal so the retry costs no extra round-trip.
+    #
+    # Reading the WHOLE page satisfies this too — it is strictly more context than
+    # read_section gives, and is the better way to work when the page is small enough to
+    # read: only then can the agent tell that a fact already appears under some other
+    # heading. Requiring a per-section read even after a full read would punish the
+    # better behaviour with a pointless refusal.
     wiki_rel = str(p.relative_to(WIKI_DIR))
-    if (wiki_rel, section.strip().lower()) not in _ctx()._session_read_sections:
+    _full_len = len(_strip_system_fm_fields(content))
+    _read_whole = _ctx()._session_read_coverage.get(wiki_rel, 0) >= _full_len
+    if not _read_whole and (wiki_rel, section.strip().lower()) not in _ctx()._session_read_sections:
         _ctx()._session_read_sections.add((wiki_rel, section.strip().lower()))
         return (
             f"Error: update_section refused — you had not read '{section}' in {path} this "
