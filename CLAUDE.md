@@ -23,7 +23,8 @@ python3 tools/wiki.py "ingest raw/file.md" # one-shot command
 Utility CLIs (no LLM needed):
 ```sh
 python3 tools/search.py "keyword"          # full-text search across wiki
-python3 tools/repair_links.py              # fix broken relative paths
+python3 tools/repair_links.py              # fix broken relative paths, unwrap reader-mode URLs
+python3 tools/repair_frontmatter.py        # backfill missing created:/updated: fields
 sh tools/lint.sh                           # shell-based broken-link checker
 ```
 
