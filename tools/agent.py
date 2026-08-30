@@ -1160,13 +1160,18 @@ def _post_process_session() -> None:
 _DONE_REFUSAL_LIMIT = 2
 
 
-def _unhandled_listed_pages(ctx) -> list:
-    """Names listed in the source page's ## Entities / ## Concepts that already have a
-    wiki page which this session never wrote to.
+def _unhandled_listed_pages(ctx) -> tuple:
+    """Names listed in the source page's ## Entities / ## Concepts that this session did
+    not handle. Returns (to_update, to_create).
 
-    Returns [(name, wiki_rel)]. Only reports names whose page EXISTS — a name with no
-    page yet is a create_file the agent may still legitimately decide against, but a name
-    it listed that already has a page is an update it committed to and skipped.
+    to_update: name already has a page, but no write to it this session.
+    to_create:  name has no page at all.
+
+    Both are violations of the same commitment — Steps 5 and 6 say every listed name gets
+    a page created or updated, and the page-worthiness judgement belongs in Step 3 where
+    the list is written. An earlier version reported only to_update, on the theory that
+    skipping a create was a legitimate call; that let an ingest list six concepts, create
+    one, and pass, leaving five names on the source page with nothing behind them.
     """
     if not ctx._current_source_page:
         return []
@@ -1196,20 +1201,24 @@ def _unhandled_listed_pages(ctx) -> list:
                 names.append(name)
 
     if not names:
-        return []
+        return [], []
     by_key = {t.lower(): rel for t, rel in _build_title_map()}
     written = set(ctx._session_entity_pages) | set(ctx._session_updated_pages)
-    out, seen = [], set()
+    to_update, to_create, seen = [], [], set()
     for name in names:
-        rel = by_key.get(name.lower())
-        if not rel or rel in seen:
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        rel = by_key.get(key)
+        if rel is None:
+            to_create.append(name)
             continue
         if rel == ctx._current_source_page or rel.startswith("sources/"):
             continue
         if rel not in written:
-            seen.add(rel)
-            out.append((name, rel))
-    return out
+            to_update.append((name, rel))
+    return to_update, to_create
 
 
 def _done(args: dict) -> str:
@@ -1259,20 +1268,29 @@ def _done(args: dict) -> str:
         # rather than trusting that Steps 5-6 were actually carried out for each one —
         # an ingest that names a subject and then never updates that subject's existing
         # page silently drops exactly the knowledge it was run to capture.
-        _unhandled = _unhandled_listed_pages(ctx)
-        if _unhandled and ctx._done_refusals < _DONE_REFUSAL_LIMIT:
+        _to_update, _to_create = _unhandled_listed_pages(ctx)
+        if (_to_update or _to_create) and ctx._done_refusals < _DONE_REFUSAL_LIMIT:
             ctx._done_refusals += 1
-            log.warning("done() refused (%d/%d): %d listed name(s) have pages that were not updated: %s",
-                        ctx._done_refusals, _DONE_REFUSAL_LIMIT, len(_unhandled),
-                        ", ".join(n for n, _ in _unhandled[:8]))
-            _lines = "\n".join(f"  - {name} → wiki/{rel}" for name, rel in _unhandled[:15])
+            log.warning("done() refused (%d/%d): %d listed name(s) need updating, %d need creating: %s",
+                        ctx._done_refusals, _DONE_REFUSAL_LIMIT, len(_to_update), len(_to_create),
+                        ", ".join([n for n, _ in _to_update[:5]] + _to_create[:5]))
+            _parts = []
+            if _to_update:
+                _parts.append(
+                    "These already have a page you did not update — read_file it, then "
+                    "update_file with this source merged in:\n"
+                    + "\n".join(f"  - {name} → wiki/{rel}" for name, rel in _to_update[:15]))
+            if _to_create:
+                _parts.append(
+                    "These have no page yet — create_file one for each:\n"
+                    + "\n".join(f"  - {name}" for name in _to_create[:15]))
+            _body = "\n\n".join(_parts)
             return (
                 "Error: done() refused — you listed these in the source page's ## Entities / "
-                "## Concepts, and each already has a wiki page, but you did not update any of "
-                "them this session. Listing a name commits you to folding this source into its "
-                f"page:\n\n{_lines}\n\n"
-                "For each one: read_file the page, then update_file it with this source's "
-                "information merged in. Then call done()."
+                "## Concepts but did not give them pages. That list is a commitment: whether a "
+                "name deserves a page is decided when you write the list in Step 3, not here. "
+                "A listed name with no page behind it shows up on the source page as plain "
+                f"text that goes nowhere.\n\n{_body}\n\nThen call done()."
             )
 
     ingested = "1" if args.get("ingested") else "0"

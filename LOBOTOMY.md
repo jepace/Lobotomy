@@ -269,10 +269,17 @@ Required sections:
   generic stand-in without the article ceasing to be the article.
 - **Concepts**: bulleted list of important concepts and terms. Bare names only — same rule
   as Entities: natural human-readable form, never a slug. Write "Sex in Cinema", not
-  "sex-in-cinema"; "Horror Films", not "horror-films". Apply the same test: a concept the
-  source explains or argues about, not every term it uses. If the source's subject is
-  better understood as a concept than an entity, list it here instead — but list it
-  somewhere; the subject never goes unlisted.
+  "sex-in-cinema"; "Horror Films", not "horror-films".
+
+  **Every name here becomes a page in Step 6**, so list only concepts this source actually
+  explains, argues about, or materially advances — not the general vocabulary it happens to
+  use. In an article about a mesh-networking project, "LoRa" and "Mesh Network" are the
+  subject matter; "Radio Frequency", "Open Source Software" and "Emergency Communications"
+  are background terms any reader already understands and the article never explains. List
+  the first kind, not the second. A good list is usually two to four names.
+
+  If the source's subject is better understood as a concept than an entity, list it here
+  instead — but list it somewhere; the subject never goes unlisted.
 - **Quotes**: 3–5 direct quotes with section references if available
 - **Context**: how it relates to, extends, supports, or contradicts existing documents
 
@@ -341,8 +348,10 @@ For each concept, technique, framework, or term on that list:
   **Do not read the pages listed in `sources:`, and do not search for more sources.** Their
   content is already reflected in the page you just read. Re-deriving the page from all of its
   sources is the Regenerate Workflow (Section 6), which runs only when the user asks for it.
-- **If no document exists** and the concept warrants one, use `create_file` for
-  `wiki/concepts/{slug}.md`, written from this source. Do not set `sources:` — it is injected
+- **If no document exists**, use `create_file` for
+  `wiki/concepts/{slug}.md`, written from this source. Every name on the list gets a page —
+  whether it "warrants" one was decided in Step 3, and re-deciding it here is what leaves
+  concepts listed on the source page with no page behind them. Do not set `sources:` — it is injected
   automatically. Do not search for older sources to backfill it; if the page later needs the
   fuller picture, the user can run a regenerate.
 - Do not write a `## Sources` section — it is generated automatically from the `sources:` frontmatter.
