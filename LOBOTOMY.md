@@ -328,10 +328,23 @@ For each entity (person, organization, product, project) on that list:
      `update_section`. Preserve everything the new source does not contradict.
   3. Repeat for each section the source touches. Most sources touch one or two.
 
+  **Choosing which section.** Default to one that already exists — the templates in
+  Section 3 cover most material, and merging into an existing section is what makes the page
+  a synthesis instead of a pile. If `read_section` reports the section is absent, it lists
+  the page's real sections; pick the closest fit from those before inventing one.
+
+  Create a new section only when the material is a **recurring theme with enough substance
+  to stand on its own** and fits none of the existing ones — "Legal Proceedings" on a
+  much-litigated figure, "Technical Characteristics" on a device. **Never name a section
+  after a source, a date, or a single event** — "2026 Tariff Announcement", "Wired Article
+  Findings", "August Update". That is a changelog wearing a heading, and it fails for the
+  same reason appending paragraphs does: the page stops being a synthesis. A one-off fact
+  belongs *inside* a thematic section, not in a section of its own.
+
   `update_file` (whole page at once) is fine on a short page and is what the Regenerate
   Workflow uses, but on a large page it forces re-emitting every character and will be
-  refused. `append_section` only adds — reach for it when the material genuinely belongs in
-  a new section, not as a way to avoid merging.
+  refused. `append_section` only adds, so reach for it only when creating a section that
+  passes the test above — never as a way to avoid merging.
 
   Do not set `sources:` or `created:` — both are managed automatically.
   **Do not read the pages listed in `sources:`, and do not search for more sources.** Their
@@ -370,10 +383,23 @@ For each concept, technique, framework, or term on that list:
      `update_section`. Preserve everything the new source does not contradict.
   3. Repeat for each section the source touches. Most sources touch one or two.
 
+  **Choosing which section.** Default to one that already exists — the templates in
+  Section 3 cover most material, and merging into an existing section is what makes the page
+  a synthesis instead of a pile. If `read_section` reports the section is absent, it lists
+  the page's real sections; pick the closest fit from those before inventing one.
+
+  Create a new section only when the material is a **recurring theme with enough substance
+  to stand on its own** and fits none of the existing ones — "Legal Proceedings" on a
+  much-litigated figure, "Technical Characteristics" on a device. **Never name a section
+  after a source, a date, or a single event** — "2026 Tariff Announcement", "Wired Article
+  Findings", "August Update". That is a changelog wearing a heading, and it fails for the
+  same reason appending paragraphs does: the page stops being a synthesis. A one-off fact
+  belongs *inside* a thematic section, not in a section of its own.
+
   `update_file` (whole page at once) is fine on a short page and is what the Regenerate
   Workflow uses, but on a large page it forces re-emitting every character and will be
-  refused. `append_section` only adds — reach for it when the material genuinely belongs in
-  a new section, not as a way to avoid merging.
+  refused. `append_section` only adds, so reach for it only when creating a section that
+  passes the test above — never as a way to avoid merging.
 
   Do not set `sources:` or `created:` — both are managed automatically.
   **Do not read the pages listed in `sources:`, and do not search for more sources.** Their

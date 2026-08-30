@@ -2682,11 +2682,13 @@ TOOL_DEFS = [
         "function": {
             "name":        "append_section",
             "description": (
-                "Add text to a page under a heading, creating the heading if absent. Use only "
-                "for material that belongs in a NEW section, or when there is genuinely "
-                "nothing to merge with. To fold a source into a section that already has "
-                "content, use update_section instead — appending accumulates paragraphs "
-                "where the wiki wants a synthesis."
+                "Add text to a page under a heading, creating the heading if absent. To fold a "
+                "source into a section that already has content, use update_section instead — "
+                "appending accumulates paragraphs where the wiki wants a synthesis. Create a "
+                "new section only for a recurring theme substantial enough to stand on its own "
+                "('Legal Proceedings', 'Technical Characteristics'). NEVER name a section after "
+                "a source, a date, or a single event ('2026 Tariff Announcement', 'Wired Article "
+                "Findings') — a one-off fact belongs inside an existing thematic section."
             ),
             "parameters":  {
                 "type": "object",
