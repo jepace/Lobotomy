@@ -48,7 +48,9 @@ wiki/index.md          Master catalog of every page, for humans browsing the wik
                        Auto-generated on every write — never edit or read it. It is far
                        too large for context; use `lookup_titles` to ask what exists.
 wiki/sources/          One summary document per ingested source.
-wiki/entities/         People, organizations, products, projects, codebases.
+wiki/entities/         Concrete things: people, organizations, products, projects,
+                       codebases, places, events, works, vehicles, named phenomena —
+                       anything with a proper name that isn't an idea.
 wiki/concepts/         Ideas, techniques, frameworks, algorithms, terms.
 wiki/synthesis/        Cross-source analyses, comparisons, timelines, open questions.
 ```
@@ -131,10 +133,17 @@ before every `create_file` or `update_file` call.
 **Entity document** (`wiki/entities/`):
 - Overview
 - Background
-- Key Works / Products
-- Claims & Positions
+- Key Works / Products *(people, organizations, projects)*
+- Claims & Positions *(anyone who holds positions)*
 - Contradictions *(if any)*
 - Sources *(auto-generated — do not write)*
+
+These headings assume a person or organization. For an entity that is neither — a place,
+an event, a signal, a vehicle, a work — keep Overview, Background, Contradictions and
+Sources, and replace the middle sections with ones that actually fit the subject
+(e.g. Location & Geography, Timeline, Technical Characteristics, Reception). Do not
+force-fit a subject into headings built for someone else, and never drop a subject from
+the wiki because the default template doesn't suit it.
 
 **Concept document** (`wiki/concepts/`):
 - Definition
@@ -225,17 +234,24 @@ Call `create_file` with:
 Required sections:
 - **Summary**: 3–5 paragraphs synthesizing the source's main content and contribution
 - **Claims**: bulleted list of factual or analytical claims from the source
-- **Entities**: bulleted list of people, orgs, products, projects. Bare names only —
+- **Entities**: bulleted list of named things — people, orgs, products, projects, places,
+  events, works, vehicles, named phenomena. Bare names only —
   meaning plain text, not a markdown link. **Write each name exactly as a human would read
   it aloud: natural spacing and capitalization, never a filename slug.** Write
   "Film Criticism", not "film-criticism". This list is permanent — the page it's on cannot
   be edited afterward — and it becomes the title of a page in Step 5, so get the form right
   the first time.
   This list drives page creation in Step 5, so apply real judgement here — the bar is
-  **central to the story**, not merely present in it. Most named people in most articles do
-  not belong on this list.
-  **Include** an entity only when its own actions, decisions, or role *are* what the source
-  is about — the people or organizations the story could not be told without.
+  **central to the story**, not merely present in it.
+
+  **What the source is ABOUT always goes on this list — no judgement call, no exceptions.**
+  If the source is an encyclopedia entry, profile, or report on one subject, that subject
+  is the single most important name here. This holds for any kind of subject, not just
+  people: a radio signal, a company, a spacecraft, a piece of software, a place. Never
+  omit the subject because it isn't a person and the wording below doesn't quite fit it.
+
+  Beyond the subject, **include** an entity when the source makes substantive claims about
+  it — what it did, what happened to it, what it is, its role in the events described.
   **Exclude**:
   - the article's byline or reporter — writing the piece is not the same as being a
     subject of it. A journalist who *is* the story's subject belongs on the list.
@@ -245,15 +261,18 @@ Required sections:
   - names mentioned only in passing, with no claim attached
   - the publication or outlet, when it is only the venue this source appeared in
 
-  The test is not "can I write a sentence about this person" — nearly everyone quoted
-  passes that. The test is: **is this person's own conduct what the article is reporting
-  on?** If the story would still be essentially the same article with this name replaced
-  by "an official" or "a spokesperson," leave it off. It will be added later by a source
-  that is actually about them.
+  The test for these secondary names is not "can I write a sentence about this" — nearly
+  everyone quoted passes that. It is: **would the story be essentially the same article if
+  this name were replaced with a generic stand-in** ("an official", "a spokesperson", "a
+  nearby town")? If yes, leave it off; a later source that is actually about it will add
+  it. The subject of the source itself never fails this test — it cannot be swapped for a
+  generic stand-in without the article ceasing to be the article.
 - **Concepts**: bulleted list of important concepts and terms. Bare names only — same rule
   as Entities: natural human-readable form, never a slug. Write "Sex in Cinema", not
   "sex-in-cinema"; "Horror Films", not "horror-films". Apply the same test: a concept the
-  source explains or argues about, not every term it uses.
+  source explains or argues about, not every term it uses. If the source's subject is
+  better understood as a concept than an entity, list it here instead — but list it
+  somewhere; the subject never goes unlisted.
 - **Quotes**: 3–5 direct quotes with section references if available
 - **Context**: how it relates to, extends, supports, or contradicts existing documents
 

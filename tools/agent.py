@@ -1160,6 +1160,58 @@ def _post_process_session() -> None:
 _DONE_REFUSAL_LIMIT = 2
 
 
+def _unhandled_listed_pages(ctx) -> list:
+    """Names listed in the source page's ## Entities / ## Concepts that already have a
+    wiki page which this session never wrote to.
+
+    Returns [(name, wiki_rel)]. Only reports names whose page EXISTS — a name with no
+    page yet is a create_file the agent may still legitimately decide against, but a name
+    it listed that already has a page is an update it committed to and skipped.
+    """
+    if not ctx._current_source_page:
+        return []
+    src = WIKI_DIR / ctx._current_source_page
+    if not src.exists():
+        return []
+    try:
+        text = src.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+
+    names = []
+    for section in ("Entities", "Concepts"):
+        m = re.search(r"^#{1,6}\s*" + section + r"\s*$(.*?)(?=^#{1,6}\s|\Z)",
+                      text, re.MULTILINE | re.DOTALL)
+        if not m:
+            continue
+        for line in m.group(1).splitlines():
+            b = re.match(r"^\s*[-*+]\s+(.*\S)", line)
+            if not b:
+                continue
+            name = b.group(1).strip()
+            # A re-ingested source page may already be autolinked — take the label.
+            name = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", name)
+            name = re.sub(r"\*\*(.+?)\*\*", r"\1", name).strip().rstrip(".")
+            if name:
+                names.append(name)
+
+    if not names:
+        return []
+    by_key = {t.lower(): rel for t, rel in _build_title_map()}
+    written = set(ctx._session_entity_pages) | set(ctx._session_updated_pages)
+    out, seen = [], set()
+    for name in names:
+        rel = by_key.get(name.lower())
+        if not rel or rel in seen:
+            continue
+        if rel == ctx._current_source_page or rel.startswith("sources/"):
+            continue
+        if rel not in written:
+            seen.add(rel)
+            out.append((name, rel))
+    return out
+
+
 def _done(args: dict) -> str:
     ctx = _ctx()
 
@@ -1200,6 +1252,27 @@ def _done(args: dict) -> str:
                 "  2. If it does, read that page and update_file it to incorporate this source.\n"
                 "  3. If it does not, create_file a new page for it.\n\n"
                 "Do this now, then call done()."
+            )
+
+        # The source page's own ## Entities / ## Concepts lists are a commitment: the
+        # schema says every name on them gets a page created or updated. Verify it,
+        # rather than trusting that Steps 5-6 were actually carried out for each one —
+        # an ingest that names a subject and then never updates that subject's existing
+        # page silently drops exactly the knowledge it was run to capture.
+        _unhandled = _unhandled_listed_pages(ctx)
+        if _unhandled and ctx._done_refusals < _DONE_REFUSAL_LIMIT:
+            ctx._done_refusals += 1
+            log.warning("done() refused (%d/%d): %d listed name(s) have pages that were not updated: %s",
+                        ctx._done_refusals, _DONE_REFUSAL_LIMIT, len(_unhandled),
+                        ", ".join(n for n, _ in _unhandled[:8]))
+            _lines = "\n".join(f"  - {name} → wiki/{rel}" for name, rel in _unhandled[:15])
+            return (
+                "Error: done() refused — you listed these in the source page's ## Entities / "
+                "## Concepts, and each already has a wiki page, but you did not update any of "
+                "them this session. Listing a name commits you to folding this source into its "
+                f"page:\n\n{_lines}\n\n"
+                "For each one: read_file the page, then update_file it with this source's "
+                "information merged in. Then call done()."
             )
 
     ingested = "1" if args.get("ingested") else "0"
@@ -2051,6 +2124,38 @@ def _create_file(args: dict) -> str:
         p.resolve().relative_to(WIKI_DIR.resolve())
     except ValueError:
         return f"Error: create_file only writes inside wiki/. Got: {path}"
+
+    # Section 4's filename convention was documented but never verified. A bad slug is
+    # permanent (the file is created under it) and shows up in every relative link to the
+    # page, so check it at the one moment it can still be corrected for free.
+    if p.suffix != ".md" or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", p.stem):
+        return (
+            f"Error: create_file refused — filename {p.name!r} is not a valid slug. Use "
+            f"lowercase-hyphenated-words.md: lowercase letters and digits only, single "
+            f"hyphens between words, no spaces, underscores, dots, parentheses or "
+            f"capitals. Resend with a corrected path."
+        )
+
+    # "Required sections" for source pages were documented and never checked — and a
+    # source page is immutable once written ("you get one shot"), so a thin one is
+    # permanent. Worse, Steps 5-6 and done()'s completeness check both read the page's
+    # ## Entities / ## Concepts lists: if those sections are missing, the whole
+    # entity/concept chain has nothing to work from and silently does nothing. Verify
+    # before writing, so a refusal costs nothing and the agent can simply resend.
+    if pg_type == "source":
+        _required = ("Summary", "Claims", "Entities", "Concepts")
+        _missing = [s for s in _required
+                    if not re.search(r"^#{1,6}\s*" + s + r"\s*$", body, re.MULTILINE)]
+        if _missing:
+            return (
+                f"Error: create_file refused — the source page is missing required "
+                f"section(s): {', '.join(_missing)}.\n\n"
+                f"A source page cannot be edited after it is written, and Steps 5 and 6 "
+                f"read its '## Entities' and '## Concepts' lists to decide which pages to "
+                f"create or update — without them this ingest cannot do its job. Add the "
+                f"missing section(s) as '## <Name>' headings and resend create_file with "
+                f"the complete body."
+            )
 
     _subdir = p.parent.name
 
