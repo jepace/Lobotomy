@@ -825,7 +825,21 @@ def _read_section(args: dict) -> str:
     heading, start, end = found
     wiki_rel = str(p.relative_to(WIKI_DIR))
     _ctx()._session_read_sections.add((wiki_rel, section.strip().lower()))
-    return f"{heading}\n{body[start:end].strip()}"
+
+    # Also hand back the page's outline. Without it the agent is choosing a section blind
+    # from the standard template and only discovers the page's real structure by guessing
+    # wrong — which costs a round-trip and biases everything toward "Overview". Listing
+    # them here is free and lets it correct course in the same round.
+    # Exclude the page's own H1 title (matched against frontmatter, not by heading level —
+    # some pages carry a real section at H1) and the auto-generated Sources section.
+    _title_m = re.search(r'^title:\s*["\']?(.+?)["\']?\s*$', content, re.MULTILINE)
+    _page_title = (_title_m.group(1).strip().lower() if _title_m else "")
+    _skip = {"sources", section.strip().lower()} | ({_page_title} if _page_title else set())
+    others = [h for h in re.findall(r"^#{1,6}[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE)
+              if h.strip().lower() not in _skip]
+    outline = (f"\n\n[Other sections on this page: {', '.join(others)}. "
+               f"Put the new information wherever it actually belongs.]") if others else ""
+    return f"{heading}\n{body[start:end].strip()}{outline}"
 
 
 def _update_section(args: dict) -> str:
@@ -3170,7 +3184,10 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                           type(e).__name__, e, exc_info=True)
                 result = f"Error: {type(e).__name__}: {e}"
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
-            log.debug("Tool call: %s  arg=%s  result=%s", fn_name or "(unknown)", str(list(args.values())[:1])[:60], result_preview)
+            _preview = (f'{args.get("path", "?")} § {args.get("section", "?")}'
+                        if fn_name in ("read_section", "update_section", "append_section")
+                        else str(list(args.values())[:1]))
+            log.debug("Tool call: %s  arg=%s  result=%s", fn_name or "(unknown)", _preview[:60], result_preview)
             # Record for log entry — skip done() itself
             if fn_name != "done":
                 ok = not (isinstance(result, str) and result.lower().startswith("error"))
@@ -3448,7 +3465,12 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                     args["query"] = args["query"] + " " + _scope_in_name
                 elif _scope_in_name:
                     args["query"] = _scope_in_name
-                if fn_name in ("create_file", "update_file", "read_file"):
+                if fn_name in ("read_section", "update_section", "append_section"):
+                    # Show both path and section: dict order varies between calls, so a
+                    # single-value preview showed the path on some calls and the section
+                    # on others, making the log impossible to follow.
+                    arg_preview = f'{args.get("path", "?")} § {args.get("section", "?")}'[:80]
+                elif fn_name in ("create_file", "update_file", "read_file"):
                     arg_preview = str(args.get("path", next(iter(args.values()), "")))[:80]
                 elif fn_name == "search_wiki":
                     arg_preview = str(args.get("query", ""))[:80]
