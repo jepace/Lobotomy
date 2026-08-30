@@ -325,6 +325,19 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
         # the whole file, so anything past what was seen would be silently discarded.
         cov = _ctx()._session_read_coverage
         cov[wiki_rel] = max(cov.get(wiki_rel, 0), covered_upto)
+        # Whether a whole-page update_file is viable depends on the page's size against the
+        # model's output budget, which the agent cannot see but we can. Rather than leave it
+        # to guess — or hard-code a threshold — derive one from max_tokens: a rewrite must
+        # fit alongside tool-call JSON and reasoning, so half the budget is the steer. (For
+        # reference, a 37,893-char rewrite at 58% of the default budget was observed being
+        # silently condensed; a 2,456-char one at 4% was fine.)
+        _budget_chars = cfg_int("llm", "max_tokens", default=16384) * 4
+        if total > _budget_chars // 2:
+            text += (
+                f"\n\n[This page is {total} chars — too large to rewrite safely in one "
+                f"update_file call. Use update_section(path, section, content) for each "
+                f"section you are changing instead.]"
+            )
     except (ValueError, NameError):
         pass
     return text

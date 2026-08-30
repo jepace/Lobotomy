@@ -332,6 +332,13 @@ For each entity (person, organization, product, project) on that list:
      adding a detail where it fits. Preserve everything the source does not contradict.
      Most sources change one or two sections.
 
+  **On a short page, rewriting the whole thing with `update_file` is fine** — often better,
+  since it lets you reorganize across sections rather than editing them in isolation. What
+  makes that impossible is size: `update_file` must re-emit every character, and past a
+  point the page no longer fits in one response. You do not have to judge that yourself —
+  `read_file` tells you when a page is too large and to use `update_section` instead. Follow
+  that when you see it; otherwise either tool is reasonable.
+
   Writing is what is bounded, not reading: `update_section` sends only one section, so it
   works at any page size. Use `read_section` instead of `read_file` only when a page is so
   large that reading it whole is wasteful — you lose the ability to spot duplication, so
@@ -395,6 +402,13 @@ For each concept, technique, framework, or term on that list:
      information *merged into* the existing prose, extending a sentence, qualifying a claim,
      adding a detail where it fits. Preserve everything the source does not contradict.
      Most sources change one or two sections.
+
+  **On a short page, rewriting the whole thing with `update_file` is fine** — often better,
+  since it lets you reorganize across sections rather than editing them in isolation. What
+  makes that impossible is size: `update_file` must re-emit every character, and past a
+  point the page no longer fits in one response. You do not have to judge that yourself —
+  `read_file` tells you when a page is too large and to use `update_section` instead. Follow
+  that when you see it; otherwise either tool is reasonable.
 
   Writing is what is bounded, not reading: `update_section` sends only one section, so it
   works at any page size. Use `read_section` instead of `read_file` only when a page is so
