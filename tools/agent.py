@@ -573,6 +573,30 @@ def _atomic_write(p: Path, content: str) -> None:
         raise
 
 
+def _merge_sources_field(content: str, p: Path) -> str:
+    """Set sources: to everything already on disk plus this session's source page.
+
+    The LLM must never be able to shrink this list, so the on-disk value is authoritative
+    and whatever it supplied is discarded. Shared by _update_file and _append_section so
+    both record provenance identically — _post_process_session patches this again at
+    done(), but a write that never reaches done() should still be attributed.
+    """
+    existing: list[str] = []
+    if p.exists():
+        disk_m = re.search(r"^sources:\s*\[([^\]]*)\]",
+                           p.read_text(encoding="utf-8", errors="replace"), re.MULTILINE)
+        if disk_m and disk_m.group(1).strip():
+            for s in disk_m.group(1).split(","):
+                s = s.strip().strip('"').strip("'")
+                if s and s not in existing:
+                    existing.append(s)
+    cur = _ctx()._current_source_page
+    if cur and cur not in existing:
+        existing.append(cur)
+    merged = ", ".join(f'"{s}"' for s in existing)
+    return _set_fm_field(content, "sources", f"sources: [{merged}]")
+
+
 def _update_file(path: str, content: str) -> str:
     if not path:
         return ("Error: update_file requires a 'path' argument, e.g. "
@@ -659,8 +683,12 @@ def _update_file(path: str, content: str) -> str:
             return (
                 f"Error: update_file refused — you have only read the first {_covered} of "
                 f"{_full_len} chars of {path}. Writing now would silently discard everything "
-                f"after that point.\n\n{_next_msg} Once you have seen the whole page, merge "
-                f"your changes into the FULL content and call update_file again.\n\n"
+                f"after that point.\n\n"
+                f"If you are simply ADDING this source's information, do not rewrite the page "
+                f"at all — call append_section(path, section, text) instead. It needs no read "
+                f"coverage and cannot lose existing content.\n\n{_next_msg} If you really must "
+                f"revise existing text, once you have seen the whole page merge your changes "
+                f"into the FULL content and call update_file again.\n\n"
                 f'<file path="{path}" offset="{_covered}">\n{_next_chunk}\n</file>'
             )
     except ValueError:
@@ -694,42 +722,17 @@ def _update_file(path: str, content: str) -> str:
             f"Error: update_file refused — this would cut the page body by {_pct}% "
             f"({len(_disk_body)} chars on disk, {len(_new_body)} in what you sent). An ingest "
             f"adds a source's information to a page; it does not shorten it.\n\n"
-            f"If your response was running long and you condensed or truncated the page to "
-            f"fit, that is the problem — resend the COMPLETE existing body with only your "
-            f"additions merged in. If you genuinely believe the page should be this much "
-            f"shorter, that is a rewrite, not an ingest: leave it alone and tell the user it "
-            f"needs a regenerate."
+            f"This page is too large to rewrite wholesale. Use "
+            f"append_section(path, section, text) to add just the new material — it does not "
+            f"reproduce the existing page, so nothing can be lost, and it works at any page "
+            f"size. That is almost certainly what you want here.\n\n"
+            f"If you genuinely believe the page should be this much shorter, that is a "
+            f"rewrite, not an ingest: leave it alone and tell the user it needs a regenerate."
         )
 
     _subdir = p.parent.name
     if _subdir in ("entities", "concepts", "synthesis"):
-        # Always preserve sources already on disk — the LLM must never shrink this list.
-        # First, collect everything already on disk.
-        existing_sources: list[str] = []
-        if p.exists():
-            disk_text = p.read_text(encoding="utf-8", errors="replace")
-            disk_src_m = _re.search(r"^sources:\s*\[([^\]]*)\]", disk_text, _re.MULTILINE)
-            if disk_src_m and disk_src_m.group(1).strip():
-                for _s in disk_src_m.group(1).split(","):
-                    _s = _s.strip().strip('"').strip("'")
-                    if _s and _s not in existing_sources:
-                        existing_sources.append(_s)
-        if _ctx()._current_source_page and _ctx()._current_source_page not in existing_sources:
-            existing_sources.append(_ctx()._current_source_page)
-        merged_str = ", ".join(f'"{s}"' for s in existing_sources)
-        if _re.search(r"^sources:\s*\[", content, _re.MULTILINE):
-            # LLM included a sources: field — replace it with the merged list.
-            content = _re.sub(
-                r"^sources:\s*\[[^\]]*\]",
-                f"sources: [{merged_str}]",
-                content, flags=_re.MULTILINE,
-            )
-        else:
-            # LLM omitted sources: entirely — insert the disk list before closing ---.
-            _fm_match = _re.match(r"^---\s*\n.*?\n(---\s*\n)", content, _re.DOTALL)
-            if _fm_match:
-                _insert_at = _fm_match.start(1)
-                content = content[:_insert_at] + f'sources: [{merged_str}]\n' + content[_insert_at:]
+        content = _merge_sources_field(content, p)
     is_new = False  # update_file is update-only; create_file handles new pages
     assert not is_new, "update_file invariant violated: is_new should never be True here"
     wiki_rel = str(p.relative_to(WIKI_DIR))
@@ -764,6 +767,88 @@ def _update_file(path: str, content: str) -> str:
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
     return f"Written {len(content)} bytes to {path}"
+
+
+def _append_section(args: dict) -> str:
+    """Add text to one section of a page without rewriting the rest of it.
+
+    update_file replaces the whole file, which means an ingest adding one paragraph must
+    re-emit every character of the page. Past roughly 35-40K chars that stops working:
+    the model either exceeds its output budget or — far more often, and the reason this
+    tool exists — silently condenses the page to fit, which the shrink guard then refuses,
+    leaving the ingest with no move that succeeds. Appending has none of those failure
+    modes: nothing existing is reproduced, so nothing can be lost or truncated, and the
+    cost does not grow with the page.
+
+    Because it cannot destroy existing content, the read-before-write and read-coverage
+    requirements that protect update_file do not apply here.
+    """
+    import datetime as _dt
+    path    = args.get("path", "")
+    section = (args.get("section") or "").strip()
+    text    = (args.get("text") or "").strip()
+
+    if not path or not section or not text:
+        return ("Error: append_section requires 'path', 'section' and 'text', e.g. "
+                '{"path": "wiki/entities/foo.md", "section": "Claims & Positions", '
+                '"text": "- New claim from this source."}')
+
+    p = REPO_ROOT / path
+    try:
+        p.resolve().relative_to(WIKI_DIR.resolve())
+    except ValueError:
+        return f"Error: append_section only writes inside wiki/. Got: {path}"
+    if not p.exists():
+        return f"Error: append_section refused — {path} does not exist. Use create_file for new pages."
+    for _reserved in ("log.md", "index.md"):
+        if p.resolve() == (WIKI_DIR / _reserved).resolve():
+            return f"Error: append_section refused on wiki/{_reserved} — it is managed automatically."
+    try:
+        p.resolve().relative_to((WIKI_DIR / "sources").resolve())
+        return ("Error: append_section refused — wiki/sources/ pages are immutable. "
+                "Add the information to the relevant entity or concept page instead.")
+    except ValueError:
+        pass
+    if section.strip().lower() == "sources":
+        return ("Error: append_section refused — the ## Sources section is generated from "
+                "the sources: frontmatter. Append to a content section instead.")
+
+    content = p.read_text(encoding="utf-8", errors="replace")
+    fm_m = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
+    frontmatter, body = (fm_m.group(1), content[fm_m.end():]) if fm_m else ("", content)
+
+    addition = _strip_broken_wiki_links(text, p)
+
+    head_m = re.search(r"^(#{1,6})[ \t]*" + re.escape(section) + r"[ \t]*$", body, re.MULTILINE | re.IGNORECASE)
+    if head_m:
+        level = len(head_m.group(1))
+        # End of this section = the next heading at the same or a higher level.
+        nxt = re.compile(r"^#{1," + str(level) + r"}[ \t]*\S", re.MULTILINE)
+        nxt_m = nxt.search(body, head_m.end())
+        at = nxt_m.start() if nxt_m else len(body)
+        new_body = body[:at].rstrip() + "\n\n" + addition + "\n\n" + body[at:].lstrip("\n")
+        where = f"appended to '{section}'"
+    else:
+        # New section — place it before ## Sources, which is always rendered last.
+        src_m = re.search(r"^#{1,6}[ \t]*Sources[ \t]*$", body, re.MULTILINE | re.IGNORECASE)
+        at = src_m.start() if src_m else len(body)
+        new_body = (body[:at].rstrip() + f"\n\n## {section}\n\n" + addition + "\n\n"
+                    + body[at:].lstrip("\n"))
+        where = f"created section '{section}'"
+
+    new_content = frontmatter + new_body
+    if not new_content.endswith("\n"):
+        new_content += "\n"
+    new_content = _set_fm_field(new_content, "updated", f"updated: {_dt.date.today().isoformat()}")
+    if p.parent.name in ("entities", "concepts", "synthesis"):
+        new_content = _merge_sources_field(new_content, p)
+    new_content = _inject_sources_section(new_content, p)
+
+    wiki_rel = str(p.relative_to(WIKI_DIR))
+    if wiki_rel not in _ctx()._session_entity_pages and wiki_rel not in _ctx()._session_updated_pages:
+        _ctx()._session_updated_pages.append(wiki_rel)
+    _atomic_write(p, new_content)
+    return f"{where} in {path} (+{len(addition)} chars, page now {len(new_content)} bytes)"
 
 
 def _list_dir(directory: str) -> str:
@@ -2382,6 +2467,7 @@ TOOL_FNS = {
     # can correct, never a KeyError that unwinds the whole agent loop.
     "read_file":       lambda a: _read_file(a.get("path", ""), int(a.get("offset", 0) or 0)),
     "update_file":      lambda a: _update_file(a.get("path", ""), a.get("content", "")),
+    "append_section":   _append_section,
     "list_dir":         lambda a: _list_dir(a.get("directory", "")),
     "fetch_url":        lambda a: _fetch_url(a.get("url", "")),
 
@@ -2410,6 +2496,32 @@ TOOL_DEFS = [
                     "offset": {"type": "integer", "description": "Character offset to start reading from (default 0)"},
                 },
                 "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name":        "append_section",
+            "description": (
+                "Add text to one section of an existing wiki page without rewriting the rest. "
+                "PREFER THIS over update_file when adding a source's information to a page — "
+                "it does not require reading the whole page first, cannot truncate or lose "
+                "existing content, and works no matter how large the page has grown. Creates "
+                "the section if it does not exist. Use update_file only when you genuinely "
+                "need to revise text that is already on the page."
+            ),
+            "parameters":  {
+                "type": "object",
+                "properties": {
+                    "path":    {"type": "string",
+                                "description": "Page to append to, e.g. wiki/entities/donald-trump.md"},
+                    "section": {"type": "string",
+                                "description": "Heading to append under, e.g. \"Claims & Positions\". Created if absent."},
+                    "text":    {"type": "string",
+                                "description": "Markdown to add — usually a paragraph or a few bullets. Plain text, no links."},
+                },
+                "required": ["path", "section", "text"],
             },
         },
     },

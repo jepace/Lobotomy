@@ -316,12 +316,19 @@ For each entity (person, organization, product, project) on that list:
   immediately and treat as new. Do NOT search again. Do NOT try capitalization variants. Do NOT
   add `in:entities`, `in:concepts`, or `in:synthesis` modifiers as additional attempts. The server
   enforces this limit and will refuse the third call.
-- **If a document exists**, fold the new source into it — do not rebuild it from scratch:
-  1. `read_file` the existing entity page. It already synthesizes every source ingested before
-     now; treat it as correct.
+- **If a document exists**, fold the new source into it — do not rebuild it from scratch.
+  **Prefer `append_section`**: give it the page, the heading to add under, and just the new
+  text. It never reproduces the existing page, so nothing can be lost or truncated, it needs
+  no prior `read_file`, and it keeps working on pages far too large to rewrite. Creates the
+  section if it doesn't exist.
+
+  Use `update_file` only when you must revise wording already on the page:
+  1. `read_file` the existing entity page in full. It already synthesizes every source
+     ingested before now; treat it as correct.
   2. `update_file` with that page's content plus whatever this new source adds or changes.
      Preserve existing material that this source does not contradict. Do not set `sources:`
-     or `created:` — both are managed automatically.
+     or `created:` — both are managed automatically. On a large page this means re-emitting
+     every character, which is why appending is preferred.
   **Do not read the pages listed in `sources:`, and do not search for more sources.** Their
   content is already reflected in the page you just read. Re-deriving the page from all of its
   sources is the Regenerate Workflow (Section 6), which runs only when the user asks for it.
@@ -346,12 +353,19 @@ For each concept, technique, framework, or term on that list:
   immediately and treat as new. Do NOT search again. Do NOT try capitalization variants. Do NOT
   add scope modifiers as additional attempts. The server enforces this limit and will refuse the
   third call.
-- **If a document exists**, fold the new source into it — do not rebuild it from scratch:
-  1. `read_file` the existing concept page. It already synthesizes every source ingested before
-     now; treat it as correct.
+- **If a document exists**, fold the new source into it — do not rebuild it from scratch.
+  **Prefer `append_section`**: give it the page, the heading to add under, and just the new
+  text. It never reproduces the existing page, so nothing can be lost or truncated, it needs
+  no prior `read_file`, and it keeps working on pages far too large to rewrite. Creates the
+  section if it doesn't exist.
+
+  Use `update_file` only when you must revise wording already on the page:
+  1. `read_file` the existing concept page in full. It already synthesizes every source
+     ingested before now; treat it as correct.
   2. `update_file` with that page's content plus whatever this new source adds or changes.
      Preserve existing material that this source does not contradict. Do not set `sources:`
-     or `created:` — both are managed automatically.
+     or `created:` — both are managed automatically. On a large page this means re-emitting
+     every character, which is why appending is preferred.
   **Do not read the pages listed in `sources:`, and do not search for more sources.** Their
   content is already reflected in the page you just read. Re-deriving the page from all of its
   sources is the Regenerate Workflow (Section 6), which runs only when the user asks for it.
