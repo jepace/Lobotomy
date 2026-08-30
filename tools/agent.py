@@ -1356,6 +1356,79 @@ def _rebuild_index(args: dict) -> str:
             f"and raw/index.md ({raw_total} raw files).")
 
 
+_HEAL_SUBDIRS = ("sources", "entities", "concepts", "synthesis")
+_READER_URL_RE = re.compile(r"about:reader\?url=[^\s\"'<>)\]]+", re.IGNORECASE)
+
+
+def heal_pages(dry_run: bool = False) -> dict:
+    """Repair mechanically-fixable page defects across the whole wiki.
+
+    Runs in the post-ingest chain next to _fix_wiki_links (which already auto-repairs bad
+    relative links) and at server startup, so defects are corrected rather than merely
+    reported by _validate_ingest / /wiki/lint. Before this, a page damaged once kept
+    being flagged after every single ingest forever, because the write-time guards in
+    _update_file only fire on pages that ingest happens to touch.
+
+    Only fixes defects with a single mechanically-correct answer:
+      - missing created:/updated: -> the file's own mtime (the real creation date is
+        unknowable after the fact, and mtime is precisely what updated: means)
+      - missing tags:/sources:    -> empty list, matching what create_file writes
+      - about:reader?url=...      -> the real article URL it wraps
+
+    Deliberately NOT healed: missing title: or type:, which carry meaning that cannot be
+    guessed. Those are returned in "manual" so validation still surfaces them.
+    """
+    import datetime as _dt
+    result = {"pages": 0, "frontmatter": 0, "reader_urls": 0, "manual": []}
+
+    targets = []
+    for subdir in _HEAL_SUBDIRS:
+        d = WIKI_DIR / subdir
+        if d.is_dir():
+            targets.extend((f, True) for f in sorted(d.glob("*.md")) if f.name != "index.md")
+    # raw/ carries the same reader-mode URL from capture, but has no wiki frontmatter
+    # contract — unwrap URLs there, don't impose created:/tags:/sources: on it.
+    if RAW_DIR.is_dir():
+        targets.extend((f, False) for f in sorted(RAW_DIR.glob("*.md")) if f.name != "index.md")
+
+    for f, is_wiki_page in targets:
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        new, n_url = _READER_URL_RE.subn(lambda m: _normalize_capture_url(m.group(0)), text)
+        n_fm = 0
+
+        if is_wiki_page:
+            rel = str(f.relative_to(WIKI_DIR))
+            fm = re.match(r"^---\s*\n(.*?)\n---", new, re.DOTALL)
+            if not fm:
+                result["manual"].append(f"{rel}: no frontmatter block")
+            else:
+                keys = {l.split(":", 1)[0].strip() for l in fm.group(1).splitlines() if ":" in l}
+                missing_core = [k for k in ("title", "type") if k not in keys]
+                if missing_core:
+                    result["manual"].append(f"{rel}: missing {', '.join(missing_core)} (not auto-fillable)")
+                mtime = _dt.date.fromtimestamp(f.stat().st_mtime).isoformat()
+                for field, value in (("created", mtime), ("updated", mtime),
+                                     ("tags", "[]"), ("sources", "[]")):
+                    if field not in keys:
+                        new = _set_fm_field(new, field, f"{field}: {value}")
+                        n_fm += 1
+
+        if new == text:
+            continue
+        result["pages"] += 1
+        result["frontmatter"] += n_fm
+        result["reader_urls"] += n_url
+        if not dry_run:
+            _atomic_write(f, new)
+            log.info("heal_pages: %s — %s", f.name,
+                     ", ".join(filter(None, [f"{n_fm} frontmatter field(s)" if n_fm else "",
+                                             f"{n_url} reader URL(s)" if n_url else ""])))
+    return result
+
+
 def heal_index_if_stale() -> None:
     """Rebuild wiki/index.md if any wiki page is newer than it — call at startup."""
     index_path = WIKI_DIR / "index.md"

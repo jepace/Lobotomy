@@ -102,7 +102,7 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, run_agent_turn, system_prompt,
                    _fix_wiki_links, _rebuild_index, _validate_ingest,
-                   heal_index_if_stale, _atomic_write, search_wiki_core,
+                   heal_index_if_stale, heal_pages, _atomic_write, search_wiki_core,
                    _normalize_capture_url)
 
 from job_queue import JobQueue
@@ -1250,6 +1250,12 @@ def _mark_inbox_wikified(filename: str) -> None:
         _rebuild_index({})
         result = _fix_wiki_links({})
         log.info("fix_wiki_links: %s", result)
+        # Heal before validating, so the report reflects what is actually left wrong
+        # rather than re-flagging defects the system already knows how to fix.
+        healed = heal_pages()
+        if healed["pages"]:
+            log.info("heal_pages: repaired %d page(s) — %d frontmatter field(s), %d reader URL(s)",
+                     healed["pages"], healed["frontmatter"], healed["reader_urls"])
         result = _rebuild_index({})
         log.info("rebuild_index: %s", result)
         report = _validate_ingest({})
@@ -2903,6 +2909,10 @@ if __name__ == "__main__":
         print("\nFix these errors and restart.")
         sys.exit(1)
 
+    _healed = heal_pages()
+    if _healed["pages"]:
+        print(f"[INFO] Healed {_healed['pages']} page(s) at startup "
+              f"({_healed['frontmatter']} frontmatter field(s), {_healed['reader_urls']} reader URL(s))")
     heal_index_if_stale()
 
     if not user_exists():
