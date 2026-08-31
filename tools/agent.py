@@ -549,7 +549,10 @@ def _snapshot_version(p: Path, new_content: str) -> None:
     try:
         if not p.exists():
             return  # nothing to preserve; creation is its own baseline
-        rel = p.resolve().relative_to(WIKI_DIR.resolve())
+        try:
+            rel = p.resolve().relative_to(WIKI_DIR.resolve())
+        except ValueError:
+            return  # _atomic_write also handles raw/index.md — history is wiki-only
         if rel.parts and rel.parts[0].startswith("."):
             return  # operational state (.history, .jobs, .user.json) is not content
         old = p.read_text(encoding="utf-8", errors="replace")
