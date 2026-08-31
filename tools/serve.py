@@ -1348,6 +1348,52 @@ def wiki_home():
     return redirect(url_for("wiki_page", page_path="log.md"))
 
 
+_LOG_PER_PAGE = 40
+
+
+def _render_log_paginated(path: Path, page: int) -> "tuple[str, int, int]":
+    """Render wiki/log.md one screenful of entries at a time.
+
+    The log is append-only and unbounded — one entry per ingest, forever — and it is the
+    Wiki tab's landing page, so the whole file was being read, converted to HTML and sent
+    on every visit. Entries are prepended newest-first and each starts with an
+    '## [date] operation | title' heading, which makes them cleanly splittable.
+
+    Only the rendering is paged. The file itself stays a single complete audit trail.
+    Returns (html, page, total_pages).
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
+    text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
+
+    parts = re.split(r"(?m)^(?=##\s)", text)
+    intro = parts[0] if parts and not parts[0].lstrip().startswith("##") else ""
+    entries = [s for s in (parts[1:] if intro else parts) if s.strip()]
+
+    total_pages = max(1, (len(entries) + _LOG_PER_PAGE - 1) // _LOG_PER_PAGE)
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * _LOG_PER_PAGE
+    shown = entries[start:start + _LOG_PER_PAGE]
+
+    body = (intro if page == 1 else "") + "".join(shown)
+    body = _ensure_blank_line_before_lists(body)
+    html = md_lib.markdown(body, extensions=_MD_EXTENSIONS)
+    html = re.sub(r'href="([^"]*.md[^"]*)"',
+                  lambda m: f'href="{_rewrite_md_link(m.group(1), path)}"', html)
+
+    if total_pages > 1:
+        nav = ['<div style="display:flex;gap:10px;align-items:center;margin:22px 0 6px;'
+               'padding-top:14px;border-top:1px solid var(--border);font-size:14px;">']
+        if page > 1:
+            nav.append(f'<a href="/wiki/log.md?page={page - 1}">← Newer</a>')
+        nav.append(f'<span style="color:var(--text2);">Page {page} of {total_pages} '
+                   f'({len(entries)} entries)</span>')
+        if page < total_pages:
+            nav.append(f'<a href="/wiki/log.md?page={page + 1}" style="margin-left:auto;">Older →</a>')
+        nav.append("</div>")
+        html += "".join(nav)
+    return html, page, total_pages
+
+
 @app.route("/wiki/<path:page_path>")
 @require_login
 def wiki_page(page_path):
@@ -1382,9 +1428,17 @@ def wiki_page(page_path):
                 break
     wiki_rel = str(p.relative_to(WIKI_DIR))
     share_token = _share_token_for_path(wiki_rel)
+    if wiki_rel == "log.md":
+        try:
+            _pg = int(request.args.get("page", 1))
+        except ValueError:
+            _pg = 1
+        _content, _, _ = _render_log_paginated(p, _pg)
+    else:
+        _content = render_md(p)
     return render_template(
         "wiki.html",
-        content=render_md(p),
+        content=_content,
         title=p.stem.replace("-", " ").title(),
         sections=wiki_sections(),
         current_path=wiki_rel,

@@ -555,6 +555,12 @@ def _snapshot_version(p: Path, new_content: str) -> None:
             return  # _atomic_write also handles raw/index.md — history is wiki-only
         if rel.parts and rel.parts[0].startswith("."):
             return  # operational state (.history, .jobs, .user.json) is not content
+        # Append-only and generated files gain nothing from versioning and cost a great
+        # deal. log.md only ever grows by one entry, so each stored revision is a near-copy
+        # of the last — at a few MB and 50 revisions that is hundreds of MB for one file.
+        # index.md is rebuilt from the pages themselves, so a snapshot is derivable.
+        if p.name == "index.md" or rel.as_posix() == "log.md":
+            return
         old = p.read_text(encoding="utf-8", errors="replace")
         if old == new_content:
             return  # nothing changed — do not record a revision for a no-op write
@@ -671,7 +677,7 @@ def _merge_sources_field(content: str, p: Path) -> str:
     return _set_fm_field(content, "sources", f"sources: [{merged}]")
 
 
-def _update_file(path: str, content: str) -> str:
+def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
     if not path:
         return ("Error: update_file requires a 'path' argument, e.g. "
                 "{\"path\": \"wiki/entities/foo.md\", \"content\": \"...\"}. Resend the call.")
@@ -788,7 +794,7 @@ def _update_file(path: str, content: str) -> str:
     _disk_body = _re.sub(r"^---\s*\n.*?\n---\s*\n", "",
                          p.read_text(encoding="utf-8", errors="replace"), flags=_re.DOTALL)
     _new_body = _re.sub(r"^---\s*\n.*?\n---\s*\n", "", content, flags=_re.DOTALL)
-    if len(_disk_body) >= 2000 and len(_new_body) < len(_disk_body) * 0.6:
+    if len(_disk_body) >= 2000 and len(_new_body) < len(_disk_body) * 0.6 and not allow_shrink:
         _pct = 100 - int(len(_new_body) / len(_disk_body) * 100)
         log.warning("update_file: refused %s — body would shrink %d%% (%d -> %d chars)",
                     path, _pct, len(_disk_body), len(_new_body))
@@ -796,12 +802,15 @@ def _update_file(path: str, content: str) -> str:
             f"Error: update_file refused — this would cut the page body by {_pct}% "
             f"({len(_disk_body)} chars on disk, {len(_new_body)} in what you sent). An ingest "
             f"adds a source's information to a page; it does not shorten it.\n\n"
-            f"This page is too large to rewrite wholesale. Work one section at a time "
-            f"instead: read_section(path, section), then update_section(path, section, "
-            f"content) with the new information merged into that section's existing prose. "
+            f"If you are folding in a new source, this is the wrong shape: work one "
+            f"section at a time with read_section(path, section) then "
+            f"update_section(path, section, content), merging into the existing prose. "
             f"That keeps the page a synthesis and stays within limits at any size.\n\n"
-            f"If you genuinely believe the page should be this much shorter, that is a "
-            f"rewrite, not an ingest: leave it alone and tell the user it needs a regenerate."
+            f"If this IS a deliberate rewrite — a Regenerate (Section 6), or consolidating "
+            f"redundancy the user asked you to clean up — then a large reduction is the "
+            f"point, and you can say so: resend the same update_file call with "
+            f"allow_shrink: true. Only do that when shrinking is the actual goal, never to "
+            f"get past this message after your response ran long."
         )
 
     _subdir = p.parent.name
@@ -837,6 +846,11 @@ def _update_file(path: str, content: str) -> str:
         # restored from disk — but omitting it must not silently drop the field.
         if not _re.search(r"^updated:[ \t]*\S", content, _re.MULTILINE):
             content = _set_fm_field(content, "updated", f"updated: {_dt.date.today().isoformat()}")
+    if allow_shrink and len(_disk_body) >= 2000 and len(_new_body) < len(_disk_body) * 0.6:
+        log.warning("update_file: %s shrank %d%% (%d -> %d chars) with allow_shrink — "
+                    "previous version is in wiki/.history if this was wrong",
+                    path, 100 - int(len(_new_body) / len(_disk_body) * 100),
+                    len(_disk_body), len(_new_body))
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
@@ -2697,7 +2711,8 @@ TOOL_FNS = {
     # Use .get() throughout: a missing key must come back as a tool-level error the LLM
     # can correct, never a KeyError that unwinds the whole agent loop.
     "read_file":       lambda a: _read_file(a.get("path", ""), int(a.get("offset", 0) or 0)),
-    "update_file":      lambda a: _update_file(a.get("path", ""), a.get("content", "")),
+    "update_file":      lambda a: _update_file(a.get("path", ""), a.get("content", ""),
+                                               str(a.get("allow_shrink", "")).lower() in ("true", "1", "yes")),
     "read_section":     _read_section,
     "update_section":   _update_section,
     "append_section":   _append_section,
@@ -2810,6 +2825,8 @@ TOOL_DEFS = [
                 "properties": {
                     "path":    {"type": "string", "description": "Path relative to repo root, must be inside wiki/"},
                     "content": {"type": "string", "description": "Complete file content"},
+                    "allow_shrink": {"type": "boolean",
+                                     "description": "Set true ONLY for a deliberate rewrite that is meant to be much shorter — a Regenerate, or consolidating redundancy on request. Normally omit: a large reduction during an ingest means content was lost."},
                 },
                 "required": ["path", "content"],
             },

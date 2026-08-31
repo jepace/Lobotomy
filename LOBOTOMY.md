@@ -484,6 +484,13 @@ Call `search_wiki` with query `"<page title> in:sources"` to find any source pag
 ### Step 4 — Rewrite the page
 Only after reading all source pages: call `update_file` with the full rewritten content synthesized from everything you read. Do not include `sources:`, `created:`, or `raw_source:` in the frontmatter — these are managed automatically by the system.
 
+A regenerate often produces a **shorter** page than it replaced — that is normal and often
+the point, since consolidating material that accumulated across many ingests removes
+repetition. `update_file` refuses a large reduction by default, because during an *ingest*
+it means content was lost. Here it is deliberate, so pass `allow_shrink: true`. Use it only
+because shrinking is genuinely intended — never to get an oversized rewrite past the guard.
+The previous version is saved in the page's History either way.
+
 ### Step 5 — Done
 Call `done()`.
 
