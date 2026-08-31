@@ -312,9 +312,11 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
     if len(text) > limit:
         remaining = total - offset - limit
         covered_upto = offset + limit
-        text = text[:limit] + f"\n\n[TRUNCATED — showing chars {offset}–{offset+limit} of {total} total. Call read_file with offset={offset+limit} to continue.]"
+        _shown = text[:limit]
+        text = _shown + f"\n\n[TRUNCATED — showing chars {offset}–{offset+limit} of {total} total. Call read_file with offset={offset+limit} to continue.]"
     else:
         covered_upto = total  # this call reached the end of the file, truncated or not
+        _shown = text
         if offset:
             text = text + f"\n\n[END OF FILE — read chars {offset}–{total} of {total} total.]"
     try:
@@ -326,6 +328,13 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
         # the whole file, so anything past what was seen would be silently discarded.
         cov = _ctx()._session_read_coverage
         cov[wiki_rel] = max(cov.get(wiki_rel, 0), covered_upto)
+        # A page too large to read in one call still had *some* sections shown in full, and
+        # update_section must credit those. Otherwise the agent is trapped: read_file
+        # truncates and tells it to use update_section, and update_section then refuses
+        # because "you had not read" a section it did in fact just read. Whole-page
+        # coverage is the wrong test at this size — it can never be reached in one call.
+        _ctx()._session_read_sections.update(
+            (wiki_rel, h) for h in _sections_fully_shown(_shown, covered_upto >= total))
         # Whether a whole-page update_file is viable depends on the page's size against the
         # model's output budget, which the agent cannot see but we can. Rather than leave it
         # to guess — or hard-code a threshold — derive one from max_tokens: a rewrite must
@@ -855,6 +864,27 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
     return f"Written {len(content)} bytes to {path}"
+
+
+def _sections_fully_shown(chunk: str, reached_eof: bool) -> "list[str]":
+    """Heading names (lowercased) whose entire section body appears inside `chunk`.
+
+    Used to credit a read_file call that returned only part of a page: a section counts as
+    read when the chunk contains its heading *and* the heading that ends it — the next one
+    at the same or a higher level. The final section in the chunk is only complete if the
+    chunk ran to the end of the file; otherwise its text may continue past the cut.
+
+    Works on the visible text alone rather than on character offsets, so it stays correct
+    however the chunk was sliced.
+    """
+    heads = [(len(m.group(1)), m.group(2).strip().lower())
+             for m in re.finditer(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", chunk, re.MULTILINE)]
+    done = []
+    for i, (level, name) in enumerate(heads):
+        closed = any(lv <= level for lv, _ in heads[i + 1:])
+        if closed or reached_eof:
+            done.append(name)
+    return done
 
 
 def _find_section(body: str, section: str):
