@@ -96,6 +96,8 @@
     <h1>{{ title }}</h1>
     <a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;" href="/wiki/{{ current_path }}/edit">Edit</a>
     {% if current_path %}
+    <a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;"
+       href="/wiki/{{ current_path }}/history">History</a>
     <button class="chat-about" type="button"
             style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;cursor:pointer;"
             onclick="copyPlainText(this)">Copy Text</button>

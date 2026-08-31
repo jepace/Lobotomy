@@ -52,6 +52,23 @@ Performance: the title+alias map and the per-title compiled regexes are cached i
 
 Pages can carry an `aliases:` frontmatter list (e.g. `aliases: ["gonzales", "uc davis"]`) for common short names that the autolinker should also match. The LLM is not instructed to set this field — it's a manual human override for when the formal page title differs from how the subject is typically referenced in prose.
 
+### Page version history
+
+`_snapshot_version()` runs inside `_atomic_write` — the single chokepoint every wiki write
+passes through — and copies the pre-write content to `wiki/.history/<relpath>/<microsecond
+timestamp>.md` before the overwrite. Full copies, not diffs; stdlib only, no git. Capped at
+`_HISTORY_KEEP` (50) revisions per page. It never raises: failing to record history must
+not fail the write it protects.
+
+Filenames use microsecond timestamps specifically so lexical sort is chronological — both
+the history view and the pruning depend on that. An earlier collision-counter scheme was
+wrong: after pruning removed the low numbers, the next write refilled the gap and a new
+revision sorted as old.
+
+Served by `/wiki/<path>/history` (list), `/wiki/<path>/history/<rev>` (unified diff via
+stdlib `difflib`), and `/api/wiki/<path>/revert/<rev>`. Revert goes through `_atomic_write`,
+so it snapshots the current content first and is itself undoable.
+
 ### Wiki page lifecycle
 
 1. `create_file` / `update_file` → write frontmatter + body; `sources:` is merged from disk plus the session's source page (never trusted from the LLM); `_inject_sources_section` renders the `## Sources` section

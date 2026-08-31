@@ -16,6 +16,7 @@ Usage:
 """
 
 import datetime
+import difflib
 import functools
 import json
 import logging
@@ -103,6 +104,7 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    stream_agent_turn, run_agent_turn, system_prompt,
                    _fix_wiki_links, _rebuild_index, _validate_ingest,
                    heal_index_if_stale, heal_pages, _atomic_write, search_wiki_core,
+                   HISTORY_DIR,
                    _normalize_capture_url)
 
 from job_queue import JobQueue
@@ -1449,6 +1451,72 @@ def _resolve_wiki_page_or_404(page_path: str) -> Path:
     return p
 
 
+def _history_dir_for(p: Path) -> Path:
+    return HISTORY_DIR / p.resolve().relative_to(WIKI_DIR.resolve())
+
+
+@app.route("/wiki/<path:page_path>/history")
+@require_login
+def wiki_history(page_path):
+    """List saved revisions of a page, newest first."""
+    p = _resolve_wiki_page_or_404(page_path)
+    d = _history_dir_for(p)
+    revs = []
+    for f in sorted(d.glob("*.md"), reverse=True) if d.is_dir() else []:
+        try:
+            when = datetime.datetime.strptime(f.stem, "%Y%m%dT%H%M%S%f")
+        except ValueError:
+            continue
+        revs.append({"id": f.stem,
+                     "when": when.strftime("%Y-%m-%d %H:%M:%S"),
+                     "size": f.stat().st_size})
+    return render_template("wiki-history.html",
+                           title=p.stem.replace("-", " ").title(),
+                           current_path=str(p.relative_to(WIKI_DIR)),
+                           revisions=revs,
+                           current_size=p.stat().st_size)
+
+
+@app.route("/wiki/<path:page_path>/history/<rev>")
+@require_login
+def wiki_history_diff(page_path, rev):
+    """Unified diff from one saved revision to the page as it stands now."""
+    p = _resolve_wiki_page_or_404(page_path)
+    f = _history_dir_for(p) / f"{rev}.md"
+    try:
+        f.resolve().relative_to(HISTORY_DIR.resolve())   # no path traversal via rev
+    except ValueError:
+        abort(404)
+    if not f.exists():
+        abort(404)
+    old, new = f.read_text(encoding="utf-8", errors="replace"), p.read_text(encoding="utf-8", errors="replace")
+    diff = list(difflib.unified_diff(old.splitlines(), new.splitlines(),
+                                     fromfile=f"{rev} (saved)", tofile="current", lineterm=""))
+    return render_template("wiki-history.html",
+                           title=p.stem.replace("-", " ").title(),
+                           current_path=str(p.relative_to(WIKI_DIR)),
+                           revisions=None, rev=rev, diff=diff, old_text=old,
+                           identical=(old == new))
+
+
+@app.route("/api/wiki/<path:page_path>/revert/<rev>", methods=["POST"])
+@require_login
+def wiki_revert(page_path, rev):
+    """Restore a saved revision. The current content is snapshotted first by
+    _atomic_write, so a revert is itself revertible."""
+    p = _resolve_wiki_page_or_404(page_path)
+    f = _history_dir_for(p) / f"{rev}.md"
+    try:
+        f.resolve().relative_to(HISTORY_DIR.resolve())
+    except ValueError:
+        return {"error": "Invalid revision"}, 400
+    if not f.exists():
+        return {"error": "Revision not found"}, 404
+    _atomic_write(p, f.read_text(encoding="utf-8", errors="replace"))
+    log.info("Reverted %s to revision %s", p.relative_to(WIKI_DIR), rev)
+    return {"ok": True}
+
+
 @app.route("/api/wiki/<path:page_path>/share", methods=["POST"])
 @require_login
 def wiki_share(page_path):
@@ -1643,7 +1711,9 @@ def wiki_fix_broken_links():
             continue
         fixed = _re.sub(r'\[([^\]]+)\]\(([^)]+)\)', lambda m: _check(m, f), original)
         if fixed != original:
-            f.write_text(fixed, encoding="utf-8")
+            # _atomic_write, not write_text: it is the chokepoint that records a version
+            # snapshot and keeps the title-map cache honest.
+            _atomic_write(f, fixed)
             total_fixed += original.count("[") - fixed.count("[")
             pages_fixed += 1
 

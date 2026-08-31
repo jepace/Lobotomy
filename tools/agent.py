@@ -2,6 +2,7 @@
 """Shared LLM agent logic used by both the CLI (wiki.py) and web server (serve.py)."""
 
 import collections
+import datetime
 import json
 import logging
 import os
@@ -526,9 +527,66 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
     return fm_text + body + "\n".join(lines) + "\n"
 
 
+HISTORY_DIR = WIKI_DIR / ".history"
+_HISTORY_KEEP = 50  # revisions per page
+
+
+def _snapshot_version(p: Path, new_content: str) -> None:
+    """Save the CURRENT on-disk content of a wiki page before it is overwritten.
+
+    Every data-loss bug this system has had — a rewrite condensed to fit the output
+    budget, a truncated read written back, frontmatter dropped by a bad insertion anchor —
+    was silent and unrecoverable at the time it happened. This is the backstop that makes
+    them recoverable regardless of whether the guard that should have caught them works.
+
+    Full copies rather than diffs: pages are a few KB, edits per page are in the dozens, so
+    the storage is trivial and a revert is just reading a file back — no replay logic to
+    get subtly wrong. Deliberately no git: the app's dependencies are flask and markdown,
+    and this needs no more than the standard library.
+
+    Never raises. A failure to record history must not fail the write it is protecting.
+    """
+    try:
+        if not p.exists():
+            return  # nothing to preserve; creation is its own baseline
+        rel = p.resolve().relative_to(WIKI_DIR.resolve())
+        if rel.parts and rel.parts[0].startswith("."):
+            return  # operational state (.history, .jobs, .user.json) is not content
+        old = p.read_text(encoding="utf-8", errors="replace")
+        if old == new_content:
+            return  # nothing changed — do not record a revision for a no-op write
+
+        d = HISTORY_DIR / rel
+        d.mkdir(parents=True, exist_ok=True)
+        # Microsecond resolution so filenames sort chronologically as plain strings, which
+        # is what both the history view and the pruning below rely on. A collision-counter
+        # suffix was tried and is wrong: once pruning deletes the low numbers, the next
+        # write refills the gap and a brand-new revision gets an old-sorting name.
+        # Stepping the timestamp forward on collision keeps every name uniform, unique,
+        # and monotonic.
+        now = datetime.datetime.now()
+        dest = d / f"{now.strftime('%Y%m%dT%H%M%S%f')}.md"
+        while dest.exists():
+            now += datetime.timedelta(microseconds=1)
+            dest = d / f"{now.strftime('%Y%m%dT%H%M%S%f')}.md"
+        dest.write_text(old, encoding="utf-8")
+
+        # Keep the most recent _HISTORY_KEEP revisions. Unbounded growth on a page the
+        # agent rewrites on every ingest would otherwise be the one real cost here.
+        revs = sorted(d.glob("*.md"))
+        for stale in revs[:-_HISTORY_KEEP]:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+    except Exception as e:
+        log.warning("history: could not snapshot %s: %s", p, e)
+
+
 def _atomic_write(p: Path, content: str) -> None:
     """Write content to p atomically: write to a sibling .tmp file, then rename."""
     global _title_map_cache
+    _snapshot_version(p, content)
     # Capture pre-write state to decide below whether the title map cache actually needs
     # to be thrown away. Reading one small file is cheap; rebuilding + re-linking against
     # the whole corpus is not (~20s at a few thousand pages), and most writes to wiki/ —

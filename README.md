@@ -174,6 +174,16 @@ python3 tools/search.py "keyword"
 python3 tools/search.py transformer BERT GPT
 ```
 
+### Page history
+
+Every wiki page keeps its previous versions. Before any write — an ingest, a manual edit,
+a repair pass — the current content is saved to `wiki/.history/`. Open a page and tap
+**History** to list past versions, compare any of them against the page as it stands now,
+and revert. A revert is itself recorded, so it can be undone too.
+
+No git or other tooling required: versions are plain markdown files, and the last 50
+revisions per page are kept.
+
 ### Health check
 
 Visit `/wiki/lint` — checks for broken links, missing frontmatter, and pages missing from
@@ -187,6 +197,7 @@ raw/assets/             Images, PDFs, attachments
 wiki/
   index.md              Master catalog of all wiki pages (auto-generated)
   log.md                Operation history (append-only)
+  .history/             Previous versions of every page (gitignored)
   sources/              One page per ingested source
   entities/             People, orgs, products, projects
   concepts/             Ideas, techniques, frameworks

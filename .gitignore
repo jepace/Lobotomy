@@ -6,6 +6,7 @@ __pycache__/
 wiki/.chat_history.json
 wiki/.secret
 wiki/.jobs/
+wiki/.history/
 wiki/.user.json
 wiki/.tokens.json
 wiki/.login_log.json

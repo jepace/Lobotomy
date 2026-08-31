@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}History — {{ title }}{% endblock %}
+
+{% block head %}
+<style>
+  .hist-top {
+    position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--border);
+    padding: 10px 16px; display: flex; align-items: center; gap: 10px; z-index: 100;
+  }
+  .hist-top h1 { font-size: 17px; font-weight: 600; flex: 1; }
+  .hist-wrap { padding: 12px 16px 40px; }
+  .hist-note { font-size: 13px; color: var(--text2); margin-bottom: 14px; }
+  .rev {
+    display: flex; align-items: center; gap: 10px; padding: 11px 12px;
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+    margin-bottom: 8px;
+  }
+  .rev .when { flex: 1; font-size: 14px; }
+  .rev .size { font-size: 12px; color: var(--text2); }
+  .rev a, .rev button {
+    font-size: 13px; padding: 5px 11px; border-radius: 8px; text-decoration: none;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer;
+  }
+  .rev .danger { color: var(--danger); }
+  .current-row { border-color: var(--accent); }
+  .current-row .when { font-weight: 600; }
+  .diff {
+    font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px; overflow-x: auto; white-space: pre;
+  }
+  .diff .add { color: #28a745; }
+  .diff .del { color: var(--danger); }
+  .diff .hdr { color: var(--text2); }
+  .empty { color: var(--text2); font-size: 14px; padding: 20px 0; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="page">
+  <div class="hist-top">
+    <a href="/wiki/{{ current_path }}" style="color:var(--accent);text-decoration:none;font-size:22px;line-height:1;">‹</a>
+    <h1>History — {{ title }}</h1>
+  </div>
+
+  <div class="hist-wrap">
+  {% if revisions is not none %}
+    <div class="hist-note">
+      Every change to this page is saved before it is overwritten — by an ingest, by the
+      editor, or by a repair pass. Newest first.
+    </div>
+
+    <div class="rev current-row">
+      <div class="when">Current version</div>
+      <div class="size">{{ current_size }} bytes</div>
+      <a href="/wiki/{{ current_path }}">View</a>
+    </div>
+
+    {% for r in revisions %}
+    <div class="rev">
+      <div class="when">{{ r.when }}</div>
+      <div class="size">{{ r.size }} bytes</div>
+      <a href="/wiki/{{ current_path }}/history/{{ r.id }}">Compare</a>
+    </div>
+    {% else %}
+    <div class="empty">
+      No earlier versions recorded yet. The first one appears the next time this page changes.
+    </div>
+    {% endfor %}
+
+  {% else %}
+    <div class="hist-note">
+      Changes from the version saved at <strong>{{ rev }}</strong> to the page as it stands now.
+    </div>
+
+    {% if identical %}
+      <div class="empty">This revision is identical to the current page.</div>
+    {% else %}
+      <div class="diff">{% for line in diff %}{% if line.startswith('+') %}<span class="add">{{ line }}</span>
+{% elif line.startswith('-') %}<span class="del">{{ line }}</span>
+{% elif line.startswith('@@') %}<span class="hdr">{{ line }}</span>
+{% else %}{{ line }}
+{% endif %}{% endfor %}</div>
+    {% endif %}
+
+    <div class="rev" style="margin-top:14px;">
+      <div class="when">Restore this version</div>
+      <button class="danger" onclick="doRevert()">Revert</button>
+    </div>
+    <div class="hist-note" style="margin-top:6px;">
+      The current content is saved to history first, so this is itself undoable.
+    </div>
+  {% endif %}
+  </div>
+</div>
+
+<script>
+async function doRevert() {
+  if (!confirm('Replace the current page with this saved version?')) return;
+  try {
+    const r = await fetch('/api/wiki/{{ current_path }}/revert/{{ rev }}', {method: 'POST'});
+    const d = await r.json();
+    if (d.ok) location.href = '/wiki/{{ current_path }}';
+    else alert(d.error || 'Revert failed');
+  } catch (e) { alert('Network error'); }
+}
+</script>
+{% endblock %}
