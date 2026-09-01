@@ -1204,6 +1204,7 @@ def _ctx():
         t._session_tool_calls = []
         t._session_search_counts = {}
         t._done_refusals = 0
+        t._session_incomplete = []
     return t
 
 
@@ -1221,6 +1222,7 @@ def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
     t._session_tool_calls = []
     t._session_search_counts = {}
     t._done_refusals = 0
+    t._session_incomplete = []
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -1511,7 +1513,13 @@ def _auto_write_log_entry() -> None:
             mark = "✓" if ok else "✗"
             lines.append(f"  - {mark} `{fn}` {arg}")
 
-    lines.append("- **Status**: Done")
+    incomplete = _ctx()._session_incomplete
+    if incomplete:
+        lines.append(f"- **Status**: Done, but incomplete — {len(incomplete)} listed "
+                     f"name(s) never got a page: {', '.join(incomplete[:15])}"
+                     f"{', ...' if len(incomplete) > 15 else ''}")
+    else:
+        lines.append("- **Status**: Done")
 
     _prepend_log("\n".join(lines))
 
@@ -1706,6 +1714,18 @@ def _done(args: dict) -> str:
                 "A listed name with no page behind it shows up on the source page as plain "
                 f"text that goes nowhere.\n\n{_body}\n\nThen call done()."
             )
+
+        # The refusal cap above exists so a source with a genuinely long entity list (a
+        # Wikipedia page naming forty people) can't loop forever — but letting done()
+        # through at that point must not look identical to a real completion. Record what
+        # is still outstanding so _auto_write_log_entry can put it in the log, where it's
+        # visible instead of silently dropped.
+        if _to_update or _to_create:
+            log.warning("done() allowed through incomplete (refusal cap reached): "
+                        "%d name(s) still need updating, %d still need creating: %s",
+                        len(_to_update), len(_to_create),
+                        ", ".join([n for n, _ in _to_update[:5]] + _to_create[:5]))
+            ctx._session_incomplete = [n for n, _ in _to_update] + list(_to_create)
 
     ingested = "1" if args.get("ingested") else "0"
     return _DONE_SENTINEL + ingested + "|" + args.get("summary", "")
