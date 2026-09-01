@@ -803,6 +803,35 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
     _disk_body = _re.sub(r"^---\s*\n.*?\n---\s*\n", "",
                          p.read_text(encoding="utf-8", errors="replace"), flags=_re.DOTALL)
     _new_body = _re.sub(r"^---\s*\n.*?\n---\s*\n", "", content, flags=_re.DOTALL)
+
+    # A whole-page rewrite is one long completion, and on a big page the model can lose
+    # track partway through and reproduce a heading (and everything under it) a second
+    # time instead of merging into the first — e.g. pasting an old "## Background" back in
+    # after already writing a new one. Nothing else here checks structure, only length, so
+    # a duplicate can slip through even when the byte count looks like normal growth.
+    # Repetition is never correct for a wiki page, so this refuses regardless of
+    # allow_shrink.
+    _seen_heads: dict = {}
+    _dupe_keys: set = set()
+    _dupes = []
+    for _hm in _re.finditer(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", _new_body, _re.MULTILINE):
+        _key = (len(_hm.group(1)), _hm.group(2).strip().lower())
+        if _key in _seen_heads and _key not in _dupe_keys:
+            _dupe_keys.add(_key)
+            _dupes.append(_seen_heads[_key])
+        _seen_heads.setdefault(_key, _hm.group(2).strip())
+    if _dupes:
+        return (
+            f"Error: update_file refused — the new content repeats "
+            f"{'these headings' if len(_dupes) > 1 else 'this heading'} more than once: "
+            f"{', '.join(repr(d) for d in _dupes)}. That usually means an old version of a "
+            f"section got left in alongside a new one while rewriting the whole page.\n\n"
+            f"Merge everything under each duplicated heading into a single instance of it, "
+            f"then resend the complete content. If the page is large, work one section at a "
+            f"time instead: read_section(path, section) then update_section(path, section, "
+            f"content)."
+        )
+
     if len(_disk_body) >= 2000 and len(_new_body) < len(_disk_body) * 0.6 and not allow_shrink:
         _pct = 100 - int(len(_new_body) / len(_disk_body) * 100)
         log.warning("update_file: refused %s — body would shrink %d%% (%d -> %d chars)",
