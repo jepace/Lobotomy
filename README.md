@@ -88,6 +88,24 @@ Settings page). Provider options:
 | `groq` | `llama-3.3-70b-versatile` | console.groq.com |
 | `ollama` (local) | `llama3.2` | none |
 
+**Running out of quota?** Add `fallback_models` to the provider block — an ordered list of
+models to fall back through when the main one is rate limited:
+
+```json
+"gemini": {
+  "model": "gemini-2.5-flash-lite",
+  "fallback_models": ["gemini-2.0-flash"]
+}
+```
+
+Free-tier quotas are per-model, so a 429 on one model says nothing about the next one's
+budget. On a 429 the same request is immediately reissued against the next model in the
+list instead of waiting; only when every model is spent does the retry ladder start
+sleeping. A model that just rate-limited is skipped for a while (briefly for a per-minute
+limit, for `daily_quota_poll_interval` when the response names a per-day quota) so later
+rounds don't waste a call rediscovering it, then it is tried first again automatically. No
+runtime switch to flip, and nothing to switch back.
+
 **Email verification** (optional): fill in `email.resend_api_key` and `email.from_address`
 with your [Resend](https://resend.com) credentials. Without it, accounts are auto-verified.
 

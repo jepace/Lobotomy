@@ -86,7 +86,7 @@ def get_client_and_model():
 
 class _LLMError(Exception):
     def __init__(self, msg: str, retryable: bool = False, retry_after: float = None,
-                 long_backoff: bool = False):
+                 long_backoff: bool = False, rate_limited: bool = False):
         super().__init__(msg)
         self.retryable    = retryable
         self.retry_after  = retry_after
@@ -95,6 +95,12 @@ class _LLMError(Exception):
         # (unattended, so it self-heals whenever that happens) but at a much coarser
         # interval; see _daily_quota_poll_interval().
         self.long_backoff = long_backoff
+        # True only for 429. Quotas on Gemini's free tier are per-model, so a 429 says
+        # "this model is exhausted" rather than "the provider is down" — which is what
+        # makes falling back to another model worth trying (_post_with_fallback). Every
+        # other retryable error (500, timeout, connection reset) is provider-wide and a
+        # different model would fail identically, so only this flag triggers a fallback.
+        self.rate_limited = rate_limited
 
 
 def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
@@ -167,9 +173,10 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
                 raise _LLMError(
                     f"Daily API quota exhausted — will keep retrying at a slower interval "
                     f"until it resets. Detail: {msg}",
-                    retryable=True, long_backoff=True,
+                    retryable=True, long_backoff=True, rate_limited=True,
                 )
-            raise _LLMError(f"Rate limited: {msg}", retryable=True, retry_after=retry_after)
+            raise _LLMError(f"Rate limited: {msg}", retryable=True, retry_after=retry_after,
+                            rate_limited=True)
         if code >= 500:
             raise _LLMError(f"Server error {code}: {msg}", retryable=True)
         raise _LLMError(f"HTTP {code}: {msg}")
@@ -3206,6 +3213,106 @@ def _daily_quota_poll_interval() -> int:
     return cfg_int("llm", "daily_quota_poll_interval", default=1800)
 
 
+# ---------------------------------------------------------------------------
+# Model fallback chain
+#
+# Free-tier quotas are per-model: hitting the per-minute or per-day limit on
+# gemini-3.5-flash-lite says nothing about gemini-3.1-flash-lite's budget. So on a 429
+# the useful move is not only to wait — it is to reissue the same request against a
+# lower-tier model immediately, and only wait once every model in the chain is spent.
+#
+# Cooldowns exist because a model that just returned 429 will almost certainly return 429
+# again on the next round, and each of those wasted calls costs a request against the RPM
+# pacer and a round-trip of latency. Once a model 429s it is skipped for a while: briefly
+# for a per-minute limit, and for the coarse daily-quota interval when the body names a
+# PerDay quota. Nothing is sticky beyond that window — the primary is tried first again
+# as soon as its cooldown lapses, so the chain self-heals without any manual switch back.
+# ---------------------------------------------------------------------------
+
+_model_cooldowns: "dict[str, tuple[float, bool]]" = {}  # model -> (expiry monotonic, was_daily)
+_model_cooldown_lock = threading.Lock()
+
+
+def _model_chain(primary: str) -> list:
+    """The models to try, in order: the configured model, then its fallbacks."""
+    chain = [primary] if primary else []
+    fallbacks = cfg_provider(cfg_active_provider()).get("fallback_models", [])
+    if isinstance(fallbacks, list):
+        for m in fallbacks:
+            m = str(m).strip()
+            if m and m not in chain:
+                chain.append(m)
+    return chain
+
+
+def _cool_model(model: str, exc: "_LLMError") -> None:
+    """Stop sending to `model` for a while after it rate-limited."""
+    if exc.long_backoff:
+        secs, daily = float(_daily_quota_poll_interval()), True
+    else:
+        secs, daily = float(exc.retry_after or 60.0), False
+    with _model_cooldown_lock:
+        _model_cooldowns[model] = (time.monotonic() + secs, daily)
+    log.warning("model %s rate limited — skipping it for %ds%s",
+                model, int(secs), " (daily quota)" if daily else "")
+
+
+def _model_cooling(model: str) -> "tuple[bool, bool]":
+    """(still cooling, cooldown was for a daily quota)."""
+    with _model_cooldown_lock:
+        entry = _model_cooldowns.get(model)
+        if not entry:
+            return False, False
+        expiry, daily = entry
+        if time.monotonic() >= expiry:
+            del _model_cooldowns[model]
+            return False, False
+        return True, daily
+
+
+def _post_with_fallback(client: dict, payload: dict, primary: str) -> "tuple[dict, str]":
+    """POST `payload`, trying each model in the chain until one is not rate limited.
+
+    Returns (response, model_that_answered). Raises the last _LLMError if every model is
+    rate limited or cooling, so the caller's existing backoff ladder handles the wait —
+    with long_backoff set only when every model is out on a daily quota, since a shorter
+    per-minute cooldown elsewhere in the chain means there is something worth retrying
+    soon. Non-rate-limit errors propagate immediately: they are provider-wide, and
+    walking the chain would just repeat the same failure N times.
+    """
+    chain = _model_chain(primary)
+    last_exc = None
+    all_daily = True
+    for model in chain:
+        cooling, was_daily = _model_cooling(model)
+        if cooling:
+            all_daily = all_daily and was_daily
+            continue
+        attempt_payload = dict(payload)
+        attempt_payload["model"] = model
+        try:
+            result = _llm_post(client["endpoint"], client["api_key"], attempt_payload)
+            if model != chain[0]:
+                log.warning("served by fallback model %s (primary %s unavailable)", model, chain[0])
+            return result, model
+        except _LLMError as e:
+            if not e.rate_limited:
+                raise
+            _cool_model(model, e)
+            all_daily = all_daily and e.long_backoff
+            last_exc = e
+    if last_exc is None:
+        # Every model was already cooling — nothing was actually sent. Synthesize the
+        # error the caller expects so its backoff ladder runs as it would on a real 429.
+        last_exc = _LLMError(
+            f"All models rate limited ({', '.join(chain)}) — waiting for quota to reset.",
+            retryable=True, rate_limited=True, long_backoff=all_daily,
+        )
+    elif len(chain) > 1:
+        last_exc.long_backoff = all_daily
+    raise last_exc
+
+
 def _rpm_max() -> int:
     return cfg_int("llm", "max_rpm", default=0)  # 0 = disabled
 
@@ -3292,7 +3399,7 @@ def _create(client: dict, messages: list, system: str) -> dict:
     for attempt in range(max_r + 1):
         _rpm_wait_sync()
         try:
-            result = _llm_post(client["endpoint"], client["api_key"], payload)
+            result, _served_by = _post_with_fallback(client, payload, model)
             _record_request()
             return result
         except Exception as e:
@@ -3310,7 +3417,7 @@ def _create(client: dict, messages: list, system: str) -> dict:
         time.sleep(delay)
         _rpm_wait_sync()
         try:
-            result = _llm_post(client["endpoint"], client["api_key"], payload)
+            result, _served_by = _post_with_fallback(client, payload, model)
             _record_request()
             return result
         except Exception as e:
@@ -3496,7 +3603,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
         for attempt in range(max_r + 1):
             yield from _rpm_wait_streaming()
             try:
-                resp = _llm_post(client["endpoint"], client["api_key"], payload)
+                resp, _served_by = _post_with_fallback(client, payload, resolved_model)
                 _record_request()
                 _inter_delay = cfg_int("llm", "inter_request_delay", 0)
                 if _inter_delay > 0:
@@ -3541,7 +3648,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                 time.sleep(delay)
                 yield from _rpm_wait_streaming()
                 try:
-                    resp = _llm_post(client["endpoint"], client["api_key"], payload)
+                    resp, _served_by = _post_with_fallback(client, payload, resolved_model)
                     _record_request()
                     break
                 except Exception as e:

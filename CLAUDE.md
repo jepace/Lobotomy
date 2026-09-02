@@ -98,7 +98,9 @@ Guardrails enforced in code (not just in LOBOTOMY.md — instructions alone prov
 {
   "admin":  { "email": "...", "password": "..." },
   "server": { "host": "127.0.0.1", "port": 8080, "https": false, "base_url": "..." },
-  "llm":    { "active": "gemini", "providers": { "gemini": { "api_key": "...", "model": "..." } },
+  "llm":    { "active": "gemini",
+              "providers": { "gemini": { "api_key": "...", "model": "...",
+                                         "fallback_models": ["..."] } },
               "max_retries": 6, "retry_poll_interval": 300, "daily_quota_poll_interval": 1800,
               "max_rpm": 15, "inter_request_delay": 5 },
   "email":  { "resend_api_key": "...", "from_address": "..." }
@@ -106,3 +108,5 @@ Guardrails enforced in code (not just in LOBOTOMY.md — instructions alone prov
 ```
 
 LLM providers use OpenAI-compatible APIs. The `agent.py:PROVIDERS` dict maps provider names to base URLs and default models. Provider config can also override `api_base` and `model` per-provider inside `config.json`.
+
+**Model fallback on 429.** A provider block may list `fallback_models`. Because free-tier quotas are per-model, `_post_with_fallback()` treats a 429 as "this model is spent" rather than "the provider is down": it reissues the same request against the next model in the chain immediately, and only raises — handing control back to the existing two-phase backoff — once every model is rate limited. Only 429 walks the chain (`_LLMError.rate_limited`); 500s, timeouts and connection errors are provider-wide and would fail identically on every model, so they propagate at once. A rate-limited model goes into `_model_cooldowns` and is skipped until it lapses (`retry_after` or 60s; `daily_quota_poll_interval` when the body names a `PerDay` quota), which keeps later rounds from burning a wasted call on a model already known to be exhausted. Cooldowns are the only state — nothing is sticky, so the primary is retried first as soon as its window passes.
