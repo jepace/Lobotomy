@@ -586,9 +586,24 @@ def _snapshot_version(p: Path, new_content: str) -> None:
         # index.md is rebuilt from the pages themselves, so a snapshot is derivable.
         if p.name == "index.md" or rel.as_posix() == "log.md":
             return
+
+        # A single ingest can write the same page several times — an update_section call
+        # per source folded in, then _autolink and _inject_sources_section each rewriting
+        # it again in post-processing. Snapshotting every one of those creates revisions
+        # nobody wants: e.g. the state exactly between a section rewrite and the autolink
+        # pass that immediately follows it, with every link in that section stripped to
+        # plain text — that reads as data loss on inspection even though the very next
+        # write restores it. What's actually useful is the page as it was before THIS
+        # SESSION touched it at all, once, so a diff always compares two real, finished
+        # states. Later writes to the same page in the same session skip the snapshot.
+        rel_posix = rel.as_posix()
+        _snapshotted = _ctx()._session_snapshotted
+        if rel_posix in _snapshotted:
+            return
         old = p.read_text(encoding="utf-8", errors="replace")
         if old == new_content:
             return  # nothing changed — do not record a revision for a no-op write
+        _snapshotted.add(rel_posix)
 
         d = HISTORY_DIR / rel
         d.mkdir(parents=True, exist_ok=True)
@@ -1221,6 +1236,7 @@ def _ctx():
         t._session_search_counts = {}
         t._done_refusals = 0
         t._session_incomplete = []
+        t._session_snapshotted = set()
     return t
 
 
@@ -1239,6 +1255,7 @@ def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
     t._session_search_counts = {}
     t._done_refusals = 0
     t._session_incomplete = []
+    t._session_snapshotted = set()
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
