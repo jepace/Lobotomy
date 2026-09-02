@@ -42,7 +42,18 @@ from pathlib import Path
 
 WIKI_DIR = Path(__file__).resolve().parent.parent / "wiki"
 RAW_DIR  = Path(__file__).resolve().parent.parent / "raw"
+HISTORY_DIR = WIKI_DIR / ".history"
 DRY_RUN  = "--dry-run" in sys.argv
+
+
+def _wiki_pages():
+    """wiki/**/*.md, skipping wiki/.history/ — those are saved revisions, not live
+    pages, and rewriting one would defeat the point of keeping it as a record."""
+    for f in sorted(WIKI_DIR.rglob("*.md")):
+        try:
+            f.relative_to(HISTORY_DIR)
+        except ValueError:
+            yield f
 
 # --- Fix 1: nested/double-linked patterns -----------------------------------
 
@@ -119,7 +130,7 @@ def _unwrap_reader(match: "re.Match") -> str:
 
 fixed_files = fixed_links = 0
 
-for f in sorted(WIKI_DIR.rglob("*.md")):
+for f in _wiki_pages():
     try:
         text = f.read_text(encoding="utf-8", errors="replace")
     except OSError:

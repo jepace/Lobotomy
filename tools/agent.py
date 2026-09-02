@@ -540,6 +540,22 @@ HISTORY_DIR = WIKI_DIR / ".history"
 _HISTORY_KEEP = 50  # revisions per page
 
 
+def wiki_pages(root: Path = WIKI_DIR):
+    """Yield every real wiki page under `root`, skipping wiki/.history/.
+
+    A plain `root.rglob("*.md")` also walks the saved-revision copies under .history/ —
+    they are not live pages, so lint, search, tagging, and repair passes must not touch
+    them: a broken link or missing frontmatter in an old revision is expected (it's a
+    snapshot of the page as it was), and rewriting a revision's content defeats the point
+    of keeping it as a record of what the page used to say.
+    """
+    for f in sorted(root.rglob("*.md")):
+        try:
+            f.relative_to(HISTORY_DIR)
+        except ValueError:
+            yield f
+
+
 def _snapshot_version(p: Path, new_content: str) -> None:
     """Save the CURRENT on-disk content of a wiki page before it is overwritten.
 
@@ -2341,7 +2357,7 @@ def search_wiki_core(query: str, wiki_dir: Path) -> dict:
         exclude_sources = True
 
     results = []
-    for f in sorted(search_root.rglob("*.md")):
+    for f in wiki_pages(search_root):
         if exclude_sources and f.is_relative_to(wiki_dir / "sources"):
             continue
         if f.stem in _META_STEMS:
@@ -2715,7 +2731,7 @@ def _validate_ingest(args: dict) -> str:
 
     source_slug = args.get("source_slug", "")
     # Collect all wiki pages to check (full wiki scan is safe — files are small)
-    all_pages = list(WIKI_DIR.rglob("*.md"))
+    all_pages = list(wiki_pages())
     index_text = (WIKI_DIR / "index.md").read_text(encoding="utf-8") if (WIKI_DIR / "index.md").exists() else ""
 
     required_fields = {"title", "type", "tags", "created", "updated", "sources"}

@@ -19,14 +19,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from agent import WIKI_DIR
+from agent import WIKI_DIR, wiki_pages
 
 HEAD_RE = re.compile(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", re.MULTILINE)
 
 found = 0
-for p in sorted(WIKI_DIR.rglob("*.md")):
-    if ".history" in p.parts:
-        continue
+for p in wiki_pages():
     text = p.read_text(encoding="utf-8", errors="replace")
     body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
     seen = {}

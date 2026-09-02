@@ -104,7 +104,7 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    stream_agent_turn, run_agent_turn, system_prompt,
                    _fix_wiki_links, _rebuild_index, _validate_ingest,
                    heal_index_if_stale, heal_pages, _atomic_write, search_wiki_core,
-                   HISTORY_DIR,
+                   HISTORY_DIR, wiki_pages,
                    _normalize_capture_url)
 
 from job_queue import JobQueue
@@ -1637,7 +1637,7 @@ def wiki_lint():
     index_text = (WIKI_DIR / "index.md").read_text(encoding="utf-8") if (WIKI_DIR / "index.md").exists() else ""
 
     broken_links, missing_fm, not_indexed = [], [], []
-    for f in sorted(WIKI_DIR.rglob("*.md")):
+    for f in wiki_pages():
         if f.name in SKIP_ALL:
             continue
         try:
@@ -1680,7 +1680,7 @@ def wiki_tags():
     import re as _re
     from collections import defaultdict
     tag_map = defaultdict(list)  # tag -> list of {title, path, type}
-    for f in sorted(WIKI_DIR.rglob("*.md")):
+    for f in wiki_pages():
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -1710,7 +1710,7 @@ def wiki_tags():
 def wiki_tag(tag):
     import re as _re
     pages = []
-    for f in sorted(WIKI_DIR.rglob("*.md")):
+    for f in wiki_pages():
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -1756,7 +1756,7 @@ def wiki_fix_broken_links():
             return m.group(0)
         return text
 
-    for f in sorted(WIKI_DIR.rglob("*.md")):
+    for f in wiki_pages():
         if f.name in SKIP:
             continue
         try:
