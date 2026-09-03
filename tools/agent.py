@@ -2188,6 +2188,38 @@ def _build_title_map() -> list[tuple[str, str]]:
     return _title_map_cache
 
 
+_LEGAL_SUFFIXES = {
+    "company", "co", "corporation", "corp", "incorporated", "inc", "limited", "ltd",
+    "llc", "llp", "lp", "plc", "gmbh", "ag", "nv", "bv", "sa", "pty",
+}
+
+
+def _norm_title_key(name: str) -> str:
+    """Loose key for spotting that two titles probably name the same thing.
+
+    Deliberately only used to *suggest* a match, never to declare one. It collapses the
+    ways one organization gets written across sources — "Pacific Gas and Electric Company",
+    "Pacific Gas & Electric Co.", "Pacific Gas & Electric", "Pacific Gas and Electric
+    Company (PG&E)" — which otherwise each become their own page, since the exact lookup
+    that decides create-vs-update sees four different strings.
+
+    It is too aggressive to trust on its own: dropping the legal suffix also collapses
+    "PG&E Corporation" into "PG&E", and a holding company and its operating subsidiary are
+    genuinely separate pages. That call needs the model, so the result is offered as a
+    question rather than applied as an answer.
+    """
+    s = name.lower()
+    s = re.sub(r"\([^)]*\)", " ", s)          # "... Company (PG&E)" -> "... Company"
+    s = s.replace("&", " and ")
+    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+    if s.startswith("the "):
+        s = s[4:]
+    parts = s.split()
+    while len(parts) > 1 and parts[-1] in _LEGAL_SUFFIXES:
+        parts.pop()
+    return " ".join(parts)
+
+
 def _lookup_titles(args: dict) -> str:
     """Batch existence check: map each supplied name to its wiki page, if any.
 
@@ -2202,13 +2234,27 @@ def _lookup_titles(args: dict) -> str:
     if not names:
         return "Error: names is required (a list of entity/concept names to look up)."
 
-    by_key = {t.lower(): rel for t, rel in _build_title_map()}
+    title_map = _build_title_map()
+    by_key = {t.lower(): rel for t, rel in title_map}
 
-    found, missing = [], []
+    # Index of loosely-normalized titles, for catching a name that already has a page under
+    # a different spelling. Exact lookup alone silently produced five pages for one utility.
+    by_norm: dict = {}
+    for t, rel in title_map:
+        by_norm.setdefault(_norm_title_key(t), []).append((t, rel))
+
+    found, missing, near = [], [], False
     for n in names:
         rel = by_key.get(n.lower())
         if rel:
             found.append(f"- {n} → EXISTS at wiki/{rel}")
+            continue
+        cands = [(t, r) for t, r in by_norm.get(_norm_title_key(n), [])
+                 if t.lower() != n.lower()]
+        if cands:
+            near = True
+            alts = "; ".join(f'"{t}" at wiki/{r}' for t, r in cands[:3])
+            missing.append(f"- {n} → NO PAGE under this exact name. SIMILAR: {alts}")
         else:
             missing.append(f"- {n} → NO PAGE")
 
@@ -2217,9 +2263,21 @@ def _lookup_titles(args: dict) -> str:
     lines.append("")
     lines.append(
         "EXISTS → read_file that path, then update_file it to incorporate this source. "
-        "NO PAGE → create_file a new page. This answer is exact and covers aliases; "
-        "do not call search_wiki to double-check it."
+        "NO PAGE → create_file a new page. The EXISTS/NO PAGE answer is exact and covers "
+        "aliases; do not call search_wiki to double-check it."
     )
+    if near:
+        lines.append("")
+        lines.append(
+            "SIMILAR means a page already exists under a different spelling of the same "
+            "name — a different legal suffix, '&' against 'and', a parenthetical. Decide "
+            "which it is:\n"
+            "  - Same thing → use the EXISTING page. Update it under the title it already "
+            "has; do NOT create a second page. One organization gets one page no matter how "
+            "many ways sources spell it.\n"
+            "  - Genuinely different → create the new page. A parent holding company and "
+            "its operating subsidiary are separate entities that happen to look alike here."
+        )
     return "\n".join(lines)
 
 
