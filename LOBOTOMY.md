@@ -267,6 +267,28 @@ Required sections:
   nearby town")? If yes, leave it off; a later source that is actually about it will add
   it. The subject of the source itself never fails this test — it cannot be swapped for a
   generic stand-in without the article ceasing to be the article.
+
+  Then a second test, which the first one misses on long sources: **would this page ever
+  hold more than what this one source says about the name?** A name carried by a single
+  clause produces a page containing a single clause, and it stays that way — it was
+  incidental here and will be incidental in the next source too. The wiki is for subjects
+  that compound. A permanent stub is not a small win, it is a cost: a page operation now,
+  a title the autolinker matches in every page it touches from here on, and another row in
+  the index that makes the real pages harder to find.
+
+  **A long source does not license a long list.** An encyclopedia entry or a full biography
+  names dozens of people *because it is comprehensive* — each one arrives with a real claim
+  attached, so the tests above pass for all of them and the list runs to ninety names. The
+  bar does not move because the source is thorough. When a source is *about* one subject,
+  what earns a place next to it is a relationship the source genuinely develops — a rival,
+  a co-founder, a successor, the judge who ruled against it — not every name that appears
+  in the narrative with a fact attached.
+
+  **Every name on this list costs.** Each becomes a `lookup_titles` entry, then a page read
+  and a page write in Step 5 or 6 — model round-trips, against a conversation that grows
+  with each one. Ninety names is an ingest that runs for hours and can spend a day's quota
+  on a single source. That is never a reason to drop something central; it is a reason not
+  to list anything that is not.
 - **Concepts**: bulleted list of important concepts and terms. Bare names only — same rule
   as Entities: natural human-readable form, never a slug. Write "Sex in Cinema", not
   "sex-in-cinema"; "Horror Films", not "horror-films".
@@ -284,6 +306,12 @@ Required sections:
   it" or "it's related to the topic", leave it off. Judge each name on that question alone;
   there is no target number, and a source that genuinely explains eight concepts should
   list eight.
+
+  The same two limits as Entities apply here. A concept whose page would only ever hold
+  this source's one sentence is a stub, not a synthesis — leave it for a source that
+  actually treats it. And a comprehensive source does not earn a longer list: a biography
+  touching thirty policy areas is not thereby explaining thirty concepts, it is narrating a
+  life. List what it explains.
 
   If the source's subject is better understood as a concept than an entity, list it here
   instead — but list it somewhere; the subject never goes unlisted.
