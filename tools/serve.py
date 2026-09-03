@@ -3026,6 +3026,11 @@ if __name__ == "__main__":
     issues = validate_config()
     for level, msg in issues:
         prefix = "ERROR" if level == "error" else "WARNING"
+        # print() alone is silent under a service manager that doesn't capture stdout —
+        # the same reasoning as config.py's _die(). This is the one config problem that
+        # can't itself prevent logging from being configured (that already happened,
+        # importing config succeeded), so there's no excuse not to log it too.
+        (log.error if level == "error" else log.warning)(msg)
         print(f"[{prefix}] {msg}")
 
     errors = [m for l, m in issues if l == "error"]

@@ -7,6 +7,7 @@ Usage in other modules:
 """
 
 import json
+import logging
 import sys
 import threading
 from pathlib import Path
@@ -18,24 +19,35 @@ _c: dict = {}
 _mtime: float = 0.0
 _lock = threading.Lock()
 
+# serve.py sets up the "lobotomy" logger (console + rotating file handler) before it
+# imports this module, so a message logged here through a child of that name reaches the
+# log file. sys.exit()'s own message goes to stderr only — fine for a foreground run or a
+# service manager that captures stderr, silent for one that doesn't (a plain `&`, a
+# systemd/rc.d unit with stderr going elsewhere). A config error is exactly the case where
+# the log file is the only place anyone will think to look, so it goes to both.
+log = logging.getLogger("lobotomy.config")
+
 
 def _load() -> None:
     """Load config.json, raising SystemExit with a clear message on any failure."""
     global _c, _mtime
     if not _CONFIG_FILE.exists():
-        sys.exit(
-            f"[config] config.json not found at {_CONFIG_FILE}\n"
-            f"Copy config.json.example to config.json and fill in your settings."
-        )
+        _die(f"[config] config.json not found at {_CONFIG_FILE}\n"
+             f"Copy config.json.example to config.json and fill in your settings.")
     try:
         text = _CONFIG_FILE.read_text(encoding="utf-8")
     except OSError as e:
-        sys.exit(f"[config] Could not read config.json: {e}")
+        _die(f"[config] Could not read config.json: {e}")
     try:
         _c = json.loads(text)
     except json.JSONDecodeError as e:
-        sys.exit(f"[config] config.json is not valid JSON: {e}")
+        _die(f"[config] config.json is not valid JSON: {e}")
     _mtime = _CONFIG_FILE.stat().st_mtime
+
+
+def _die(msg: str) -> "None":
+    log.error(msg)
+    sys.exit(msg)
 
 
 def _reload_if_changed() -> None:
