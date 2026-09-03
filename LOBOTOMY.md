@@ -349,11 +349,17 @@ For each entity (person, organization, product, project) on that list:
   that happens to be informed by many sources, not as a pile of per-source additions.
 
   **Read the whole page, then write section by section:**
-  1. `read_file` the page. Reading is cheap — it is writing that is limited — and you can
-     only place new information well, or notice it is already covered somewhere else on the
-     page, if you have seen all of it. If the page is long enough to come back
-     `[TRUNCATED …]`, keep calling `read_file` with the offset it names until you reach the
-     end.
+  1. `read_file` the page. Seeing all of it is what lets you place new information well, and
+     notice when it is already covered somewhere else on the page — so read the whole thing
+     whenever the page comes back in one piece.
+
+     **If it comes back `[TRUNCATED …]`, stop reading and switch to `read_section`.** Do not
+     keep calling `read_file` with the offset. Reading is not free: every chunk you pull in
+     stays in the conversation and is re-sent on every round for the rest of this ingest, so
+     paging through a 60K page costs that page several times over before the ingest ends. A
+     page that large is one where sections are self-contained enough to edit on their own —
+     `read_section` names the page's other sections in its reply, so you still know what is
+     there without paying to read all of it.
   2. Decide where each piece of new information belongs.
   3. For each section that changes, send its full new text with `update_section` — the new
      information *merged into* the existing prose, extending a sentence, qualifying a claim,
@@ -367,10 +373,12 @@ For each entity (person, organization, product, project) on that list:
   `read_file` tells you when a page is too large and to use `update_section` instead. Follow
   that when you see it; otherwise either tool is reasonable.
 
-  Writing is what is bounded, not reading: `update_section` sends only one section, so it
-  works at any page size. Use `read_section` instead of `read_file` only when a page is so
-  large that reading it whole is wasteful — you lose the ability to spot duplication, so
-  prefer the full read when it is practical.
+  Both reading and writing are bounded, in different ways. `update_section` sends only one
+  section, so writing works at any page size. Reading is bounded by the conversation: what
+  you read is re-sent on every later round, so a full read is worth its cost on a page that
+  arrives whole and is not worth it on one that arrives truncated. Prefer the full read
+  whenever the page comes back in one piece — you lose the ability to spot duplication
+  otherwise — and use `read_section` past that point.
 
   **Choosing which section.** Default to one that already exists — the templates in
   Section 3 cover most material, and merging into an existing section is what makes the page
@@ -420,11 +428,17 @@ For each concept, technique, framework, or term on that list:
   that happens to be informed by many sources, not as a pile of per-source additions.
 
   **Read the whole page, then write section by section:**
-  1. `read_file` the page. Reading is cheap — it is writing that is limited — and you can
-     only place new information well, or notice it is already covered somewhere else on the
-     page, if you have seen all of it. If the page is long enough to come back
-     `[TRUNCATED …]`, keep calling `read_file` with the offset it names until you reach the
-     end.
+  1. `read_file` the page. Seeing all of it is what lets you place new information well, and
+     notice when it is already covered somewhere else on the page — so read the whole thing
+     whenever the page comes back in one piece.
+
+     **If it comes back `[TRUNCATED …]`, stop reading and switch to `read_section`.** Do not
+     keep calling `read_file` with the offset. Reading is not free: every chunk you pull in
+     stays in the conversation and is re-sent on every round for the rest of this ingest, so
+     paging through a 60K page costs that page several times over before the ingest ends. A
+     page that large is one where sections are self-contained enough to edit on their own —
+     `read_section` names the page's other sections in its reply, so you still know what is
+     there without paying to read all of it.
   2. Decide where each piece of new information belongs.
   3. For each section that changes, send its full new text with `update_section` — the new
      information *merged into* the existing prose, extending a sentence, qualifying a claim,
@@ -438,10 +452,12 @@ For each concept, technique, framework, or term on that list:
   `read_file` tells you when a page is too large and to use `update_section` instead. Follow
   that when you see it; otherwise either tool is reasonable.
 
-  Writing is what is bounded, not reading: `update_section` sends only one section, so it
-  works at any page size. Use `read_section` instead of `read_file` only when a page is so
-  large that reading it whole is wasteful — you lose the ability to spot duplication, so
-  prefer the full read when it is practical.
+  Both reading and writing are bounded, in different ways. `update_section` sends only one
+  section, so writing works at any page size. Reading is bounded by the conversation: what
+  you read is re-sent on every later round, so a full read is worth its cost on a page that
+  arrives whole and is not worth it on one that arrives truncated. Prefer the full read
+  whenever the page comes back in one piece — you lose the ability to spot duplication
+  otherwise — and use `read_section` past that point.
 
   **Choosing which section.** Default to one that already exists — the templates in
   Section 3 cover most material, and merging into an existing section is what makes the page

@@ -300,6 +300,7 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
                     return _fetch_cache[stripped]
     except ValueError:
         pass
+    _is_wiki = False
     try:
         p.resolve().relative_to(RAW_DIR.resolve())
         limit = _RAW_READ_LIMIT
@@ -307,6 +308,7 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
         try:
             p.resolve().relative_to(WIKI_DIR.resolve())
             limit = _WIKI_READ_LIMIT
+            _is_wiki = True
         except ValueError:
             limit = _RAW_READ_LIMIT
     # Strip system-owned frontmatter fields the LLM has no use for.
@@ -320,7 +322,35 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
         remaining = total - offset - limit
         covered_upto = offset + limit
         _shown = text[:limit]
-        text = _shown + f"\n\n[TRUNCATED — showing chars {offset}–{offset+limit} of {total} total. Call read_file with offset={offset+limit} to continue.]"
+        if _is_wiki:
+            # Paging through a large wiki page is the most expensive thing an ingest can do.
+            # Nothing prunes the conversation, so every chunk pulled in here is re-sent on
+            # every later round of the ingest — reading a 60K page costs that page several
+            # times over before the run ends, and an ingest touching a dozen such pages goes
+            # quadratic. read_section gets the one section being edited and names the rest,
+            # which is all that is needed to place a new fact. (Raw sources keep the paging
+            # instruction below: there is no section tool for them, and the whole source has
+            # to be read to summarize it.)
+            _full = p.read_text(encoding="utf-8", errors="replace")
+            _heads = re.findall(r"^#{1,6}[ \t]*(\S.*?)[ \t]*$",
+                                _strip_system_fm_fields(_full), re.MULTILINE)
+            # Drop the page's own H1 title and the auto-generated Sources section — neither
+            # is a section anything should be written to. Same exclusions as _read_section's
+            # outline, and the title is matched against frontmatter rather than by heading
+            # level, since some pages carry a real section at H1.
+            _title_m = re.search(r'^title:\s*["\']?(.+?)["\']?\s*$', _full, re.MULTILINE)
+            _skip = {"sources"} | ({_title_m.group(1).strip().lower()} if _title_m else set())
+            _heads = [h for h in _heads if h.strip().lower() not in _skip]
+            _outline = (f" Its sections are: {', '.join(_heads)}." if _heads else "")
+            text = _shown + (
+                f"\n\n[TRUNCATED — showing chars {offset}–{offset+limit} of {total} total.\n"
+                f"Do NOT call read_file again with an offset: this page is large, and every "
+                f"chunk read stays in the conversation and is re-sent on every later round of "
+                f"this ingest.{_outline}\n"
+                f"Call read_section(path, section) for the section you need to change instead "
+                f"— it returns that section in full and lists the others.]")
+        else:
+            text = _shown + f"\n\n[TRUNCATED — showing chars {offset}–{offset+limit} of {total} total. Call read_file with offset={offset+limit} to continue.]"
     else:
         covered_upto = total  # this call reached the end of the file, truncated or not
         _shown = text
