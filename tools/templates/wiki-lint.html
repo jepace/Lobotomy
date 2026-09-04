@@ -16,6 +16,19 @@
   .count-pill { padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; }
   .count-ok   { background: #34c75922; color: #34c759; }
   .count-bad  { background: #ff3b3022; color: #ff3b30; }
+
+  .relink-note { font-size: 13px; color: var(--text2); line-height: 1.5; margin-bottom: 12px; }
+  .relink-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .relink-btn {
+    padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+    background: var(--accent); color: #fff; border: none; cursor: pointer;
+  }
+  .relink-btn:disabled { opacity: .5; cursor: default; }
+  .relink-btn.stop { background: var(--bg2); color: var(--text); border: 1px solid var(--border); }
+  .relink-status { font-size: 13px; color: var(--text2); }
+  .relink-bar-wrap { margin-top: 10px; height: 6px; background: var(--bg2);
+                     border-radius: 3px; overflow: hidden; }
+  .relink-bar { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
 </style>
 {% endblock %}
 
@@ -39,6 +52,26 @@
     <span class="count-pill {{ 'count-ok' if not not_indexed else 'count-bad' }}">
       {{ not_indexed|length }} not in index
     </span>
+  </div>
+
+  <div class="section">
+    <h2>Relink Pages</h2>
+    <div class="relink-note">
+      A page is autolinked when an ingest touches it, against the titles that existed at
+      that moment — so a page written before its subjects had pages keeps those mentions as
+      plain text. This re-runs the autolinker over every page and picks all of them up.
+      <br><br>
+      It is slow on purpose: the work per page grows with the number of pages, so a large
+      wiki takes tens of minutes. It runs in the background — you can leave this page and
+      come back, and normal use is unaffected. Changed pages get a history entry, so
+      anything it gets wrong is revertable.
+    </div>
+    <div class="relink-controls">
+      <button id="relink-btn" class="relink-btn" onclick="startRelink()">Relink all pages</button>
+      <button id="relink-stop" class="relink-btn stop" onclick="stopRelink()" hidden>Stop</button>
+      <span id="relink-status" class="relink-status"></span>
+    </div>
+    <div id="relink-bar-wrap" class="relink-bar-wrap" hidden><div id="relink-bar" class="relink-bar"></div></div>
   </div>
 
   {% if broken_links %}
@@ -83,4 +116,67 @@
 
 </div>
 </div>
+
+<script>
+let relinkTimer = null;
+
+function renderRelink(s) {
+  const btn = document.getElementById('relink-btn');
+  const stop = document.getElementById('relink-stop');
+  const status = document.getElementById('relink-status');
+  const wrap = document.getElementById('relink-bar-wrap');
+  const bar = document.getElementById('relink-bar');
+
+  btn.disabled = s.running;
+  stop.hidden = !s.running;
+  wrap.hidden = !s.running && !s.scanned;
+
+  if (s.total) bar.style.width = (100 * s.scanned / s.total).toFixed(1) + '%';
+
+  if (s.error) {
+    status.textContent = 'Failed: ' + s.error;
+  } else if (s.running) {
+    const pct = s.total ? Math.floor(100 * s.scanned / s.total) : 0;
+    status.textContent = `${s.scanned} / ${s.total || '?'} pages (${pct}%) — ${s.current || 'starting…'}`;
+    btn.textContent = 'Relinking…';
+  } else if (s.finished_at) {
+    const mins = s.elapsed ? ` in ${Math.round(s.elapsed / 60)} min` : '';
+    status.textContent = `Done ${s.finished_at}: ${s.changed} of ${s.scanned} page(s) relinked${mins}.`;
+    btn.textContent = 'Relink all pages';
+  } else {
+    status.textContent = '';
+    btn.textContent = 'Relink all pages';
+  }
+}
+
+async function pollRelink() {
+  try {
+    const s = await (await fetch('/wiki/relink/status')).json();
+    renderRelink(s);
+    if (s.running) {
+      if (!relinkTimer) relinkTimer = setInterval(pollRelink, 2000);
+    } else if (relinkTimer) {
+      clearInterval(relinkTimer); relinkTimer = null;
+    }
+  } catch (e) { /* transient — next poll retries */ }
+}
+
+async function startRelink() {
+  document.getElementById('relink-btn').disabled = true;
+  const r = await fetch('/wiki/relink', {method: 'POST'});
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    document.getElementById('relink-status').textContent = d.error || 'Could not start';
+  }
+  pollRelink();
+}
+
+async function stopRelink() {
+  document.getElementById('relink-stop').disabled = true;
+  await fetch('/wiki/relink/stop', {method: 'POST'});
+  setTimeout(() => { document.getElementById('relink-stop').disabled = false; }, 1000);
+}
+
+pollRelink();   // picks up a run already in progress from an earlier visit
+</script>
 {% endblock %}

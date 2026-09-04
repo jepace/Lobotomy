@@ -2361,6 +2361,58 @@ def _autolink(args: dict) -> str:
     return f"Autolinked {linked} title(s) in {target_str}."
 
 
+def begin_write_scope() -> None:
+    """Start a fresh version-history scope on this thread.
+
+    _snapshot_version records one revision per page per scope, so that an ingest writing a
+    page several times (a section edit, then autolink, then the sources section) leaves one
+    revision showing the page before the ingest rather than three mid-pipeline states.
+    init_session() opens a scope for each job; a web request that writes needs to open one
+    too, or a second edit arriving on a kept-alive connection — same thread, no init_session
+    between — would silently not be recorded.
+    """
+    _ctx()._session_snapshotted = set()
+
+
+def relink_all(progress=None, should_stop=None) -> dict:
+    """Re-run the autolinker over every wiki page.
+
+    A page is normally autolinked only while an ingest is touching it, against the titles
+    that existed at that moment — so a page written before its subjects had pages keeps
+    those mentions as plain text forever. Nothing re-examines it later. This is the sweep
+    that fixes that, and it is deliberately not part of any automatic pass: cost per page
+    grows with the number of titles, so the whole sweep is quadratic in the size of the
+    wiki (measured ~0.25s/page against 2,000 titles), which is minutes-to-an-hour of work
+    and has no business inside a request or at the end of every ingest.
+
+    progress(done, total, path) is called per page; should_stop() aborts between pages.
+    """
+    pages = [p for p in wiki_pages()
+             if p.name != "index.md" and p.relative_to(WIKI_DIR).as_posix() != "log.md"]
+    total = len(pages)
+    begin_write_scope()
+    _build_title_map()  # once, up front — every page reuses the cache
+    changed = scanned = 0
+    t0 = time.time()
+    log.info("relink_all: starting over %d page(s)", total)
+    for p in pages:
+        if should_stop and should_stop():
+            log.info("relink_all: stopped after %d/%d page(s)", scanned, total)
+            break
+        scanned += 1
+        try:
+            res = _autolink({"path": f"wiki/{p.relative_to(WIKI_DIR).as_posix()}"})
+            if res.startswith("Autolinked"):
+                changed += 1
+        except OSError as e:
+            log.warning("relink_all: %s failed: %s", p, e)
+        if progress:
+            progress(scanned, total, p.relative_to(WIKI_DIR).as_posix())
+    elapsed = time.time() - t0
+    log.info("relink_all: %d/%d page(s) scanned, %d changed, %.0fs", scanned, total, changed, elapsed)
+    return {"scanned": scanned, "total": total, "changed": changed, "elapsed": elapsed}
+
+
 def _fix_wiki_links(_args: dict) -> str:
     """Scan all wiki pages and fix relative links missing a ../ prefix."""
     import re

@@ -25,6 +25,7 @@ import os
 import re
 import secrets
 import sys
+import threading
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -104,7 +105,7 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
                    stream_agent_turn, run_agent_turn, system_prompt,
                    _fix_wiki_links, _rebuild_index, _validate_ingest,
                    heal_index_if_stale, heal_pages, _atomic_write, search_wiki_core,
-                   HISTORY_DIR, wiki_pages,
+                   HISTORY_DIR, wiki_pages, _autolink, relink_all, begin_write_scope,
                    _normalize_capture_url)
 
 from job_queue import JobQueue
@@ -1488,7 +1489,18 @@ def wiki_save(page_path):
     # agent.py's in-memory title-map cache (used by the autolinker) honest. A manual
     # retitle through this editor that bypassed it would leave the cache pointing at the
     # old title until something unrelated happened to invalidate it, or the server restarted.
+    begin_write_scope()   # this edit gets its own history revision, even on a reused thread
     _atomic_write(p, content)
+    # Autolink the result. The autolinker otherwise only ever runs over pages an ingest
+    # touched, so prose written by hand here would keep its mentions as plain text
+    # indefinitely — until some later ingest happened to touch this page for its own
+    # reasons. Both writes fall in one history scope, so the editor's saved revision is
+    # the page as it was before the edit, not the unlinked intermediate.
+    try:
+        rel = p.resolve().relative_to(WIKI_DIR.resolve()).as_posix()
+        log.info("wiki_save %s: %s", rel, _autolink({"path": f"wiki/{rel}"}))
+    except (OSError, ValueError) as e:
+        log.warning("wiki_save: autolink failed for %s: %s", page_path, e)
     return {"ok": True}
 
 
@@ -1737,6 +1749,61 @@ def wiki_tag(tag):
         pages.append({"title": title, "path": rel, "type": pg_type, "updated": updated, "summary": summary})
     pages.sort(key=lambda x: x["title"].lower())
     return render_template("wiki-tag.html", tag=tag, pages=pages, sections=wiki_sections(), current_path="tags")
+
+
+# Wiki-wide relink. Runs in a daemon thread rather than the request: cost per page grows
+# with the number of titles, so the sweep is quadratic in wiki size and takes minutes to
+# an hour. State lives here so progress survives navigating away and back.
+_relink_state = {"running": False, "scanned": 0, "total": 0, "changed": 0,
+                 "current": "", "finished_at": "", "elapsed": 0.0, "error": ""}
+_relink_lock = threading.Lock()
+_relink_stop = threading.Event()
+
+
+@app.route("/wiki/relink", methods=["POST"])
+@require_login
+def wiki_relink_start():
+    with _relink_lock:
+        if _relink_state["running"]:
+            return {"ok": False, "error": "Already running"}, 409
+        _relink_state.update(running=True, scanned=0, total=0, changed=0,
+                             current="", finished_at="", elapsed=0.0, error="")
+    _relink_stop.clear()
+
+    def _run():
+        def _progress(done, total, path):
+            with _relink_lock:
+                _relink_state.update(scanned=done, total=total, current=path)
+        try:
+            res = relink_all(progress=_progress, should_stop=_relink_stop.is_set)
+            with _relink_lock:
+                _relink_state.update(changed=res["changed"], elapsed=res["elapsed"])
+        except Exception as e:                      # never leave the UI stuck on "running"
+            log.exception("relink_all failed")
+            with _relink_lock:
+                _relink_state["error"] = str(e)
+        finally:
+            with _relink_lock:
+                _relink_state.update(
+                    running=False, current="",
+                    finished_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"))
+
+    threading.Thread(target=_run, daemon=True, name="relink-all").start()
+    return {"ok": True}
+
+
+@app.route("/wiki/relink/status")
+@require_login
+def wiki_relink_status():
+    with _relink_lock:
+        return dict(_relink_state)
+
+
+@app.route("/wiki/relink/stop", methods=["POST"])
+@require_login
+def wiki_relink_stop():
+    _relink_stop.set()
+    return {"ok": True}
 
 
 @app.route("/wiki/fix-broken-links", methods=["POST"])
