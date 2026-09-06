@@ -221,6 +221,11 @@ to `raw/` first as a `.txt` or `.md` file.
 Read the entire file before writing anything. If `read_file` returns a `[TRUNCATED …]`
 notice, keep calling it with the offset it names until you reach the end of the file.
 
+**If the request already contains the file inside a `<file path="...">` block, that IS the
+source and this step is done.** Do not call `read_file` on it — you would be paying a
+round-trip to fetch text you have already been given, and the copy in the request is
+complete.
+
 ### Step 3 — Create a source summary document
 **One source page per ingest, exactly.** Do not create source pages for URLs or articles mentioned inside the raw file — only for the raw file itself. Do not call `create_file` with `type: source` more than once per session. **Source pages are immutable after creation — never call `update_file` on a `wiki/sources/` page.**
 

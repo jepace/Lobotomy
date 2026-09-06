@@ -172,7 +172,9 @@ async function ingestArticle() {
   try {
     const sendResp = await fetch('/chat/send', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: 'Process inbox file: ' + FILENAME, inbox_file: FILENAME}),
+      // Same wording as the inbox's Wikify button, and the same real path: the schema's
+      // ingest workflow keys off "Ingest raw/<file>", and raw/ is flat.
+      body: JSON.stringify({message: 'Ingest raw/' + FILENAME, inbox_file: FILENAME}),
     });
     if (!sendResp.ok) throw new Error('HTTP ' + sendResp.status);
     const job = await sendResp.json();

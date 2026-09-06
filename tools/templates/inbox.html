@@ -661,7 +661,10 @@ async function wikifyItem(name, idx) {
   try {
     const sendResp = await fetch('/chat/send', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: 'Ingest raw/inbox/' + name, inbox_file: name}),
+      // raw/ is flat — raw/inbox/ was migrated away by _migrate_raw_subdirs(). Sending the
+      // old path made every ingest spend its first round on a read_file that returned
+      // "not found" before recovering via the path in the injected <file> block.
+      body: JSON.stringify({message: 'Ingest raw/' + name, inbox_file: name}),
     });
     if (!sendResp.ok) {
       const err = await sendResp.json().catch(() => ({}));

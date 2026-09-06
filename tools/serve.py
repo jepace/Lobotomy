@@ -1081,6 +1081,8 @@ def chat_send():
             file_content = inbox_path.read_text(encoding="utf-8", errors="replace")
             message = (
                 f'{message}\n\n'
+                f'The complete contents of that file are below — this is the whole source. '
+                f'That satisfies Step 2: do NOT call read_file on it, go straight to Step 3.\n\n'
                 f'<file path="raw/{inbox_path.name}">\n{file_content}\n</file>'
             )
             # Prime the globals that _create_file uses for url: and raw_source: fallbacks.
@@ -2734,6 +2736,8 @@ def inbox_process_all():
             {"role": "assistant", "content": "Oriented. Ready."},
             {"role": "user",      "content": (
                 f'Ingest raw/{inbox_path.name}.\n\n'
+                f'The complete contents of that file are below — this is the whole source. '
+                f'That satisfies Step 2: do NOT call read_file on it, go straight to Step 3.\n\n'
                 f'<file path="raw/{inbox_path.name}">\n{file_content}\n</file>'
             )},
         ]
