@@ -2467,6 +2467,11 @@ def _autolink(args: dict) -> str:
     if new_content == content:
         log.debug("autolink: no changes in %s (%.1fs, %d titles)", target_str, elapsed, len(title_map))
         return f"Autolink: no changes in {target_str}."
+    if args.get("dry_run"):
+        # Everything above is pure computation; only the write below has an effect. So a
+        # dry run is just this early return — the reported count is exactly what a real
+        # run would do.
+        return f"Would autolink {linked} title(s) in {target_str} (dry run — nothing written)."
     _atomic_write(target_p, new_content)
     log.debug("autolink: linked %d title(s) in %s (%.1fs, %d titles checked)", linked, target_str, elapsed, len(title_map))
     return f"Autolinked {linked} title(s) in {target_str}."
@@ -2485,7 +2490,7 @@ def begin_write_scope() -> None:
     _ctx()._session_snapshotted = set()
 
 
-def relink_all(progress=None, should_stop=None) -> dict:
+def relink_all(progress=None, should_stop=None, pages=None, dry_run=False) -> dict:
     """Re-run the autolinker over every wiki page.
 
     A page is normally autolinked only while an ingest is touching it, against the titles
@@ -2497,23 +2502,27 @@ def relink_all(progress=None, should_stop=None) -> dict:
     and has no business inside a request or at the end of every ingest.
 
     progress(done, total, path) is called per page; should_stop() aborts between pages.
+    pages limits the run to specific pages (Path objects) instead of the whole wiki;
+    dry_run reports what would change without writing.
     """
-    pages = [p for p in wiki_pages()
-             if p.name != "index.md" and p.relative_to(WIKI_DIR).as_posix() != "log.md"]
+    if pages is None:
+        pages = [p for p in wiki_pages()
+                 if p.name != "index.md" and p.relative_to(WIKI_DIR).as_posix() != "log.md"]
     total = len(pages)
     begin_write_scope()
     _build_title_map()  # once, up front — every page reuses the cache
     changed = scanned = 0
     t0 = time.time()
-    log.info("relink_all: starting over %d page(s)", total)
+    log.info("relink_all: starting over %d page(s)%s", total, " (dry run)" if dry_run else "")
     for p in pages:
         if should_stop and should_stop():
             log.info("relink_all: stopped after %d/%d page(s)", scanned, total)
             break
         scanned += 1
         try:
-            res = _autolink({"path": f"wiki/{p.relative_to(WIKI_DIR).as_posix()}"})
-            if res.startswith("Autolinked"):
+            res = _autolink({"path": f"wiki/{p.relative_to(WIKI_DIR).as_posix()}",
+                             "dry_run": dry_run})
+            if res.startswith(("Autolinked", "Would autolink")):
                 changed += 1
         except OSError as e:
             log.warning("relink_all: %s failed: %s", p, e)

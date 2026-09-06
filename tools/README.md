@@ -65,10 +65,33 @@ python3 tools/search.py tag:nonprofit after:2026-01-01   # filter by tag and dat
 
 Set `LOBOTOMY_URL` and `LOBOTOMY_KEY` to search a running server instead of the local files.
 
+### `relink.py` — add wiki links to bare mentions
+**This is the one that puts links in.** A page is autolinked only while an ingest is
+touching it, against the titles that existed at that moment — so a page written before its
+subjects had pages keeps those mentions as plain text forever, and nothing revisits it.
+This is the catch-up sweep.
+
+```sh
+python3 tools/relink.py                              # every page (minutes on a big wiki)
+python3 tools/relink.py wiki/entities/pg-e.md        # just one page
+python3 tools/relink.py wiki/concepts/*.md           # a subset
+python3 tools/relink.py --dry-run                    # report, write nothing
+python3 tools/relink.py --dry-run wiki/entities/pg-e.md
+```
+
+The web UI has the whole-wiki version on `/wiki/lint` ("Relink all pages"), which runs in
+the background with a progress bar and a stop button. Use the CLI for a single page, a
+subset, or a dry run.
+
+Every page it changes gets a version-history entry first, so anything it gets wrong is
+revertable from that page's History view.
+
 ### `repair_links.py` — fix broken internal links
-Three passes: un-nest double-linked text left by an old autolinker bug, correct relative
-paths with the wrong number of `../`, and unwrap `about:reader?url=...` capture URLs into
-the real article URL. Scans `raw/` as well as `wiki/`.
+Repairs links that already exist — it never creates one. (For turning bare text into links,
+that's `relink.py` above.) Three passes: un-nest double-linked text left by an old
+autolinker bug, correct relative paths with the wrong number of `../`, and unwrap
+`about:reader?url=...` capture URLs into the real article URL. Scans `raw/` as well as
+`wiki/`.
 
 ```sh
 python3 tools/repair_links.py --dry-run   # report what would change

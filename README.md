@@ -228,10 +228,12 @@ tools/
   config.py             config.json loader
   auth.py               Login, sessions, email verification
   search.py             Keyword search CLI (no LLM needed)
+  relink.py             Add wiki links to bare mentions (no LLM needed)
   repair_links.py       Fix broken relative links + reader-mode URLs (no LLM needed)
   repair_frontmatter.py Backfill missing created:/updated: frontmatter (no LLM needed)
   lint.sh               Shell-based broken-link checker
   templates/            HTML templates for the web server
+  README.md             What every tool here does, with sample command lines
 contrib/freebsd/rc.d/   FreeBSD service script
 docs/api.md             Push API documentation
 LOBOTOMY.md             LLM operating instructions (the schema)
