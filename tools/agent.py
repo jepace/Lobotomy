@@ -1804,10 +1804,51 @@ def _done(args: dict) -> str:
     return _DONE_SENTINEL + ingested + "|" + args.get("summary", "")
 
 
+_index_fingerprint = None
+
+
+def _index_inputs_fingerprint() -> tuple:
+    """(file count, newest mtime) over everything the index is built from.
+
+    Stat-only, so it costs milliseconds against the seconds a rebuild costs — which is the
+    whole point: it is cheap enough to check before every rebuild and decide there is
+    nothing to do. mtime-based rather than a dirty flag set by _atomic_write, so a page
+    changed by another process or edited on disk still invalidates it.
+    """
+    count = 0
+    newest = 0.0
+    for d, pattern in ((WIKI_DIR, "**/*.md"), (RAW_DIR, "*")):
+        if not d.is_dir():
+            continue
+        for f in d.glob(pattern):
+            try:
+                if not f.is_file() or ".history" in f.parts:
+                    continue
+                count += 1
+                newest = max(newest, f.stat().st_mtime)
+            except OSError:
+                continue
+    return count, newest
+
+
 def _rebuild_index(args: dict) -> str:
-    """Rebuild wiki/index.md, subdirectory indexes, and raw/index.md."""
+    """Rebuild wiki/index.md, subdirectory indexes, and raw/index.md.
+
+    Skips the work when nothing has changed since the last rebuild. At ~6,900 pages a
+    rebuild reads every file and takes ~8s, and it is called from many places that can
+    follow each other closely — _post_process_session, then the wikify completion path
+    twice, then whatever the UI does — so one ingest was paying it three times in 32
+    seconds for an identical result, and an inbox action was paying it inside the request.
+    """
+    global _index_fingerprint
     import re
     _t0_rebuild = time.time()
+
+    _fp = _index_inputs_fingerprint()
+    if _fp == _index_fingerprint:
+        log.debug("rebuild_index: skipped, nothing changed since last rebuild (%.2fs to check)",
+                  time.time() - _t0_rebuild)
+        return "Index already up to date — nothing changed since the last rebuild."
 
     def parse_title_updated(text: str) -> tuple[str, str]:
         m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
@@ -1949,6 +1990,10 @@ def _rebuild_index(args: dict) -> str:
         for _, s in sections if (WIKI_DIR / s).is_dir()
     )
     raw_total = len(raw_entries)
+    # Fingerprint AFTER writing, so the index files this call just wrote are part of the
+    # recorded state — otherwise the next call would see their new mtimes as a change and
+    # rebuild again, which is the loop this is here to stop.
+    _index_fingerprint = _index_inputs_fingerprint()
     log.debug("rebuild_index: done in %.1fs (%d wiki pages, %d raw files)", time.time() - _t0_rebuild, total, raw_total)
     return (f"Rebuilt wiki/index.md ({total} pages), subdirectory indexes, "
             f"and raw/index.md ({raw_total} raw files).")
