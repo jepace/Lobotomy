@@ -14,6 +14,19 @@ Almost everything here imports `config.py`, which reads `config.json` at the rep
 exits immediately if it is missing or malformed. Copy `config.json.example` to
 `config.json` first, even for the tools that never call an LLM.
 
+**Run the maintenance tools as the user the server runs as.** They write the same files
+the server does. Writes preserve each file's existing owner and mode, and anything newly
+created inherits its parent directory's owner, so running one as root no longer locks the
+server out — but running as the server's own user is still the safe habit, and it is the
+only thing that gets the ownership right on a wiki that has already been damaged:
+
+```sh
+su -m www -c 'python3 tools/relink.py'         # FreeBSD jail, server running as www
+```
+
+If a tool was run as root before this behavior existed, fix it once with
+`chown -R www:www wiki raw` (substituting the server's user).
+
 ---
 
 ## Servers and clients

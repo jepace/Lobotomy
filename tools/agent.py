@@ -643,7 +643,18 @@ def _snapshot_version(p: Path, new_content: str) -> None:
         _snapshotted.add(rel_posix)
 
         d = HISTORY_DIR / rel
+        # mkdir(parents=True) can create several levels at once, and each new one needs the
+        # tree's owner — otherwise a root-run repair leaves a root-owned history directory
+        # the server cannot add revisions to afterwards. Note which are missing first, then
+        # fix them shallowest-first so each reads an already-corrected parent.
+        _missing = []
+        _probe = d
+        while not _probe.exists() and _probe != _probe.parent:
+            _missing.append(_probe)
+            _probe = _probe.parent
         d.mkdir(parents=True, exist_ok=True)
+        for _new in reversed(_missing):
+            _inherit_owner(_new)
         # Microsecond resolution so filenames sort chronologically as plain strings, which
         # is what both the history view and the pruning below rely on. A collision-counter
         # suffix was tried and is wrong: once pruning deletes the low numbers, the next
@@ -656,6 +667,7 @@ def _snapshot_version(p: Path, new_content: str) -> None:
             now += datetime.timedelta(microseconds=1)
             dest = d / f"{now.strftime('%Y%m%dT%H%M%S%f')}.md"
         dest.write_text(old, encoding="utf-8")
+        _inherit_owner(dest)
 
         # Keep the most recent _HISTORY_KEEP revisions. Unbounded growth on a page the
         # agent rewrites on every ingest would otherwise be the one real cost here.
@@ -669,8 +681,31 @@ def _snapshot_version(p: Path, new_content: str) -> None:
         log.warning("history: could not snapshot %s: %s", p, e)
 
 
+def _inherit_owner(p: Path) -> None:
+    """Give a path just created by root the owner of its parent directory.
+
+    The maintenance CLIs are usually run by hand as root while the server runs as another
+    user (www). Anything root creates would otherwise be root-owned inside a tree the
+    server has to keep writing, and the server would start failing with EACCES on files it
+    created itself the day before. No-op when not root, which is the normal case.
+    """
+    if os.name != "posix" or os.geteuid() != 0:
+        return
+    try:
+        st = p.parent.stat()
+        os.chown(p, st.st_uid, st.st_gid)
+    except OSError:
+        pass
+
+
 def _atomic_write(p: Path, content: str) -> None:
-    """Write content to p atomically: write to a sibling .tmp file, then rename."""
+    """Write content to p atomically: write to a sibling .tmp file, then rename.
+
+    The replacement inherits the original file's owner and mode. mkstemp deliberately
+    creates its file 0600 owned by the caller, and os.replace carries that onto the target
+    — so without this, one `sudo python3 tools/relink.py` re-owns every page it touches to
+    root:wheel 0600 and the server can no longer read or write its own wiki.
+    """
     global _title_map_cache
     _snapshot_version(p, content)
     # Capture pre-write state to decide below whether the title map cache actually needs
@@ -685,11 +720,34 @@ def _atomic_write(p: Path, content: str) -> None:
     except OSError:
         _old_mtime = 0.0
 
+    _old_stat = None
+    if _existed:
+        try:
+            _old_stat = p.stat()
+        except OSError:
+            pass
+
     p.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
+        # Carry the original's identity onto the replacement, before it becomes the file.
+        if _old_stat is not None:
+            try:
+                os.chmod(tmp_path, _old_stat.st_mode & 0o7777)
+            except OSError:
+                pass
+            try:
+                os.chown(tmp_path, _old_stat.st_uid, _old_stat.st_gid)
+            except (OSError, AttributeError):
+                pass  # not root, or not POSIX — same-user write, nothing to preserve
+        else:
+            try:
+                os.chmod(tmp_path, 0o644)  # a new page, not the 0600 mkstemp hands out
+            except OSError:
+                pass
+            _inherit_owner(Path(tmp_path))
         os.replace(tmp_path, p)
         try:
             p.resolve().relative_to(WIKI_DIR.resolve())
