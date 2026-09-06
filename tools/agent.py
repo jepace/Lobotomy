@@ -1702,8 +1702,11 @@ def _unhandled_listed_pages(ctx) -> tuple:
         if key in seen:
             continue
         seen.add(key)
-        rel = by_key.get(key)
-        if rel is None:
+        # Same resolver lookup_titles uses. A title-only check here would keep demanding a
+        # page that already exists under this name's slug, and done() would refuse an
+        # ingest that had nothing left to do.
+        rel = _resolve_page(name, by_key)
+        if not rel:
             to_create.append(name)
             continue
         if rel == ctx._current_source_page or rel.startswith("sources/"):
@@ -2194,6 +2197,32 @@ _LEGAL_SUFFIXES = {
 }
 
 
+def _slug_for(name: str) -> str:
+    """The filename a page for `name` would use — the lowercase-hyphenated convention."""
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", name.lower())).strip("-")
+
+
+def _resolve_page(name: str, by_key: dict) -> str:
+    """wiki-relative path of the page for `name`, or "" if there is none.
+
+    Two ways a page can already exist, and both have to be checked or the tools contradict
+    each other. By title, via the title/alias map. And by filename: create_file refuses on
+    the path, so a page whose title: reads "Canada-U.S. Relations" still occupies
+    concepts/canada-us-relations.md, and a title-only lookup would answer NO PAGE right
+    before create_file answers "already exists". That happened, and cost an ingest four
+    rounds bouncing between the two.
+    """
+    rel = by_key.get(name.lower())
+    if rel:
+        return rel
+    slug = _slug_for(name)
+    if slug:
+        for sd in ("entities", "concepts", "synthesis"):
+            if (WIKI_DIR / sd / f"{slug}.md").exists():
+                return f"{sd}/{slug}.md"
+    return ""
+
+
 def _norm_title_key(name: str) -> str:
     """Loose key for spotting that two titles probably name the same thing.
 
@@ -2212,6 +2241,11 @@ def _norm_title_key(name: str) -> str:
     s = re.sub(r"\([^)]*\)", " ", s)          # "... Company (PG&E)" -> "... Company"
     s = s.replace("&", " and ")
     s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+    # Rejoin runs of single letters, so an acronym written with periods matches the same
+    # acronym written without them: "U.S." became "u s" above, and has to end up as "us"
+    # to match "US". Otherwise "Canada-U.S. Relations" and "Canada-US Relations" look like
+    # unrelated names.
+    s = re.sub(r"\b(?:[a-z] )+[a-z]\b", lambda m: m.group(0).replace(" ", ""), s)
     if s.startswith("the "):
         s = s[4:]
     parts = s.split()
@@ -2245,9 +2279,15 @@ def _lookup_titles(args: dict) -> str:
 
     found, missing, near = [], [], False
     for n in names:
-        rel = by_key.get(n.lower())
+        rel = _resolve_page(n, by_key)
         if rel:
-            found.append(f"- {n} → EXISTS at wiki/{rel}")
+            note = ""
+            if not by_key.get(n.lower()):
+                # Matched by filename, not title — say so, or the model reads EXISTS,
+                # opens the page, finds a different name at the top, and concludes the
+                # lookup was wrong about which page this is.
+                note = " (page exists at this name's slug; its title: differs — update it, do not make a second page)"
+            found.append(f"- {n} → EXISTS at wiki/{rel}{note}")
             continue
         cands = [(t, r) for t, r in by_norm.get(_norm_title_key(n), [])
                  if t.lower() != n.lower()]
