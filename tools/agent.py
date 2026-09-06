@@ -1242,6 +1242,7 @@ _fetch_cache_lock = threading.Lock()
 # page is written so it is rebuilt at most once per batch of autolink calls.
 _title_map_cache: list[tuple[str, str]] | None = None  # (title, wiki_rel_path)
 _title_regex_cache: dict = {}  # title -> compiled regex; cleared whenever the map rebuilds
+_title_tokens_cache: dict = {}  # title -> frozenset of \w+ tokens it needs; cleared with the above
 _title_map_built_at: float = 0.0  # time.time() when the cache was last (re)built
 # Files this process wrote through _atomic_write's vetting since the last rebuild, mapped
 # to the exact post-write mtime that was vetted. The staleness backstop exempts a file
@@ -2172,7 +2173,7 @@ def _build_title_map() -> list[tuple[str, str]]:
     memory rather than on disk.
     """
     import re
-    global _title_map_cache, _title_regex_cache, _title_map_built_at, _vetted_mtimes
+    global _title_map_cache, _title_regex_cache, _title_tokens_cache, _title_map_built_at, _vetted_mtimes
     if _title_map_cache is not None:
         stale = False
         for subdir in ("entities", "concepts", "synthesis", "sources"):
@@ -2203,6 +2204,7 @@ def _build_title_map() -> list[tuple[str, str]]:
     # The set of titles is changing (that's why we're rebuilding) — any compiled regex
     # keyed by a title that was renamed or removed would otherwise linger forever.
     _title_regex_cache = {}
+    _title_tokens_cache = {}
     _vetted_mtimes = {}  # superseded: the fresh watermark below covers everything on disk
     _title_map_built_at = time.time()  # captured before the scan, so a write that lands
                                         # mid-scan is still caught as stale on the next call
@@ -2399,8 +2401,32 @@ def _autolink(args: dict) -> str:
     fm_match = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
     frontmatter, body = (fm_match.group(1), content[len(fm_match.group(1)):]) if fm_match else ("", content)
 
+    # Split the body into lines ONCE. This loop used to re-split and re-join the entire
+    # body for every title in the map — 6,866 splits and joins of the whole page to apply
+    # 6,866 regexes, nearly all of which could not match anything.
+    lines = body.split("\n")
+    is_heading = [bool(re.match(r"^#{1,6}\s", ln)) for ln in lines]
+
+    # Which titles could possibly appear here at all. A title matches only if every one of
+    # its words appears literally in the body — bare, or as the display text of a linked
+    # sub-span, since _title_alts still spells the span's words out. So a title needing a
+    # word the page does not contain cannot match, and running its regex is pure waste.
+    # Comparing \w+ tokens rather than the raw words keeps this conservative: "PG&E"
+    # contributes {pg, e}, which over-includes on odd punctuation and never under-includes.
+    #
+    # Computed once from the body as it starts. Substitutions only ever add link syntax,
+    # and a complete [text](url) is consumed by group 1 before group 2 can look inside it,
+    # so no substitution can expose text that makes a previously-impossible title match.
+    body_tokens = set(re.findall(r"\w+", body.lower()))
+
     linked = 0
     for title, link_path in title_map:
+        needed = _title_tokens_cache.get(title)
+        if needed is None:
+            needed = frozenset(re.findall(r"\w+", title.lower()))
+            _title_tokens_cache[title] = needed
+        if needed and not needed <= body_tokens:
+            continue
         # Group 1: an existing complete link — pass through unchanged (never nest links inside).
         # Group 2: the title bare or with a sub-span already linked — replace with new link.
         # Compiling this pattern is the expensive part (_title_alts emits an alternative
@@ -2423,18 +2449,18 @@ def _autolink(args: dict) -> str:
             display = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", m.group(2))
             return f"[{display}]({_lp})"
 
-        new_lines = []
-        for line in body.split("\n"):
-            if re.match(r"^#{1,6}\s", line):
-                new_lines.append(line)
-            else:
-                new_lines.append(combined.sub(_replacer, line))
-        new_body = "\n".join(new_lines)
-        if new_body != body:
-            body = new_body
+        changed = False
+        for i, line in enumerate(lines):
+            if is_heading[i] or not line:
+                continue
+            new_line = combined.sub(_replacer, line)
+            if new_line != line:
+                lines[i] = new_line
+                changed = True
+        if changed:
             linked += 1
 
-    result = body
+    result = "\n".join(lines)
 
     new_content = frontmatter + result
     elapsed = time.time() - _t0_autolink
