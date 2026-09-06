@@ -56,11 +56,13 @@ RSYNC_ARGS="$RSYNC_ARGS --exclude=.gitignore"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=__pycache__"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=.pytest_cache"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=.env"
-RSYNC_ARGS="$RSYNC_ARGS --exclude=deploy.sh"
-RSYNC_ARGS="$RSYNC_ARGS --exclude=README.md"
-RSYNC_ARGS="$RSYNC_ARGS --exclude=CLAUDE.md"
+# Leading slash = repo root only. Without it rsync matches the name at ANY depth, which
+# silently kept tools/README.md off the server along with the root README.md.
+RSYNC_ARGS="$RSYNC_ARGS --exclude=/deploy.sh"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=/README.md"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=/CLAUDE.md"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=server.log*"
-RSYNC_ARGS="$RSYNC_ARGS --exclude=usr/"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=/usr/"
 
 # Exclude data dirs if not full deploy
 if [ "$FULL_DEPLOY" != "1" ]; then
