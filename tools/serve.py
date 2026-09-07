@@ -1252,7 +1252,11 @@ def _mark_inbox_wikified(filename: str) -> None:
         p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
         log.info("Marked wikified: %s", filename)
         _link_raw_source_to_wiki(p, fm.get("url", "").strip())
-        _rebuild_index({})
+        # Repair first, index once, then validate. There used to be a _rebuild_index() here
+        # as well, but the two passes below both modify pages, so that index was stale
+        # before it finished being written and the rebuild after them could never be
+        # skipped — two full rebuilds, seconds apart, on every wikify. Nothing between here
+        # and the rebuild below reads the index; _validate_ingest, which does, runs after.
         result = _fix_wiki_links({})
         log.info("fix_wiki_links: %s", result)
         # Heal before validating, so the report reflects what is actually left wrong

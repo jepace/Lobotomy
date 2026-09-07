@@ -1903,10 +1903,18 @@ def _rebuild_index(args: dict) -> str:
     import re
     _t0_rebuild = time.time()
 
+    # Name the caller. This is called from a dozen places across two modules and several
+    # threads, and a bare "rebuild_index: done" line gives no way to tell a necessary
+    # rebuild from a redundant one when they show up seconds apart in the log.
+    try:
+        _caller = sys._getframe(1).f_code.co_name
+    except (AttributeError, ValueError):
+        _caller = "?"
+
     _fp = _index_inputs_fingerprint()
     if _fp == _index_fingerprint:
-        log.debug("rebuild_index: skipped, nothing changed since last rebuild (%.2fs to check)",
-                  time.time() - _t0_rebuild)
+        log.debug("rebuild_index: skipped for %s, nothing changed (%.2fs to check)",
+                  _caller, time.time() - _t0_rebuild)
         return "Index already up to date — nothing changed since the last rebuild."
 
     def parse_title_updated(text: str) -> tuple[str, str]:
@@ -2053,7 +2061,8 @@ def _rebuild_index(args: dict) -> str:
     # recorded state — otherwise the next call would see their new mtimes as a change and
     # rebuild again, which is the loop this is here to stop.
     _index_fingerprint = _index_inputs_fingerprint()
-    log.debug("rebuild_index: done in %.1fs (%d wiki pages, %d raw files)", time.time() - _t0_rebuild, total, raw_total)
+    log.debug("rebuild_index: done for %s in %.1fs (%d wiki pages, %d raw files)",
+              _caller, time.time() - _t0_rebuild, total, raw_total)
     return (f"Rebuilt wiki/index.md ({total} pages), subdirectory indexes, "
             f"and raw/index.md ({raw_total} raw files).")
 
