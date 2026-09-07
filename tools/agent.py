@@ -2577,8 +2577,9 @@ def relink_all(progress=None, should_stop=None, pages=None, dry_run=False) -> di
                  if p.name != "index.md" and p.relative_to(WIKI_DIR).as_posix() != "log.md"]
     total = len(pages)
     begin_write_scope()
-    _build_title_map()  # once, up front — every page reuses the cache
+    _titles_start = len(_build_title_map())  # once, up front — every page reuses the cache
     changed = scanned = 0
+    changed_pages = []
     t0 = time.time()
     log.info("relink_all: starting over %d page(s)%s", total, " (dry run)" if dry_run else "")
     for p in pages:
@@ -2591,13 +2592,23 @@ def relink_all(progress=None, should_stop=None, pages=None, dry_run=False) -> di
                              "dry_run": dry_run})
             if res.startswith(("Autolinked", "Would autolink")):
                 changed += 1
+                changed_pages.append(p.relative_to(WIKI_DIR).as_posix())
         except OSError as e:
             log.warning("relink_all: %s failed: %s", p, e)
         if progress:
             progress(scanned, total, p.relative_to(WIKI_DIR).as_posix())
     elapsed = time.time() - t0
-    log.info("relink_all: %d/%d page(s) scanned, %d changed, %.0fs", scanned, total, changed, elapsed)
-    return {"scanned": scanned, "total": total, "changed": changed, "elapsed": elapsed}
+    # A page is autolinked against the titles that exist at that moment, so a title created
+    # while the sweep is running is missed by every page already passed — and the next
+    # sweep picks those up, which looks like the tool failing to converge. Report the
+    # movement so that is visible rather than mysterious. Common single-word titles are the
+    # worst case: one new page called "Block" or "Acting" matches hundreds of pages.
+    _titles_end = len(_build_title_map())
+    log.info("relink_all: %d/%d page(s) scanned, %d changed, %.0fs (titles %d -> %d)",
+             scanned, total, changed, elapsed, _titles_start, _titles_end)
+    return {"scanned": scanned, "total": total, "changed": changed, "elapsed": elapsed,
+            "titles_start": _titles_start, "titles_end": _titles_end,
+            "changed_pages": changed_pages}
 
 
 def _fix_wiki_links(_args: dict) -> str:

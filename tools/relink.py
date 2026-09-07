@@ -66,5 +66,23 @@ res = relink_all(progress=_progress, pages=pages, dry_run=DRY)
 
 verb = "would be changed" if DRY else "changed"
 print(f"\n{res['changed']} of {res['scanned']} page(s) {verb} in {res['elapsed']:.1f}s.")
+
+if res["changed"]:
+    shown = res["changed_pages"][:40]
+    print("\n" + "\n".join(f"  {p}" for p in shown))
+    if res["changed"] > len(shown):
+        print(f"  … and {res['changed'] - len(shown)} more")
+
+# A page is linked against the titles that exist when it is reached, so a title created
+# mid-sweep is missed by everything already passed — and the next run picks those up. That
+# reads as the tool failing to settle, so say plainly when it happened.
+if res["titles_end"] != res["titles_start"]:
+    delta = res["titles_end"] - res["titles_start"]
+    print(f"\nNote: the title count changed during this run "
+          f"({res['titles_start']} -> {res['titles_end']}, {delta:+d}). Something was "
+          f"writing pages while this ran — an ingest, most likely. Pages already passed "
+          f"could not see those titles, so another run will find more to do. Run it with "
+          f"the queue idle for a result that settles.")
+
 if DRY and res["changed"]:
-    print("Dry run — nothing was written. Re-run without --dry-run to apply.")
+    print("\nDry run — nothing was written. Re-run without --dry-run to apply.")
