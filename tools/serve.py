@@ -2856,7 +2856,10 @@ def inbox_archive():
                 fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
         fm_lines.append("---")
         src.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
-        _rebuild_index({})
+        # No _rebuild_index here. Archiving flips one boolean in one raw file's
+        # frontmatter, and raw/index.md does not show archived state — the rebuild it used
+        # to trigger reread all ~7,400 wiki pages and ~1,600 raw files to produce a
+        # byte-identical file, several seconds, inside the request.
     except Exception as e:
         log.error("inbox_archive failed for %s: %s", name, e)
         return {"error": str(e)}, 500
@@ -2893,7 +2896,7 @@ def inbox_unarchive():
                 fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
         fm_lines.append("---")
         p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
-        _rebuild_index({})
+        # Same as archiving: nothing the index renders has changed.
     except Exception as e:
         log.error("inbox_unarchive failed for %s: %s", name, e)
         return {"error": str(e)}, 500
