@@ -137,7 +137,10 @@ function renderRelink(s) {
     status.textContent = 'Failed: ' + s.error;
   } else if (s.running) {
     const pct = s.total ? Math.floor(100 * s.scanned / s.total) : 0;
-    status.textContent = `${s.scanned} / ${s.total || '?'} pages (${pct}%) — ${s.current || 'starting…'}`;
+    // "at <page>" is where the scan has reached, not a page that changed — the count
+    // beside it is what says whether anything is actually being rewritten.
+    status.textContent = `scanned ${s.scanned} / ${s.total || '?'} (${pct}%) · `
+                       + `${s.changed} changed · at ${s.current || 'starting…'}`;
     btn.textContent = 'Relinking…';
   } else if (s.finished_at) {
     const mins = s.elapsed ? ` in ${Math.round(s.elapsed / 60)} min` : '';

@@ -55,11 +55,15 @@ print(f"{'Checking' if DRY else 'Relinking'} {label}…")
 _last = [time.time()]
 
 
-def _progress(done, total, path):
+def _progress(done, total, path, changed):
     # Only for the whole-wiki run, where this takes minutes and silence looks like a hang.
+    # "at <page>" deliberately: this names where the scan has got to, not a page that was
+    # changed. Those are listed at the end, and confusing the two makes a sweep that
+    # changed one page look like it rewrote hundreds.
     if pages is None and (time.time() - _last[0] > 5 or done == total):
         _last[0] = time.time()
-        print(f"  {done}/{total} ({100 * done // total}%) — {path}", flush=True)
+        print(f"  scanned {done}/{total} ({100 * done // total}%) · "
+              f"{changed} changed so far · at {path}", flush=True)
 
 
 res = relink_all(progress=_progress, pages=pages, dry_run=DRY)
@@ -69,9 +73,13 @@ print(f"\n{res['changed']} of {res['scanned']} page(s) {verb} in {res['elapsed']
 
 if res["changed"]:
     shown = res["changed_pages"][:40]
-    print("\n" + "\n".join(f"  {p}" for p in shown))
+    header = "Pages that would change:" if DRY else "Pages updated:"
+    print(f"\n{header}")
+    print("\n".join(f"  {p}" for p in shown))
     if res["changed"] > len(shown):
         print(f"  … and {res['changed'] - len(shown)} more")
+else:
+    print("\nNothing to do — every page already links everything it can.")
 
 # A page is linked against the titles that exist when it is reached, so a title created
 # mid-sweep is missed by everything already passed — and the next run picks those up. That

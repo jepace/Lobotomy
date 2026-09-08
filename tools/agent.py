@@ -2605,7 +2605,10 @@ def relink_all(progress=None, should_stop=None, pages=None, dry_run=False) -> di
         except OSError as e:
             log.warning("relink_all: %s failed: %s", p, e)
         if progress:
-            progress(scanned, total, p.relative_to(WIKI_DIR).as_posix())
+            # `changed` too, not just position: the page named here is only where the scan
+            # has reached, and without a running count there is no way to tell a sweep
+            # that is finding work from one that is finding none.
+            progress(scanned, total, p.relative_to(WIKI_DIR).as_posix(), changed)
     elapsed = time.time() - t0
     # A page is autolinked against the titles that exist at that moment, so a title created
     # while the sweep is running is missed by every page already passed — and the next

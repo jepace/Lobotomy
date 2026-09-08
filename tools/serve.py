@@ -1777,9 +1777,9 @@ def wiki_relink_start():
     _relink_stop.clear()
 
     def _run():
-        def _progress(done, total, path):
+        def _progress(done, total, path, changed):
             with _relink_lock:
-                _relink_state.update(scanned=done, total=total, current=path)
+                _relink_state.update(scanned=done, total=total, current=path, changed=changed)
         try:
             res = relink_all(progress=_progress, should_stop=_relink_stop.is_set)
             with _relink_lock:
