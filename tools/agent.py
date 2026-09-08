@@ -937,15 +937,7 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
     # a duplicate can slip through even when the byte count looks like normal growth.
     # Repetition is never correct for a wiki page, so this refuses regardless of
     # allow_shrink.
-    _seen_heads: dict = {}
-    _dupe_keys: set = set()
-    _dupes = []
-    for _hm in _re.finditer(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", _new_body, _re.MULTILINE):
-        _key = (len(_hm.group(1)), _hm.group(2).strip().lower())
-        if _key in _seen_heads and _key not in _dupe_keys:
-            _dupe_keys.add(_key)
-            _dupes.append(_seen_heads[_key])
-        _seen_heads.setdefault(_key, _hm.group(2).strip())
+    _dupes = _heading_dupes(_new_body)
     if _dupes:
         return (
             f"Error: update_file refused — the new content repeats "
@@ -1019,6 +1011,37 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
     return f"Written {len(content)} bytes to {path}"
+
+
+def _norm_heading(s: str) -> str:
+    """Comparison key for headings. Two headings that differ only by trailing punctuation,
+    case, emphasis or spacing name the same section — treating them as different is how a
+    page ends up with 'Key Policies' and 'Key Policies:' side by side."""
+    s = re.sub(r"[*_`]", "", s).strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    return s.rstrip(" :.-–—")
+
+
+def _heading_dupes(body: str) -> "list[str]":
+    """Headings appearing more than once in `body`, in the form they were first written.
+
+    Duplicate headings are never correct on a wiki page, and they arrive by several
+    routes — a whole-page rewrite that pastes an old section back beside its replacement,
+    a section update whose content repeats the heading, a create that repeats one. Every
+    write path checks through here so they cannot differ about what counts as a duplicate.
+    Compared at the same level and on the normalized key, so '## Foo' and '## Foo:' collide
+    while '## Foo' and '### Foo' — a heading and a genuine subheading — do not.
+    """
+    seen: dict = {}
+    dupe_keys: set = set()
+    dupes = []
+    for m in re.finditer(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE):
+        key = (len(m.group(1)), _norm_heading(m.group(2)))
+        if key in seen and key not in dupe_keys:
+            dupe_keys.add(key)
+            dupes.append(seen[key])
+        seen.setdefault(key, m.group(2).strip())
+    return dupes
 
 
 def _sections_fully_shown(chunk: str, reached_eof: bool) -> "list[str]":
@@ -1180,8 +1203,32 @@ def _update_section(args: dict) -> str:
             f"content with your additions merged in."
         )
 
+    # The content is placed UNDER the existing heading, so a copy of that heading at the
+    # top of it lands directly beneath the real one — "## Key Policies" twice, with the
+    # resent section body under the second. Asking for "the section's full new text"
+    # invites exactly this, and it is unambiguous what was meant, so drop it rather than
+    # refuse. Only an exact match for this section's own heading; a genuine subheading
+    # (deeper level, or different text) is left alone.
+    new_text = re.sub(r"^\s*#{1,6}[ \t]*(\S.*?)[ \t]*\n+",
+                      lambda m: "" if _norm_heading(m.group(1)) == _norm_heading(section) else m.group(0),
+                      new_text, count=1)
+
     addition = _strip_broken_wiki_links(new_text, p)
     new_body = body[:start] + "\n\n" + addition + "\n\n" + body[end:].lstrip("\n")
+
+    # Whatever is left must still not collide with the rest of the page — the content can
+    # carry headings of its own, and one of those matching a section elsewhere would split
+    # the page in two places that both claim the same name.
+    _dupes = _heading_dupes(new_body)
+    if _dupes:
+        return (
+            f"Error: update_section refused — the page would then have "
+            f"{'these headings' if len(_dupes) > 1 else 'this heading'} twice: "
+            f"{', '.join(repr(d) for d in _dupes)}. The content you send for a section is "
+            f"placed under the heading that is already there, so it must not repeat a "
+            f"heading the page already has. Send the section's body only."
+        )
+
     new_content = frontmatter + new_body
     if not new_content.endswith("\n"):
         new_content += "\n"
@@ -1248,6 +1295,18 @@ def _append_section(args: dict) -> str:
     addition = _strip_broken_wiki_links(text, p)
 
     head_m = re.search(r"^(#{1,6})[ \t]*" + re.escape(section) + r"[ \t]*$", body, re.MULTILINE | re.IGNORECASE)
+    if head_m is None:
+        # Fall back to a normalized comparison before concluding the section is new. An
+        # exact match misses "Key Policies" when asked for "Key Policies:", and the miss is
+        # expensive: this tool then creates a second section, leaving the page with two
+        # headings for one subject and the material split across them.
+        _want = _norm_heading(section)
+        for _m in re.finditer(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE):
+            if _norm_heading(_m.group(2)) == _want:
+                head_m = _m
+                log.info("append_section: '%s' matched existing heading '%s' in %s",
+                         section, _m.group(2).strip(), path)
+                break
     if head_m:
         level = len(head_m.group(1))
         # End of this section = the next heading at the same or a higher level.
@@ -2941,6 +3000,17 @@ def _create_file(args: dict) -> str:
     # type: line silently disables ## Sources rendering downstream.
     _type_m = re.match(r"[A-Za-z][A-Za-z0-9_-]*", str(pg_type).strip())
     pg_type = _type_m.group(0).lower() if _type_m else ""
+    # Same structural rule as every other write path: a page never has one heading twice.
+    # Cheaper to refuse here than to let a page be born needing a manual merge.
+    _dupes = _heading_dupes(body)
+    if _dupes:
+        return (
+            f"Error: create_file refused — the body repeats "
+            f"{'these headings' if len(_dupes) > 1 else 'this heading'}: "
+            f"{', '.join(repr(d) for d in _dupes)}. Merge everything belonging under each "
+            f"one into a single section and resend."
+        )
+
     if pg_type not in _VALID_PAGE_TYPES:
         return (f"Error: type must be one of {', '.join(sorted(_VALID_PAGE_TYPES))}. "
                 f"Got: {args.get('type')!r}")

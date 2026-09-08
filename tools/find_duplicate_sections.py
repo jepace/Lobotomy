@@ -19,21 +19,16 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from agent import WIKI_DIR, wiki_pages
-
-HEAD_RE = re.compile(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", re.MULTILINE)
+from agent import WIKI_DIR, wiki_pages, _heading_dupes
 
 found = 0
 for p in wiki_pages():
     text = p.read_text(encoding="utf-8", errors="replace")
     body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
-    seen = {}
-    dupes = []
-    for m in HEAD_RE.finditer(body):
-        key = (len(m.group(1)), m.group(2).strip().lower())
-        if key in seen and m.group(2).strip() not in dupes:
-            dupes.append(m.group(2).strip())
-        seen[key] = True
+    # The same check the write paths use, so this reports exactly what they now refuse —
+    # including headings differing only by trailing punctuation or case ("Key Policies"
+    # beside "Key Policies:"), which an exact comparison treats as two separate sections.
+    dupes = _heading_dupes(body)
     if dupes:
         found += 1
         rel = p.relative_to(WIKI_DIR)
