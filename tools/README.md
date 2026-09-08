@@ -145,13 +145,20 @@ operating subsidiary normalize together too and are correctly separate.
 python3 tools/find_duplicate_pages.py
 ```
 
-### `find_duplicate_sections.py` — find repeated headings within a page
-Reports pages carrying the same heading twice, which happens when a whole-page rewrite
-loses track and leaves an old copy of a section beside its replacement. Also report-only —
-deciding which copy is current is a human call.
+### `find_duplicate_sections.py` — find and merge repeated headings within a page
+Reports pages carrying the same heading twice. The write paths refuse these now, but pages
+damaged before that keep their duplicates.
+
+`--fix` merges only what needs no judgment: one copy empty (what an echoed heading in
+`update_section` content left behind), the copies identical, or one body containing all the
+others. Two copies with genuinely divergent content are left alone and listed for you —
+choosing what survives isn't mechanical. Repairs go through the normal write path, so every
+page changed is revertable from its History view.
 
 ```sh
-python3 tools/find_duplicate_sections.py
+python3 tools/find_duplicate_sections.py               # report only
+python3 tools/find_duplicate_sections.py --fix --dry-run
+python3 tools/find_duplicate_sections.py --fix
 ```
 
 ### `lint.sh` — broken-link check, shell only
