@@ -1219,14 +1219,21 @@ def _update_section(args: dict) -> str:
     # Whatever is left must still not collide with the rest of the page — the content can
     # carry headings of its own, and one of those matching a section elsewhere would split
     # the page in two places that both claim the same name.
-    _dupes = _heading_dupes(new_body)
+    #
+    # Only duplicates this edit INTRODUCES. A page that already has them — and there are
+    # plenty, made before the write paths refused them — must stay editable: update_section
+    # rewrites one section's body and cannot merge a duplicate pair elsewhere on the page,
+    # so refusing it for one is a deadlock with no move that succeeds. Blocking every edit
+    # to a damaged page also blocks the edits that would improve it.
+    _dupes = [d for d in _heading_dupes(new_body)
+              if _norm_heading(d) not in {_norm_heading(x) for x in _heading_dupes(body)}]
     if _dupes:
         return (
-            f"Error: update_section refused — the page would then have "
-            f"{'these headings' if len(_dupes) > 1 else 'this heading'} twice: "
-            f"{', '.join(repr(d) for d in _dupes)}. The content you send for a section is "
-            f"placed under the heading that is already there, so it must not repeat a "
-            f"heading the page already has. Send the section's body only."
+            f"Error: update_section refused — the content you sent would add a second "
+            f"{'copy of these headings' if len(_dupes) > 1 else 'copy of this heading'}: "
+            f"{', '.join(repr(d) for d in _dupes)}. The content is placed under the heading "
+            f"that is already there, so it must not repeat a heading the page already has. "
+            f"Send the section's body only."
         )
 
     new_content = frontmatter + new_body
