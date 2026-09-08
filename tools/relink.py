@@ -57,13 +57,13 @@ _last = [time.time()]
 
 def _progress(done, total, path, changed):
     # Only for the whole-wiki run, where this takes minutes and silence looks like a hang.
-    # "at <page>" deliberately: this names where the scan has got to, not a page that was
-    # changed. Those are listed at the end, and confusing the two makes a sweep that
-    # changed one page look like it rewrote hundreds.
+    # Deliberately no page name: the page being scanned when the timer happens to fire
+    # carries no information, and printing it made a sweep that changed one page look like
+    # it had rewritten every page named. What changed is listed at the end.
     if pages is None and (time.time() - _last[0] > 5 or done == total):
         _last[0] = time.time()
-        print(f"  scanned {done}/{total} ({100 * done // total}%) · "
-              f"{changed} changed so far · at {path}", flush=True)
+        print(f"  {done}/{total} ({100 * done // total}%) · {changed} changed so far",
+              flush=True)
 
 
 res = relink_all(progress=_progress, pages=pages, dry_run=DRY)
