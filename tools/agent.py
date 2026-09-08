@@ -2999,45 +2999,15 @@ def _create_file(args: dict) -> str:
     if not url and pg_type == "source":
         url = _ctx()._current_inbox_url
 
-    if not path or not title or not pg_type:
-        return "Error: path, title, and type are required."
+    if not path:
+        return ("Error: create_file requires a 'path', e.g. "
+                "{\"path\": \"wiki/entities/foo.md\", \"title\": \"Foo\", \"type\": \"entity\", "
+                "\"body\": \"...\"}. Resend the call.")
 
-    # The LLM occasionally appends junk to the type argument (stray tokens, template
-    # placeholders). Keep only the leading identifier and validate it — a malformed
-    # type: line silently disables ## Sources rendering downstream.
-    _type_m = re.match(r"[A-Za-z][A-Za-z0-9_-]*", str(pg_type).strip())
-    pg_type = _type_m.group(0).lower() if _type_m else ""
-    # Same structural rule as every other write path: a page never has one heading twice.
-    # Cheaper to refuse here than to let a page be born needing a manual merge.
-    _dupes = _heading_dupes(body)
-    if _dupes:
-        return (
-            f"Error: create_file refused — the body repeats "
-            f"{'these headings' if len(_dupes) > 1 else 'this heading'}: "
-            f"{', '.join(repr(d) for d in _dupes)}. Merge everything belonging under each "
-            f"one into a single section and resend."
-        )
-
-    if pg_type not in _VALID_PAGE_TYPES:
-        return (f"Error: type must be one of {', '.join(sorted(_VALID_PAGE_TYPES))}. "
-                f"Got: {args.get('type')!r}")
-
-    # A page title is never all-lowercase under the "Title-case, human readable" rule —
-    # this is the cheapest reliable signal that the LLM copied a bare name straight out of
-    # a ## Concepts/## Entities list without capitalizing it. Refuse rather than silently
-    # creating a lowercase-titled page: matching is case-insensitive (search_wiki,
-    # lookup_titles, the autolinker) so this never breaks linking, but it makes the page
-    # display lowercase everywhere — the index, ## Sources back-references, headings.
-    # Only single-word-or-more alphabetic titles are checked; titles the LLM cannot get
-    # meaningfully wrong (pure numbers, etc.) are left alone.
-    if title and title == title.lower() and any(c.isalpha() for c in title):
-        return (
-            f"Error: create_file refused — title {title!r} is all lowercase. Page titles are "
-            f"Title Case (e.g. \"European Union\", not \"european union\"). Resend create_file "
-            f"with the title properly capitalized. Do not just call .title() blindly — keep "
-            f"acronyms like \"EU\" or \"NASA\" and proper nouns capitalized correctly."
-        )
-
+    # Path first, then the arguments, then the content. Checking the content of a
+    # page before checking whether it may be created at all reports the wrong
+    # problem: an ingest was told its type was invalid for a page that already
+    # existed and should never have been created, and spent a round on it.
     p = REPO_ROOT / path
     try:
         p.resolve().relative_to(WIKI_DIR.resolve())
@@ -3055,27 +3025,10 @@ def _create_file(args: dict) -> str:
             f"capitals. Resend with a corrected path."
         )
 
-    # "Required sections" for source pages were documented and never checked — and a
-    # source page is immutable once written ("you get one shot"), so a thin one is
-    # permanent. Worse, Steps 5-6 and done()'s completeness check both read the page's
-    # ## Entities / ## Concepts lists: if those sections are missing, the whole
-    # entity/concept chain has nothing to work from and silently does nothing. Verify
-    # before writing, so a refusal costs nothing and the agent can simply resend.
-    if pg_type == "source":
-        _required = ("Summary", "Claims", "Entities", "Concepts")
-        _missing = [s for s in _required
-                    if not re.search(r"^#{1,6}\s*" + s + r"\s*$", body, re.MULTILINE)]
-        if _missing:
-            return (
-                f"Error: create_file refused — the source page is missing required "
-                f"section(s): {', '.join(_missing)}.\n\n"
-                f"A source page cannot be edited after it is written, and Steps 5 and 6 "
-                f"read its '## Entities' and '## Concepts' lists to decide which pages to "
-                f"create or update — without them this ingest cannot do its job. Add the "
-                f"missing section(s) as '## <Name>' headings and resend create_file with "
-                f"the complete body."
-            )
-
+    # Existence is checked here, before the argument and content checks below,
+    # because it needs nothing but the path and it changes what the caller should
+    # do: there is no point reporting a missing title for a page that must not be
+    # created at all. Getting this second cost an ingest a full round.
     _subdir = p.parent.name
 
     if p.exists():
@@ -3114,6 +3067,71 @@ def _create_file(args: dict) -> str:
             f"do NOT call read_file first.\n\n"
             f'<file path="{path}">\n{_current}\n</file>'
         )
+
+    _missing_args = [k for k in ("title", "type") if not args.get(k)]
+    if _missing_args:
+        return (f"Error: create_file is missing {' and '.join(_missing_args)}. "
+                f"You sent: {sorted(k for k in args if args.get(k))}. Resend with "
+                f"{' and '.join(_missing_args)} included.")
+
+    # The LLM occasionally appends junk to the type argument (stray tokens, template
+    # placeholders). Keep only the leading identifier and validate it — a malformed
+    # type: line silently disables ## Sources rendering downstream.
+    _type_m = re.match(r"[A-Za-z][A-Za-z0-9_-]*", str(pg_type).strip())
+    pg_type = _type_m.group(0).lower() if _type_m else ""
+    # Same structural rule as every other write path: a page never has one heading twice.
+    # Cheaper to refuse here than to let a page be born needing a manual merge.
+    _dupes = _heading_dupes(body)
+    if _dupes:
+        return (
+            f"Error: create_file refused — the body repeats "
+            f"{'these headings' if len(_dupes) > 1 else 'this heading'}: "
+            f"{', '.join(repr(d) for d in _dupes)}. Merge everything belonging under each "
+            f"one into a single section and resend."
+        )
+
+    if pg_type not in _VALID_PAGE_TYPES:
+        return (f"Error: type must be one of {', '.join(sorted(_VALID_PAGE_TYPES))}. "
+                f"Got: {args.get('type')!r}")
+
+    # A page title is never all-lowercase under the "Title-case, human readable" rule —
+    # this is the cheapest reliable signal that the LLM copied a bare name straight out of
+    # a ## Concepts/## Entities list without capitalizing it. Refuse rather than silently
+    # creating a lowercase-titled page: matching is case-insensitive (search_wiki,
+    # lookup_titles, the autolinker) so this never breaks linking, but it makes the page
+    # display lowercase everywhere — the index, ## Sources back-references, headings.
+    # Only single-word-or-more alphabetic titles are checked; titles the LLM cannot get
+    # meaningfully wrong (pure numbers, etc.) are left alone.
+    if title and title == title.lower() and any(c.isalpha() for c in title):
+        return (
+            f"Error: create_file refused — title {title!r} is all lowercase. Page titles are "
+            f"Title Case (e.g. \"European Union\", not \"european union\"). Resend create_file "
+            f"with the title properly capitalized. Do not just call .title() blindly — keep "
+            f"acronyms like \"EU\" or \"NASA\" and proper nouns capitalized correctly."
+        )
+
+
+    # "Required sections" for source pages were documented and never checked — and a
+    # source page is immutable once written ("you get one shot"), so a thin one is
+    # permanent. Worse, Steps 5-6 and done()'s completeness check both read the page's
+    # ## Entities / ## Concepts lists: if those sections are missing, the whole
+    # entity/concept chain has nothing to work from and silently does nothing. Verify
+    # before writing, so a refusal costs nothing and the agent can simply resend.
+    if pg_type == "source":
+        _required = ("Summary", "Claims", "Entities", "Concepts")
+        _missing = [s for s in _required
+                    if not re.search(r"^#{1,6}\s*" + s + r"\s*$", body, re.MULTILINE)]
+        if _missing:
+            return (
+                f"Error: create_file refused — the source page is missing required "
+                f"section(s): {', '.join(_missing)}.\n\n"
+                f"A source page cannot be edited after it is written, and Steps 5 and 6 "
+                f"read its '## Entities' and '## Concepts' lists to decide which pages to "
+                f"create or update — without them this ingest cannot do its job. Add the "
+                f"missing section(s) as '## <Name>' headings and resend create_file with "
+                f"the complete body."
+            )
+
 
     # Only one source page per ingest session.
     if _subdir == "sources" and _ctx()._current_source_page:
