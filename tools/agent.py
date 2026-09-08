@@ -2278,11 +2278,16 @@ def _build_title_map() -> list[tuple[str, str]]:
 
     raw: list[tuple[str, str]] = []   # (title_or_alias, wiki_rel_path_str)
     seen: set[str] = set()
+    # sorted(), not bare glob(): glob yields directory order, which the filesystem is free
+    # to change when files are rewritten. Two pages sharing a title are resolved
+    # first-one-wins, so unsorted order means which page a title links to could differ
+    # between two builds over an identical set of files — and the autolinker would then
+    # rewrite those links back and forth on every pass, never converging.
     for subdir in ("entities", "concepts", "synthesis", "sources"):
         d = WIKI_DIR / subdir
         if not d.is_dir():
             continue
-        for f in d.glob("*.md"):
+        for f in sorted(d.glob("*.md")):
             if f.name == "index.md":
                 continue
             text = f.read_text(encoding="utf-8", errors="replace")
@@ -2299,7 +2304,11 @@ def _build_title_map() -> list[tuple[str, str]]:
                         if akey not in seen:
                             seen.add(akey)
                             raw.append((alias, wiki_rel))
-    raw.sort(key=lambda x: -len(x[0]))
+    # Longest title first so an overlapping longer title wins; the title itself as
+    # tiebreak so equal-length titles have a fixed order rather than whatever order
+    # they happened to be read in. Python's sort is stable, so without the tiebreak
+    # the input order leaked straight through.
+    raw.sort(key=lambda x: (-len(x[0]), x[0].lower()))
     _title_map_cache = raw
     log.debug("built title map with %d entries", len(raw))
     return _title_map_cache
