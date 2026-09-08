@@ -12,11 +12,17 @@ routes made them, and each leaves different wreckage:
   * A whole-page rewrite that pasted an old copy of a section beside its replacement,
     leaving two similar-but-different bodies.
 
---fix repairs only what needs no judgment:
+--fix repairs only what needs no judgment, in this order:
 
-  empty      one copy has no body at all      -> drop that copy
-  identical  the copies have the same body    -> keep one
-  contained  one body contains all the others -> keep the one that contains them
+  empty      one copy has no body at all       -> drop that copy
+  identical  the copies say the same thing     -> keep one
+  contained  one body contains all the others  -> keep the one that contains them
+  superset   one copy holds every line of the  -> keep it
+             others, added to or reordered
+
+Comparison ignores markdown link syntax, since the commonest reason two copies of the same
+prose differ is that one was autolinked and the other was not — and where copies tie, the
+one with more markup is kept, so the linked version survives.
 
 Two copies with genuinely divergent content are left alone and listed, because choosing
 what survives is a human call. Repairs go through the normal write path, so every page
@@ -61,7 +67,21 @@ def sections(body: str):
 
 
 def norm_body(s: str) -> str:
+    """Comparison key for two copies of a section.
+
+    Markdown links collapse to their display text, because the single biggest reason two
+    copies of the same prose look different is that one was autolinked and the other was
+    not — the stale copy predates the link, or the autolinker reached one and not the
+    other. Comparing the words rather than the markup is what makes those recognisable as
+    the same content.
+    """
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)
     return re.sub(r"\s+", " ", s).strip()
+
+
+def lines_of(s: str) -> "set[str]":
+    """Non-trivial lines of a section body, normalized — for the superset test."""
+    return {ln for ln in (norm_body(x) for x in s.splitlines()) if len(ln) > 2}
 
 
 def repair(body: str):
@@ -82,19 +102,34 @@ def repair(body: str):
             return body, merged, manual
 
         name = secs[target[0]][4]
-        bodies = [norm_body(body[secs[i][1]:secs[i][2]]) for i in target]
+        raw = [body[secs[i][1]:secs[i][2]] for i in target]
+        bodies = [norm_body(r) for r in raw]
+
+        # Keep the copy with the most raw text among equally-good candidates: if two copies
+        # say the same thing and one is autolinked, the linked one is the one to keep.
+        def _drop_all_but(keep_i, label):
+            return [target[i] for i in range(len(target)) if i != keep_i], label
 
         drop = how = None
         if any(b == "" for b in bodies):
-            keep = max(range(len(bodies)), key=lambda i: len(bodies[i]))
-            drop, how = [target[i] for i in range(len(target)) if i != keep], "empty"
+            drop, how = _drop_all_but(max(range(len(bodies)), key=lambda i: len(bodies[i])), "empty")
         elif len(set(bodies)) == 1:
-            drop, how = target[1:], "identical"
+            drop, how = _drop_all_but(max(range(len(raw)), key=lambda i: len(raw[i])), "identical")
         else:
             holder = next((i for i in range(len(bodies))
                            if all(b in bodies[i] for b in bodies)), None)
             if holder is not None:
-                drop, how = [target[i] for i in range(len(target)) if i != holder], "contained"
+                drop, how = _drop_all_but(holder, "contained")
+            else:
+                # Nothing is a literal substring of anything, but one copy may still carry
+                # every line the others do — the usual shape when material was added or
+                # reordered rather than rewritten. Losing nothing is the bar, so this only
+                # fires when every non-trivial line of every other copy is present.
+                sets = [lines_of(r) for r in raw]
+                sup = next((i for i in range(len(sets))
+                            if sets[i] and all(s <= sets[i] for s in sets)), None)
+                if sup is not None:
+                    drop, how = _drop_all_but(sup, "superset")
 
         if drop is None:
             skip.add(key)          # leave it in place; do not reconsider it
@@ -110,6 +145,12 @@ def repair(body: str):
 found = pages_fixed = 0
 still_manual = []
 for p in wiki_pages():
+    # log.md repeats "## [date] ingest | title" every time a source is re-ingested — that
+    # is the record working correctly, not damage, and it is append-only besides. index.md
+    # files are generated. Neither is a page a human edits, so neither belongs here.
+    rel_posix = p.relative_to(WIKI_DIR).as_posix()
+    if p.name == "index.md" or rel_posix == "log.md":
+        continue
     text = p.read_text(encoding="utf-8", errors="replace")
     fm_m = re.match(r"^(---\s*\n.*?\n---\s*\n)", text, re.DOTALL)
     fm, body = (fm_m.group(1), text[fm_m.end():]) if fm_m else ("", text)
@@ -119,7 +160,7 @@ for p in wiki_pages():
     if not _heading_dupes(body):
         continue
     found += 1
-    rel = p.relative_to(WIKI_DIR).as_posix()
+    rel = rel_posix
 
     if not FIX:
         print(f"{rel}: {', '.join(_heading_dupes(body))}")
