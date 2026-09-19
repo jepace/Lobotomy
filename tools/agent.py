@@ -1264,11 +1264,25 @@ def _update_section(args: dict) -> str:
         _pct = 100 - int(len(new_text) / len(old_text) * 100)
         log.warning("update_section: refused %s '%s' — would shrink %d%% (%d -> %d chars)",
                     path, section, _pct, len(old_text), len(new_text))
+        # "Resend it with your additions merged in" is the right advice for a section the
+        # model can reproduce, and unfollowable for one it cannot — which is how this
+        # refusal came to be hit twice in a row on a 14K section and the ingest abandoned
+        # the page. Naming append_section as the way through costs nothing when merging
+        # was possible (the model just merges) and is the only move that works when it was
+        # not. It stays the fallback, not the default: appending instead of merging is
+        # what turns a synthesis into a pile, so the wording only offers it for material
+        # that is genuinely new.
         return (
             f"Error: update_section refused — this would cut '{section}' by {_pct}% "
             f"({len(old_text)} chars now, {len(new_text)} in what you sent). Folding in a new "
-            f"source should preserve what is already there. Resend the section's existing "
-            f"content with your additions merged in."
+            f"source should preserve what is already there.\n\n"
+            f"If you can reproduce the section, resend it with your additions merged into "
+            f"the existing text — that is the better result.\n\n"
+            f"If you cannot — this section is long, and re-emitting it in full is where "
+            f"that fails — then do NOT keep retrying a shortened version: call "
+            f"append_section(path, section, text) with only the new material. That adds it "
+            f"without touching what is already there. Retrying this call with another "
+            f"condensed rewrite will be refused again."
         )
 
     # The content is placed UNDER the existing heading, so a copy of that heading at the
