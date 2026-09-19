@@ -1721,6 +1721,18 @@ def _linkify_summary(text: str) -> str:
     return _WIKI_PATH_RE.sub(_replace, text)
 
 
+def _failure_reason(result, ok: bool) -> str:
+    """One-line why, for the log's tool-call list. Empty for calls that succeeded."""
+    if ok or not isinstance(result, str):
+        return ""
+    # The refusals lead with "Error: <tool> refused — <reason>"; keep the reason, drop the
+    # boilerplate and the recovery instructions and any content handed back after them.
+    text = result.split("\n", 1)[0]
+    text = re.sub(r"^Error:\s*", "", text)
+    text = re.sub(r"^\w+ refused\s*[—-]\s*", "", text)
+    return text[:160].strip()
+
+
 def _auto_write_log_entry() -> None:
     """Write a log entry automatically when done() fires and files were touched."""
     import datetime, re as _re
@@ -1785,9 +1797,14 @@ def _auto_write_log_entry() -> None:
     tool_calls = _ctx()._session_tool_calls
     if tool_calls:
         lines.append("- **Tool calls**:")
-        for fn, arg, ok in tool_calls:
+        for _call in tool_calls:
+            fn, arg, ok = _call[0], _call[1], _call[2]
+            why = _call[3] if len(_call) > 3 else ""
             mark = "✓" if ok else "✗"
-            lines.append(f"  - {mark} `{fn}` {arg}")
+            # A bare ✗ says a call failed but not what to change, which makes the log
+            # useless for the question it is most often asked: why did this ingest take
+            # three attempts at one section? The reason is the whole answer.
+            lines.append(f"  - {mark} `{fn}` {arg}" + (f" — {why}" if why else ""))
 
     incomplete = _ctx()._session_incomplete
     if incomplete:
@@ -4035,7 +4052,8 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
             # Record for log entry — skip done() itself
             if fn_name != "done":
                 ok = not (isinstance(result, str) and result.lower().startswith("error"))
-                _ctx()._session_tool_calls.append((fn_name, str(list(args.values())[:1])[:80].strip("[]'\""), ok))
+                _ctx()._session_tool_calls.append((fn_name, str(list(args.values())[:1])[:80].strip("[]'\""),
+                                                   ok, _failure_reason(result, ok)))
 
             # done() ends the loop — return immediately without sending it back to the LLM.
             if isinstance(result, str) and result.startswith(_DONE_SENTINEL):
@@ -4346,7 +4364,8 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
             # Record for log entry — skip done() itself
             if fn_name != "done":
                 ok = not (isinstance(result, str) and result.lower().startswith("error"))
-                _ctx()._session_tool_calls.append((fn_name, arg_preview, ok))
+                _ctx()._session_tool_calls.append((fn_name, arg_preview, ok,
+                                                   _failure_reason(result, ok)))
 
             # done() is a control signal — it ends the loop, not a message for the LLM.
             if isinstance(result, str) and result.startswith(_DONE_SENTINEL):
