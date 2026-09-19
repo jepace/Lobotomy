@@ -229,6 +229,7 @@ tools/
   auth.py               Login, sessions, email verification
   search.py             Keyword search CLI (no LLM needed)
   relink.py             Add wiki links to bare mentions (no LLM needed)
+  rename_page.py        Rename a page + its title + every link to it (no LLM needed)
   repair_links.py       Fix broken relative links + reader-mode URLs (no LLM needed)
   repair_frontmatter.py Backfill missing created:/updated: frontmatter (no LLM needed)
   lint.sh               Shell-based broken-link checker

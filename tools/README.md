@@ -99,6 +99,28 @@ subset, or a dry run.
 Every page it changes gets a version-history entry first, so anything it gets wrong is
 revertable from that page's History view.
 
+### `rename_page.py` — rename a page, its title, and every link to it
+Pages are titled by the LLM from whatever the source called the subject, and it sometimes
+picks a fragment — an article mentioning "United" produced `entities/united.md` titled
+"United", for the airline. A title that is a common word or part of a longer proper noun
+then does real damage, because the autolinker matches it everywhere: that page turned
+"United Nations" into `[United](../entities/united.md) Nations` across the wiki.
+
+```sh
+python3 tools/rename_page.py wiki/entities/united.md wiki/entities/united-airlines.md \
+    --title "United Airlines" --dry-run
+python3 tools/rename_page.py wiki/entities/united.md wiki/entities/united-airlines.md \
+    --title "United Airlines"
+python3 tools/relink.py                # then re-link the prose under the new title
+```
+
+Moves the page and its history, updates `title:` and the H1, and repoints every link that
+pointed at it. Links whose display text was the *old* title are stripped to plain text
+instead of repointed — that text is what the rename declares wrong, so
+`[United](...) Nations` becomes `United Nations` rather than a link relabelled to an
+airline. Running `relink.py` afterwards re-links prose that genuinely names the subject,
+and leaves prose that never meant it alone.
+
 ### `repair_links.py` — fix broken internal links
 Repairs links that already exist — it never creates one. (For turning bare text into links,
 that's `relink.py` above.) Three passes: un-nest double-linked text left by an old
