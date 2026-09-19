@@ -381,6 +381,9 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
         # the whole file, so anything past what was seen would be silently discarded.
         cov = _ctx()._session_read_coverage
         cov[wiki_rel] = max(cov.get(wiki_rel, 0), covered_upto)
+        if covered_upto >= total:
+            # Seen whole and current: any earlier write by this session is accounted for.
+            _ctx()._session_stale_pages.discard(wiki_rel)
         # A page too large to read in one call still had *some* sections shown in full, and
         # update_section must credit those. Otherwise the agent is trapped: read_file
         # truncates and tells it to use update_section, and update_section then refuses
@@ -886,6 +889,26 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
                 f"into it and call update_file again — do NOT call read_file first.\n\n"
                 f'<file path="{path}">\n{_current}\n</file>'
             )
+        # Having read it once is also not enough if this session has written to it since.
+        # The coverage test below compares lengths, so a stale whole-page rewrite passes
+        # whenever the intervening edit left the page the same size or smaller — and then
+        # silently reverts that edit while reporting success. Observed: read iran.md,
+        # update_section on Overview, then update_file from the original read, and the
+        # section edit was gone.
+        _stale = _wiki_rel_check in _ctx()._session_stale_pages
+        if _stale:
+            _current = _read_file(path)      # also re-marks it read, so the retry is free
+            if isinstance(_current, str):
+                return (
+                    f"Error: update_file refused — {path} has changed since you read it: "
+                    f"your own update_section or append_section wrote to it. The content "
+                    f"you sent was composed from the older version, so writing it would "
+                    f"undo that edit.\n\nThe current page is below and is now marked as "
+                    f"read. Merge your changes into THIS version and call update_file "
+                    f"again — do NOT call read_file first.\n\n"
+                    f'<file path="{path}">\n{_current}\n</file>'
+                )
+
         # Read-at-least-once is not enough for a page longer than one read_file call can
         # return: update_file replaces the WHOLE file, so writing back content composed
         # from only the first chunk of a long page would silently discard everything
@@ -1291,6 +1314,11 @@ def _update_section(args: dict) -> str:
 
     if wiki_rel not in _ctx()._session_entity_pages and wiki_rel not in _ctx()._session_updated_pages:
         _ctx()._session_updated_pages.append(wiki_rel)
+    # The page on disk no longer matches whatever this session last read in full, so a
+    # later whole-file update_file composed from that read would silently undo this edit.
+    # Only update_file is affected: this tool re-reads the file every call and replaces a
+    # single span, so it cannot lose anything outside the section it is rewriting.
+    _ctx()._session_stale_pages.add(wiki_rel)
     _atomic_write(p, new_content)
     return (f"Rewrote '{section}' in {path} ({len(old_text)} -> {len(addition)} chars, "
             f"page now {len(new_content)} bytes)")
@@ -1387,6 +1415,11 @@ def _append_section(args: dict) -> str:
     wiki_rel = str(p.relative_to(WIKI_DIR))
     if wiki_rel not in _ctx()._session_entity_pages and wiki_rel not in _ctx()._session_updated_pages:
         _ctx()._session_updated_pages.append(wiki_rel)
+    # The page on disk no longer matches whatever this session last read in full, so a
+    # later whole-file update_file composed from that read would silently undo this edit.
+    # Only update_file is affected: this tool re-reads the file every call and replaces a
+    # single span, so it cannot lose anything outside the section it is rewriting.
+    _ctx()._session_stale_pages.add(wiki_rel)
     _atomic_write(p, new_content)
     return f"{where} in {path} (+{len(addition)} chars, page now {len(new_content)} bytes)"
 
@@ -1445,6 +1478,7 @@ def _ctx():
         t._done_refusals = 0
         t._session_incomplete = []
         t._session_snapshotted = set()
+        t._session_stale_pages = set()
     return t
 
 
@@ -1464,6 +1498,7 @@ def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
     t._done_refusals = 0
     t._session_incomplete = []
     t._session_snapshotted = set()
+    t._session_stale_pages = set()
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
