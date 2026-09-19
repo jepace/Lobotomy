@@ -74,8 +74,34 @@ def _setup_logging() -> None:
         "%(asctime)s  %(name)-22s  %(levelname)-8s  %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    fh = logging.handlers.RotatingFileHandler(
-        _log_file, maxBytes=2_000_000, backupCount=3, encoding="utf-8"
+    class _MarkedRotatingFileHandler(logging.handlers.RotatingFileHandler):
+        """RotatingFileHandler that says goodbye before it rolls over.
+
+        Rotation is otherwise completely silent from the outside: the file someone is
+        tailing simply stops, and `tail -f` keeps following the old inode after the
+        rename, so it never resumes. That reads exactly like a hung server — it was read
+        that way, and cost an afternoon of chasing a job that was in fact running fine.
+        One line in the outgoing file says where the rest went.
+        """
+        def doRollover(self):
+            try:
+                if self.stream:
+                    self.stream.write(
+                        f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S}  lobotomy.log"
+                        f"            INFO      --- size cap reached: this file is now "
+                        f"{Path(self.baseFilename).name}.1, logging continues in "
+                        f"{Path(self.baseFilename).name} (use `tail -F`, not `tail -f`) ---\n")
+                    self.stream.flush()
+            except (OSError, ValueError):
+                pass
+            super().doRollover()
+
+    # 2 MB x 3 was too small to be useful here. A single relink sweep logs one autolink
+    # line per page — ~7,400 lines, about 1 MB — so a handful of maintenance runs evicted
+    # every retained log, which is precisely when the history is wanted. 10 MB x 5 is
+    # still only 50 MB on disk.
+    fh = _MarkedRotatingFileHandler(
+        _log_file, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
     )
     fh.setFormatter(fmt)
     sh = logging.StreamHandler()
