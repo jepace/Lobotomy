@@ -378,6 +378,16 @@ For each entity (person, organization, product, project) on that list:
   `read_file` tells you when a page is too large and to use `update_section` instead. Follow
   that when you see it; otherwise either tool is reasonable.
 
+  **If a section is itself too long to re-emit, use `replace_text`.** `update_section`
+  requires you to reproduce the whole section, and a rewrite that drops more than a third
+  of it is refused as content loss — so on a very long section, paraphrasing instead of
+  reproducing leaves no call that succeeds. Quote the sentence or bullet you are changing
+  in `old_text`, send it with your new information merged in as `new_text`, and nothing
+  else on the page is touched. The quote has to match exactly one place: read the section
+  first and copy from what it returns. Whitespace and links are ignored when matching, so
+  you need not reproduce `[the](../links.md)`. This still merges in place — prefer it over
+  `append_section`, which only ever adds to the end.
+
   Both reading and writing are bounded, in different ways. `update_section` sends only one
   section, so writing works at any page size. Reading is bounded by the conversation: what
   you read is re-sent on every later round, so a full read is worth its cost on a page that
@@ -456,6 +466,16 @@ For each concept, technique, framework, or term on that list:
   point the page no longer fits in one response. You do not have to judge that yourself —
   `read_file` tells you when a page is too large and to use `update_section` instead. Follow
   that when you see it; otherwise either tool is reasonable.
+
+  **If a section is itself too long to re-emit, use `replace_text`.** `update_section`
+  requires you to reproduce the whole section, and a rewrite that drops more than a third
+  of it is refused as content loss — so on a very long section, paraphrasing instead of
+  reproducing leaves no call that succeeds. Quote the sentence or bullet you are changing
+  in `old_text`, send it with your new information merged in as `new_text`, and nothing
+  else on the page is touched. The quote has to match exactly one place: read the section
+  first and copy from what it returns. Whitespace and links are ignored when matching, so
+  you need not reproduce `[the](../links.md)`. This still merges in place — prefer it over
+  `append_section`, which only ever adds to the end.
 
   Both reading and writing are bounded, in different ways. `update_section` sends only one
   section, so writing works at any page size. Reading is bounded by the conversation: what

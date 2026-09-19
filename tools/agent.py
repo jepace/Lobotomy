@@ -1206,6 +1206,167 @@ def _read_section(args: dict) -> str:
     return f"{heading}\n{body[start:end].strip()}{outline}"
 
 
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
+
+
+def _match_index(body: str):
+    """Normalized view of `body` plus a map back to raw offsets.
+
+    Normalization drops markdown link syntax down to its display text and collapses runs
+    of whitespace, because that is the gap between what the agent quotes and what is on
+    the page: the page says "[Canada](../entities/canada.md) responded" and the agent
+    quotes "Canada responded", having reflowed the line as well. Matching the words rather
+    than the markup is what makes a quote usable.
+
+    Returns (normalized, raw_at, link_at) where raw_at[i] is the raw offset of normalized
+    character i, and link_at[i] is the (start, end) of the whole link that character came
+    from, or None. The link span matters when mapping back: a match that begins inside a
+    link's display text has to expand to swallow the "[...](...)" whole, or the
+    replacement leaves a dangling bracket.
+    """
+    out, raw_at, link_at = [], [], []
+    i, n, prev_space = 0, len(body), False
+
+    def emit(ch, raw_i, link):
+        nonlocal prev_space
+        if ch.isspace():
+            if prev_space:
+                return
+            ch, prev_space = " ", True
+        else:
+            prev_space = False
+        out.append(ch)
+        raw_at.append(raw_i)
+        link_at.append(link)
+
+    while i < n:
+        m = _MD_LINK_RE.match(body, i)
+        if m:
+            span = (m.start(), m.end())
+            for k, ch in enumerate(m.group(1)):
+                emit(ch, m.start(1) + k, span)
+            i = m.end()
+            continue
+        emit(body[i], i, None)
+        i += 1
+    return "".join(out), raw_at, link_at
+
+
+def _normalize_quote(s: str) -> str:
+    """The same normalization applied to what the agent quoted."""
+    return re.sub(r"\s+", " ", _MD_LINK_RE.sub(r"\1", s)).strip()
+
+
+def _find_quote(body: str, quote: str) -> "list[tuple[int, int]]":
+    """Raw (start, end) spans of `body` matching `quote`. Exact first, then normalized."""
+    spans = []
+    start = 0
+    while (k := body.find(quote, start)) != -1:
+        spans.append((k, k + len(quote)))
+        start = k + 1
+    if spans:
+        return spans
+
+    needle = _normalize_quote(quote)
+    if not needle:
+        return []
+    norm, raw_at, link_at = _match_index(body)
+    start = 0
+    while (k := norm.find(needle, start)) != -1:
+        s_raw = raw_at[k]
+        e_raw = raw_at[k + len(needle) - 1] + 1
+        if link_at[k]:                      # began inside a link — take the whole link
+            s_raw = min(s_raw, link_at[k][0])
+        if link_at[k + len(needle) - 1]:    # ended inside one — likewise
+            e_raw = max(e_raw, link_at[k + len(needle) - 1][1])
+        spans.append((s_raw, e_raw))
+        start = k + 1
+    return spans
+
+
+def _replace_text(args: dict) -> str:
+    """Replace one exactly-quoted passage on a page, leaving everything else alone.
+
+    The tool for a section too large to re-emit. update_section requires the model to
+    reproduce the whole section, and on a 14K section a weaker model paraphrases instead
+    — which the shrink guard correctly refuses, leaving no call that succeeds and the page
+    unedited. Quoting the sentence to change costs a few hundred characters instead of
+    fourteen thousand, and it merges in place, so it stays a synthesis rather than the
+    running list append_section would produce.
+
+    Uniqueness is the contract. A quote matching nothing, or matching twice, is refused
+    rather than guessed at — so a model that cannot reproduce the text fails loudly and
+    writes nothing, where the same failure through update_section silently shortens the
+    page. Whitespace and link markup are ignored when matching, since the agent reflows
+    what it quotes and routinely drops the links the autolinker added.
+    """
+    import datetime as _dt
+    path = args.get("path", "")
+    old  = args.get("old_text") or ""
+    new  = args.get("new_text")
+    if not path or not old or new is None:
+        return ('Error: replace_text requires "path", "old_text" (a passage quoted exactly '
+                'from the page) and "new_text" (what to put in its place; "" to delete it).')
+    p, err = _section_guard(path)
+    if err:
+        return err
+    if old == new:
+        return "Error: replace_text — old_text and new_text are identical, nothing to do."
+
+    content = p.read_text(encoding="utf-8", errors="replace")
+    fm_m = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
+    frontmatter, body = (fm_m.group(1), content[fm_m.end():]) if fm_m else ("", content)
+
+    spans = _find_quote(body, old)
+    if not spans:
+        return (
+            f"Error: replace_text — that passage is not on {path}. Whitespace and link "
+            f"markup are already ignored when matching, so this means the wording differs. "
+            f"Call read_section(path, section) for the section you mean and quote from what "
+            f"it returns, character for character."
+        )
+    if len(spans) > 1:
+        return (
+            f"Error: replace_text — that passage appears {len(spans)} times on {path}, so "
+            f"it is ambiguous which one you mean. Extend old_text with the sentence before "
+            f"or after it until the quote is unique, then call again."
+        )
+
+    start, end = spans[0]
+    new_body = body[:start] + new + body[end:]
+
+    # Same rule as everywhere else, and the same delta test: only duplicates this edit
+    # introduces, so a page already carrying a pair stays editable.
+    _dupes = [d for d in _heading_dupes(new_body)
+              if _norm_heading(d) not in {_norm_heading(x) for x in _heading_dupes(body)}]
+    if _dupes:
+        return (
+            f"Error: replace_text refused — this would give the page a second copy of "
+            f"{', '.join(repr(d) for d in _dupes)}. Merge into the section that is already "
+            f"there instead of introducing another heading."
+        )
+
+    new_content = frontmatter + new_body
+    if not new_content.endswith("\n"):
+        new_content += "\n"
+    new_content = _set_fm_field(new_content, "updated", f"updated: {_dt.date.today().isoformat()}")
+    if p.parent.name in ("entities", "concepts", "synthesis"):
+        new_content = _merge_sources_field(new_content, p)
+    new_content = _inject_sources_section(new_content, p)
+
+    wiki_rel = str(p.relative_to(WIKI_DIR))
+    if wiki_rel not in _ctx()._session_entity_pages and wiki_rel not in _ctx()._session_updated_pages:
+        _ctx()._session_updated_pages.append(wiki_rel)
+    # As with update_section: the page no longer matches what this session read in full,
+    # so a later whole-file update_file built from that read would undo this.
+    _ctx()._session_stale_pages.add(wiki_rel)
+    _atomic_write(p, new_content)
+    log.info("replace_text: %s (%d -> %d chars, page now %d bytes)",
+             path, end - start, len(new), len(new_content))
+    return (f"Replaced {end - start} chars with {len(new)} in {path} "
+            f"(page now {len(new_content)} bytes).")
+
+
 def _update_section(args: dict) -> str:
     """Replace the contents of one section, leaving the rest of the page untouched.
 
@@ -3391,6 +3552,7 @@ TOOL_FNS = {
                                                str(a.get("allow_shrink", "")).lower() in ("true", "1", "yes")),
     "read_section":     _read_section,
     "update_section":   _update_section,
+    "replace_text":     _replace_text,
     "append_section":   _append_section,
     "list_dir":         lambda a: _list_dir(a.get("directory", "")),
     "fetch_url":        lambda a: _fetch_url(a.get("url", "")),
@@ -3461,6 +3623,33 @@ TOOL_DEFS = [
                                 "description": "The section's full new text, excluding its heading. Plain text, no links."},
                 },
                 "required": ["path", "section", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name":        "replace_text",
+            "description": (
+                "Replace one exactly-quoted passage on a page. Use this when a section is too "
+                "long to re-emit in full — quote the sentence or bullet you are changing and "
+                "send its replacement, instead of resending the whole section. Merges in "
+                "place, so unlike append_section it keeps the page a synthesis. The quote must "
+                "appear exactly once: read_section first and copy from what it returns. "
+                "Whitespace and [links](...) are ignored when matching."
+            ),
+            "parameters":  {
+                "type": "object",
+                "properties": {
+                    "path":     {"type": "string", "description": "e.g. wiki/entities/donald-trump.md"},
+                    "old_text": {"type": "string",
+                                 "description": "Passage quoted from the page. Must match exactly one place — "
+                                                "include the neighbouring sentence if it would otherwise be ambiguous."},
+                    "new_text": {"type": "string",
+                                 "description": "What replaces it — the same passage with the new information "
+                                                'merged in. "" deletes the passage.'},
+                },
+                "required": ["path", "old_text", "new_text"],
             },
         },
     },
