@@ -6,16 +6,19 @@
 
   // The bookmarklet saves by loading /save as an <img>. Nothing opens, nothing
   // navigates, so no tab appears and the article isn't reloaded. An in-page
-  // toast confirms it. Only the page's img-src CSP can block this, and that is
-  // detectable (onerror) — in which case we fall back to navigating to /save,
-  // which always works and redirects straight back to the article.
+  // toast confirms it.
+  //
+  // Only the page's img-src CSP can block the beacon, and that is detectable
+  // (onerror). Wikipedia's CSP does block it, so there every save took the
+  // fallback — which used to navigate the article tab to /save and be
+  // redirected back, reloading the article and losing the reader's place. The
+  // fallback now opens /save in a background tab that closes itself, leaving
+  // the article alone; navigating is kept only for when that popup is blocked.
   var bm = 'javascript:(function(){'
     + 'var u=' + JSON.stringify(base + '/save?key=' + encodeURIComponent(key))
     + "+'&url='+encodeURIComponent(location.href)"
     + "+'&title='+encodeURIComponent(document.title.slice(0,300)),d=0;"
-    + 'function f(){if(!d){d=1;location.href=u}}'
-    + 'var i=new Image();'
-    + 'i.onload=function(){if(d)return;d=1;'
+    + 'function t(){'
     +   "var e=document.createElement('div'),s=e.style;"
     +   "e.textContent='Saved to Lobotomy';"
     +   "s.position='fixed';s.top='12px';s.right='12px';s.zIndex=2147483647;"
@@ -23,7 +26,12 @@
     +   "s.borderRadius='8px';s.font='14px -apple-system,system-ui,sans-serif';"
     +   "s.boxShadow='0 2px 12px rgba(0,0,0,.3)';"
     +   '(document.body||document.documentElement).appendChild(e);'
-    +   'setTimeout(function(){e.remove()},2000)};'
+    +   'setTimeout(function(){e.remove()},2000)}'
+    + 'function f(){if(d)return;d=1;var w=null;'
+    +   "try{w=window.open(u+'&close=1','_blank')}catch(e){}"
+    +   'if(w){t()}else{location.href=u}}'
+    + 'var i=new Image();'
+    + 'i.onload=function(){if(d)return;d=1;t()};'
     + 'i.onerror=f;setTimeout(f,6000);'
     + "i.src=u+'&beacon=1&t='+Date.now()})();";
 

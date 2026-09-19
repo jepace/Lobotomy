@@ -2034,6 +2034,27 @@ def _beacon_ok():
     return r
 
 
+def _save_done(beacon: bool, close: bool, url: str, msg: str):
+    """How /save reports success, by how it was called.
+
+    close=1 exists because the fallback used to navigate the article tab to /save and
+    redirect back, which reloads the article and loses the reader's place — and on a site
+    whose CSP blocks the beacon, that happened on every single save. Closing a background
+    tab instead leaves the article untouched.
+    """
+    if beacon:
+        return _beacon_ok()
+    if close:
+        from flask import Response
+        return Response(
+            "<!doctype html><title>Saved</title>"
+            "<script>window.close()</script>"
+            "<body style=\"font:15px system-ui,sans-serif;padding:28px;color:#222\">"
+            f"{msg}. You can close this tab.</body>",
+            mimetype="text/html")
+    return redirect(url + "#lobotomy-saved")
+
+
 @app.route("/save")
 def save_redirect():
     """
@@ -2043,13 +2064,18 @@ def save_redirect():
       ?beacon=1  → returns a 1x1 GIF. The bookmarklet requests this as an <img>,
                    so nothing opens and nothing navigates. Only the page's
                    img-src CSP can stop it, and failure is detectable (onerror).
-      (default)  → saves and redirects back to the article. This is the
-                   bookmarklet's fallback when the beacon is blocked.
+      ?close=1   → returns a page that closes itself. The bookmarklet opens this
+                   in a background tab when the beacon is blocked, which leaves
+                   the article tab alone. Sites with a strict img-src — Wikipedia
+                   is the one people hit — take this path on every save.
+      (default)  → saves and redirects back to the article. Last resort, for when
+                   the popup is blocked too.
     """
     url    = request.args.get("url",   "").strip()
     title  = request.args.get("title", "").strip()
     key    = request.args.get("key",   "").strip()
     beacon = request.args.get("beacon") == "1"
+    close  = request.args.get("close")  == "1"
 
     # These land inside YAML frontmatter — newlines would inject fields, and a
     # double quote in a page title (very common) would corrupt the title: line.
@@ -2072,7 +2098,7 @@ def save_redirect():
         try:
             meta, _ = _parse_frontmatter(existing.read_text(encoding="utf-8", errors="replace"))
             if meta.get("url", "").strip() == url:
-                return _beacon_ok() if beacon else redirect(url + "#lobotomy-saved")
+                return _save_done(beacon, close, url, "Already saved")
         except Exception:
             pass
 
@@ -2095,7 +2121,7 @@ def save_redirect():
     _atomic_write(dest, "\n".join(fm))
     _fetch_and_patch(dest, url)
 
-    return _beacon_ok() if beacon else redirect(url + "#lobotomy-saved")
+    return _save_done(beacon, close, url, "Saved to Lobotomy")
 
 
 @app.route("/api/push", methods=["POST", "OPTIONS"])
