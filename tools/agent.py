@@ -261,11 +261,27 @@ def _strip_system_fm_fields(text: str) -> str:
     return m.group(1) + stripped_fm + m.group(3) + text[m.end():]
 
 
+def _elsewhere_hint(p: Path) -> str:
+    """" It exists at wiki/<other>/<name>" when the same slug is filed in another
+    subdirectory — the usual reason a path is missing is that the page was looked for as a
+    concept and filed as an entity, or the reverse. Empty string when there is no such
+    page, so it can be appended to any not-found message unconditionally."""
+    if p.suffix != ".md":
+        return ""
+    other = [f"wiki/{sd}/{p.name}" for sd in ("entities", "concepts", "synthesis", "sources")
+             if (WIKI_DIR / sd / p.name).exists() and (WIKI_DIR / sd / p.name) != p]
+    return f" It exists at {', '.join(other)} — use that path instead." if other else ""
+
+
 def _read_file(path: str, offset: int = 0) -> "str | list":
     """Return a string, or a list of content blocks for image/image-only PDF."""
     p = REPO_ROOT / path
     if not p.exists():
-        return f"Error: not found: {path}"
+        # A bare "not found" makes the agent guess again, and the guess it needs is
+        # usually one directory over: the page exists, under the same slug, filed as an
+        # entity when it was looked for as a concept. Naming it costs a directory check
+        # and saves a round.
+        return f"Error: not found: {path}.{_elsewhere_hint(p)}"
     if not p.is_file():
         return f"Error: not a file: {path}"
     try:
@@ -832,7 +848,8 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
     if p.resolve() == (WIKI_DIR / "index.md").resolve():
         return "Error: update_file refused on wiki/index.md — it is auto-generated; use rebuild_index if needed."
     if not p.exists():
-        return f"Error: update_file refused — {path} does not exist. Use create_file to create new pages."
+        return (f"Error: update_file refused — {path} does not exist."
+                f"{_elsewhere_hint(p) or ' Use create_file to create new pages.'}")
 
     # Sources pages are immutable after creation — each ingestion creates a new source page.
     try:
@@ -1032,6 +1049,7 @@ def _norm_heading(s: str) -> str:
     case, emphasis or spacing name the same section — treating them as different is how a
     page ends up with 'Key Policies' and 'Key Policies:' side by side."""
     s = re.sub(r"[*_`]", "", s).strip().lower()
+    s = s.replace("&", " and ")     # "Claims & Positions" and "Claims and Positions"
     s = re.sub(r"\s+", " ", s)
     return s.rstrip(" :.-–—")
 
@@ -1086,6 +1104,18 @@ def _find_section(body: str, section: str):
     hm = re.search(r"^(#{1,6})[ \t]*" + re.escape(section) + r"[ \t]*$",
                    body, re.MULTILINE | re.IGNORECASE)
     if not hm:
+        # Retry on the normalized key before reporting the section absent. Asking for
+        # "Key Policies:" or "**Key Policies**" or a doubled space is asking for the
+        # section that is plainly there, and answering "no such section" sends the model
+        # to append_section to create a second one — or, once that also matched
+        # normalized, simply wastes the round. Same key append_section uses, so the two
+        # cannot disagree about which heading a name refers to.
+        want = _norm_heading(section)
+        for m in re.finditer(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE):
+            if _norm_heading(m.group(2)) == want:
+                hm = m
+                break
+    if not hm:
         return None
     level = len(hm.group(1))
     nxt = re.compile(r"^#{1," + str(level) + r"}[ \t]*\S", re.MULTILINE)
@@ -1101,7 +1131,8 @@ def _section_guard(path: str):
     except ValueError:
         return p, f"Error: only pages inside wiki/ can be edited. Got: {path}"
     if not p.exists():
-        return p, f"Error: refused — {path} does not exist. Use create_file for new pages."
+        return p, (f"Error: refused — {path} does not exist."
+                   f"{_elsewhere_hint(p) or ' Use create_file for new pages.'}")
     for _reserved in ("log.md", "index.md"):
         if p.resolve() == (WIKI_DIR / _reserved).resolve():
             return p, f"Error: refused on wiki/{_reserved} — it is managed automatically."
@@ -1295,7 +1326,8 @@ def _append_section(args: dict) -> str:
     except ValueError:
         return f"Error: append_section only writes inside wiki/. Got: {path}"
     if not p.exists():
-        return f"Error: append_section refused — {path} does not exist. Use create_file for new pages."
+        return (f"Error: append_section refused — {path} does not exist."
+                f"{_elsewhere_hint(p) or ' Use create_file for new pages.'}")
     for _reserved in ("log.md", "index.md"):
         if p.resolve() == (WIKI_DIR / _reserved).resolve():
             return f"Error: append_section refused on wiki/{_reserved} — it is managed automatically."
