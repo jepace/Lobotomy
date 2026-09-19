@@ -909,15 +909,29 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
     except ValueError:
         pass
 
-    # Reject partial writes — update_file requires the complete file content.
+    # Content sent without frontmatter: keep the frontmatter that is on disk rather than
+    # refusing. This used to send the model away to "read the page first" — which it had
+    # already done in the round before, so the instruction was unfollowable and the round
+    # was spent learning nothing.
+    #
+    # Reattaching is safe because frontmatter is not the model's to supply anyway: created
+    # and raw_source are restored from disk below, sources is merged from disk, and updated
+    # is set here. The only fields it could have meant to change are title and tags, and a
+    # body-only payload is not an attempt to change those. Every guard that matters still
+    # runs on the reassembled file — read-before-write and full-coverage above, the shrink
+    # and duplicate-heading checks below — so a genuinely truncated body is still caught.
     if not content.lstrip().startswith("---"):
         existing = p.read_text(encoding="utf-8", errors="replace")
-        if _re.match(r"^---\s*\n", existing):
-            return (
-                f"Error: update_file requires the complete file content including frontmatter. "
-                f"You sent a fragment without frontmatter. Read {path} first, then resend the "
-                f"full file with your changes incorporated."
-            )
+        _fm_m = _re.match(r"^(---\s*\n.*?\n---\s*\n)", existing, _re.DOTALL)
+        if _fm_m:
+            log.info("update_file: %s sent without frontmatter — keeping the frontmatter on disk",
+                     path)
+            # Drop updated: while reattaching. It is the one frontmatter field meant to be
+            # refreshed on every write, and carrying the disk value over would freeze the
+            # page's date at whenever it was last edited with full content. Removing it
+            # lets the "supply updated: if absent" step below set today's date.
+            _fm = _re.sub(r"^updated:.*\n", "", _fm_m.group(1), flags=_re.MULTILINE)
+            content = _fm + content.lstrip("\n")
 
     # update_file replaces the WHOLE file, so the body must be re-emitted in full on every
     # write. On a page that keeps growing, that eventually collides with the model's
