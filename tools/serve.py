@@ -88,6 +88,33 @@ def _setup_logging() -> None:
 _setup_logging()
 log = logging.getLogger("lobotomy.serve")
 
+
+def _install_stack_dumper() -> None:
+    """kill -USR1 <pid> writes every thread's stack next to the log.
+
+    A job that stops making progress leaves nothing to go on: the worker is one thread of
+    a long-lived process, and whatever it is blocked in is by definition not logging. The
+    only question worth asking then is "where is it", and this answers it without killing
+    the process and losing the run. Writes to a file rather than stderr because a service
+    manager may not be capturing stderr anywhere findable.
+    """
+    import faulthandler
+    try:
+        import signal
+        dest = Path(os.environ.get("LOBOTOMY_LOG_FILE")
+                    or (Path(__file__).resolve().parent.parent / "server.log"))
+        _stack_file = dest.with_name("server-stacks.log")
+        _fh = open(_stack_file, "a", buffering=1)          # kept open: the handler cannot
+        faulthandler.register(signal.SIGUSR1, file=_fh,     # safely open one when it fires
+                              all_threads=True, chain=False)
+        log.info("stack dumper armed — kill -USR1 %d writes all thread stacks to %s",
+                 os.getpid(), _stack_file)
+    except (AttributeError, ValueError, OSError) as e:      # no SIGUSR1 on this platform
+        log.debug("stack dumper unavailable: %s", e)
+
+
+_install_stack_dumper()
+
 # Suppress noisy polling endpoints from werkzeug's access log.
 class _SuppressPollingPaths(logging.Filter):
     _QUIET = {"/chat/status", "/api/status", "/inbox/list", "/chat/events"}

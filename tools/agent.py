@@ -554,8 +554,15 @@ def _inject_sources_section(content: str, page_path: Path) -> str:
                         pass
                     if not found:
                         # LLM may prefix with wrong subdir — search by basename.
+                        # Check the four content subdirectories directly instead of
+                        # rglob-ing the whole of wiki/. rglob descends into .history/,
+                        # which holds up to _HISTORY_KEEP revisions of every page — a few
+                        # hundred thousand files on a mature wiki — and this runs once per
+                        # unresolved source on every single write.
                         basename = Path(s).name
-                        matches = list(WIKI_DIR.rglob(basename))
+                        matches = [WIKI_DIR / sd / basename
+                                   for sd in ("sources", "entities", "concepts", "synthesis")
+                                   if (WIKI_DIR / sd / basename).exists()]
                         if len(matches) == 1:
                             s = str(matches[0].relative_to(WIKI_DIR))
                     source_paths.append(s)
@@ -4238,6 +4245,10 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                     args["query"] = args["query"] + " " + _scope_in_name
                 elif _scope_in_name:
                     args["query"] = _scope_in_name
+                # Before the call, for the same reason as the streaming loop: a tool
+                # that blocks otherwise leaves no trace of which one it was.
+                log.debug("Tool call: %s  arg=%s", fn_name or "(unknown)",
+                          str(list(args.values())[:1])[:60])
                 result = fn(args) if fn else f"Unknown tool: {fn_name}"
             except json.JSONDecodeError as e:
                 result = f"Error: malformed tool arguments: {e}"
@@ -4251,7 +4262,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
             _preview = (f'{args.get("path", "?")} § {args.get("section", "?")}'
                         if fn_name in ("read_section", "update_section", "append_section")
                         else str(list(args.values())[:1]))
-            log.debug("Tool call: %s  arg=%s  result=%s", fn_name or "(unknown)", _preview[:60], result_preview)
+            log.debug("Tool result [%s] %s: %s", fn_name or "(unknown)", _preview[:60], result_preview)
             # Record for log entry — skip done() itself
             if fn_name != "done":
                 ok = not (isinstance(result, str) and result.lower().startswith("error"))
@@ -4547,6 +4558,11 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                     arg_preview = str(args.get("summary", ""))[:80]
                 else:
                     arg_preview = str(next(iter(args.values()), ""))[:80]
+                # Logged BEFORE the call, not after. It used to be after, so a tool that
+                # blocked wrote nothing at all — an ingest wedged mid-round and the last
+                # line in the log was the LLM response, with no way to tell which tool it
+                # had gone into. A line here costs nothing and names the culprit.
+                log.debug("Tool call: %s  arg=%s", fn_name or "(unknown)", arg_preview[:60])
                 result      = fn(args) if fn else f"Unknown tool: {fn_name}"
             except json.JSONDecodeError as e:
                 log.error("Tool %s: failed to parse arguments JSON: %s", fn_name, e)
@@ -4561,7 +4577,6 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                 arg_preview = ""
                 result      = f"Error: {type(e).__name__}: {e}"
 
-            log.debug("Tool call: %s  arg=%s", fn_name or "(unknown)", arg_preview[:60])
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
             log.debug("Tool result [%s]: %s", fn_name or "(unknown)", result_preview)
             # Record for log entry — skip done() itself
