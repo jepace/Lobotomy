@@ -33,6 +33,12 @@
   .diff .del { color: var(--danger); }
   .diff .hdr { color: var(--text2); }
   .empty { color: var(--text2); font-size: 14px; padding: 20px 0; }
+  .diff-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .diff-copy {
+    font-size: 13px; padding: 5px 11px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg2); color: var(--text);
+  }
+  .diff-hint { font-size: 12px; color: var(--text2); }
 </style>
 {% endblock %}
 
@@ -76,7 +82,11 @@
     {% if identical %}
       <div class="empty">This revision is identical to the current page.</div>
     {% else %}
-      <div class="diff">{% for line in diff %}{% if line.startswith('+') %}<span class="add">{{ line }}</span>
+      <div class="diff-actions">
+        <button type="button" class="diff-copy" onclick="copyDiff(this)">Copy diff</button>
+        <span class="diff-hint">Select All here selects only the diff</span>
+      </div>
+      <div class="diff" id="diff">{% for line in diff %}{% if line.startswith('+') %}<span class="add">{{ line }}</span>
 {% elif line.startswith('-') %}<span class="del">{{ line }}</span>
 {% elif line.startswith('@@') %}<span class="hdr">{{ line }}</span>
 {% else %}{{ line }}
@@ -95,6 +105,41 @@
 </div>
 
 <script>
+// Select All on this page used to hand back the whole document — heading, nav, the
+// revert prose — when the only thing anyone wants off a diff view is the diff. Ctrl/Cmd-A
+// now selects the diff block alone. The button is for iOS, which has no Select All.
+document.addEventListener('keydown', function (e) {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+    var d = document.getElementById('diff');
+    if (!d) return;
+    var t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    e.preventDefault();
+    var r = document.createRange();
+    r.selectNodeContents(d);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+});
+
+async function copyDiff(btn) {
+  var d = document.getElementById('diff');
+  if (!d) return;
+  var label = btn.textContent;
+  try {
+    await navigator.clipboard.writeText(d.innerText);
+    btn.textContent = 'Copied';
+  } catch (e) {
+    var r = document.createRange();
+    r.selectNodeContents(d);
+    var sel = window.getSelection();
+    sel.removeAllRanges(); sel.addRange(r);
+    btn.textContent = 'Selected — copy it';
+  }
+  setTimeout(function () { btn.textContent = label; }, 1800);
+}
+
 async function doRevert() {
   if (!confirm('Replace the current page with this saved version?')) return;
   try {

@@ -1071,6 +1071,7 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
+    _autolink_now(p)
     return f"Written {len(content)} bytes to {path}"
 
 
@@ -1368,6 +1369,7 @@ def _replace_text(args: dict) -> str:
     # so a later whole-file update_file built from that read would undo this.
     _ctx()._session_stale_pages.add(wiki_rel)
     _atomic_write(p, new_content)
+    _autolink_now(p)
     log.info("replace_text: %s (%d -> %d chars, page now %d bytes)",
              path, end - start, len(new), len(new_content))
     return (f"Replaced {end - start} chars with {len(new)} in {path} "
@@ -1502,6 +1504,7 @@ def _update_section(args: dict) -> str:
     # single span, so it cannot lose anything outside the section it is rewriting.
     _ctx()._session_stale_pages.add(wiki_rel)
     _atomic_write(p, new_content)
+    _autolink_now(p)
     return (f"Rewrote '{section}' in {path} ({len(old_text)} -> {len(addition)} chars, "
             f"page now {len(new_content)} bytes)")
 
@@ -1603,6 +1606,7 @@ def _append_section(args: dict) -> str:
     # single span, so it cannot lose anything outside the section it is rewriting.
     _ctx()._session_stale_pages.add(wiki_rel)
     _atomic_write(p, new_content)
+    _autolink_now(p)
     return f"{where} in {path} (+{len(addition)} chars, page now {len(new_content)} bytes)"
 
 
@@ -1997,6 +2001,23 @@ def _auto_write_log_entry() -> None:
         lines.append("- **Status**: Done")
 
     _prepend_log("\n".join(lines))
+
+
+def _autolink_now(p: Path) -> None:
+    """Link a page the moment it is written, rather than only at done().
+
+    Autolink used to run once, in _post_process_session. Everything written before that
+    sat unlinked on disk for the rest of the ingest — half an hour on a large one — so
+    anyone opening the page, or diffing it against history, saw plain text where the
+    previous revision had links, and an ingest that never reached done() left it that way.
+    Re-running at done() is still needed for titles created later in the session; doing it
+    here as well costs ~0.065s a page now that the autolinker skips titles that cannot
+    match, and means the page on disk is never in the unlinked state.
+    """
+    try:
+        _autolink({"path": f"wiki/{p.resolve().relative_to(WIKI_DIR.resolve()).as_posix()}"})
+    except (OSError, ValueError) as e:
+        log.warning("autolink after write failed for %s: %s", p, e)
 
 
 def _post_process_session() -> None:
@@ -3455,6 +3476,7 @@ def _create_file(args: dict) -> str:
     assert not p.exists(), f"create_file invariant violated: {path} must not exist before write"
     _atomic_write(p, content)
     assert p.exists(), f"create_file invariant violated: {path} must exist after write"
+    _autolink_now(p)
 
     wiki_rel = str(p.relative_to(WIKI_DIR))
     if wiki_rel not in _ctx()._session_entity_pages:
