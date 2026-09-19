@@ -1632,6 +1632,11 @@ _fetch_cache_lock = threading.Lock()
 _title_map_cache: list[tuple[str, str]] | None = None  # (title, wiki_rel_path)
 _title_regex_cache: dict = {}  # title -> compiled regex; cleared whenever the map rebuilds
 _title_tokens_cache: dict = {}  # title -> frozenset of \w+ tokens it needs; cleared with the above
+# Titles (lowercased) whose pages carry no_autolink. They stay IN the title map, because
+# lookup_titles and done()'s completeness check both resolve names through it and must
+# still know the page exists — dropping them was how a page could be reported missing and
+# duplicated. Only _autolink consults this set, and only to decline to link them.
+_no_autolink_titles: set = set()
 _title_map_built_at: float = 0.0  # time.time() when the cache was last (re)built
 # Files this process wrote through _atomic_write's vetting since the last rebuild, mapped
 # to the exact post-write mtime that was vetted. The staleness backstop exempts a file
@@ -2607,7 +2612,7 @@ def _build_title_map() -> list[tuple[str, str]]:
     memory rather than on disk.
     """
     import re
-    global _title_map_cache, _title_regex_cache, _title_tokens_cache, _title_map_built_at, _vetted_mtimes
+    global _title_map_cache, _title_regex_cache, _title_tokens_cache, _title_map_built_at, _vetted_mtimes, _no_autolink_titles
     if _title_map_cache is not None:
         stale = False
         for subdir in ("entities", "concepts", "synthesis", "sources"):
@@ -2639,6 +2644,7 @@ def _build_title_map() -> list[tuple[str, str]]:
     # keyed by a title that was renamed or removed would otherwise linger forever.
     _title_regex_cache = {}
     _title_tokens_cache = {}
+    _no_autolink_titles = set()
     _vetted_mtimes = {}  # superseded: the fresh watermark below covers everything on disk
     _title_map_built_at = time.time()  # captured before the scan, so a write that lands
                                         # mid-scan is still caught as stale on the next call
@@ -2659,18 +2665,22 @@ def _build_title_map() -> list[tuple[str, str]]:
                 continue
             text = f.read_text(encoding="utf-8", errors="replace")
             title, aliases, no_autolink = _parse_title_fields(text)
-            if title and not no_autolink:
+            if title:
                 wiki_rel = str(f.relative_to(WIKI_DIR))
                 key = title.lower()
                 if key not in seen:
                     seen.add(key)
                     raw.append((title, wiki_rel))
+                    if no_autolink:
+                        _no_autolink_titles.add(key)
                 for alias in aliases:
                     if alias:
                         akey = alias.lower()
                         if akey not in seen:
                             seen.add(akey)
                             raw.append((alias, wiki_rel))
+                            if no_autolink:
+                                _no_autolink_titles.add(akey)
     # Longest title first so an overlapping longer title wins; the title itself as
     # tiebreak so equal-length titles have a fixed order rather than whatever order
     # they happened to be read in. Python's sort is stable, so without the tiebreak
@@ -2834,7 +2844,7 @@ def _autolink(args: dict) -> str:
     title_map = [
         (title, prefix + wiki_rel)
         for title, wiki_rel in _title_map_cache
-        if WIKI_DIR / wiki_rel != target_p
+        if WIKI_DIR / wiki_rel != target_p and title.lower() not in _no_autolink_titles
     ]
 
     if not title_map:
