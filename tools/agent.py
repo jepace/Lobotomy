@@ -1390,8 +1390,9 @@ def _update_section(args: dict) -> str:
     section = (args.get("section") or "").strip()
     new_text = (args.get("content") or "").strip()
     if not path or not section or not new_text:
-        return ('Error: update_section requires "path", "section" and "content" '
-                "(the section's full new text, excluding its heading).")
+        return ('Error: update_section requires "path", "section" and "content" — content '
+                "being only the text that goes under that one heading, without the heading "
+                "line and without any other section.")
     p, err = _section_guard(path)
     if err:
         return err
@@ -3651,7 +3652,8 @@ TOOL_DEFS = [
                 "there. THIS IS THE PREFERRED WAY to fold a source into an existing page: it "
                 "produces a synthesis rather than a running list, and unlike update_file it "
                 "stays within limits no matter how large the page has grown. Read the section "
-                "first (read_section), then send its complete new text."
+                "first (read_section), then send back THAT ONE SECTION'S BODY with the new "
+                "information merged in. Not the page — one section."
             ),
             "parameters":  {
                 "type": "object",
@@ -3659,7 +3661,11 @@ TOOL_DEFS = [
                     "path":    {"type": "string", "description": "e.g. wiki/entities/donald-trump.md"},
                     "section": {"type": "string", "description": 'Heading to rewrite, e.g. "Claims & Positions"'},
                     "content": {"type": "string",
-                                "description": "The section's full new text, excluding its heading. Plain text, no links."},
+                                "description": "ONLY the text that goes under this one heading. Do NOT include the "
+                                               "heading line itself, any other section, or ## Sources. Example: for "
+                                               'section "Overview", send just the Overview paragraphs — not '
+                                               '"## Overview", and not the sections that follow it. '
+                                               "Plain text, no links."},
                 },
                 "required": ["path", "section", "content"],
             },

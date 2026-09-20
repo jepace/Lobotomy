@@ -366,7 +366,11 @@ For each entity (person, organization, product, project) on that list:
      `read_section` names the page's other sections in its reply, so you still know what is
      there without paying to read all of it.
   2. Decide where each piece of new information belongs.
-  3. For each section that changes, send its full new text with `update_section` — the new
+  3. For each section that changes, call `update_section` with **that section's body and
+     nothing else** — the text under its heading, without the heading line, without any
+     other section, and without `## Sources`. Sending the whole page here is the common
+     mistake: the content is placed *under* the heading that is already there, so a page
+     arrives back inside its own Overview. What you send is the new
      information *merged into* the existing prose, extending a sentence, qualifying a claim,
      adding a detail where it fits. Preserve everything the source does not contradict.
      Most sources change one or two sections.
@@ -455,7 +459,11 @@ For each concept, technique, framework, or term on that list:
      `read_section` names the page's other sections in its reply, so you still know what is
      there without paying to read all of it.
   2. Decide where each piece of new information belongs.
-  3. For each section that changes, send its full new text with `update_section` — the new
+  3. For each section that changes, call `update_section` with **that section's body and
+     nothing else** — the text under its heading, without the heading line, without any
+     other section, and without `## Sources`. Sending the whole page here is the common
+     mistake: the content is placed *under* the heading that is already there, so a page
+     arrives back inside its own Overview. What you send is the new
      information *merged into* the existing prose, extending a sentence, qualifying a claim,
      adding a detail where it fits. Preserve everything the source does not contradict.
      Most sources change one or two sections.
