@@ -1671,6 +1671,7 @@ def _ctx():
         t._session_incomplete = []
         t._session_snapshotted = set()
         t._session_stale_pages = set()
+        t._session_progress_last = None
     return t
 
 
@@ -1691,6 +1692,7 @@ def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
     t._session_incomplete = []
     t._session_snapshotted = set()
     t._session_stale_pages = set()
+    t._session_progress_last = None
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -2126,13 +2128,19 @@ def _listed_names(ctx) -> list:
 
 
 def _ingest_progress() -> str:
-    """"7/23" — listed names already handled, against the total committed to.
+    """A line to log about how far through the listed pages this ingest is, or "".
 
     An ingest is a long series of writes with no indication of how many are left; the
     source page's Entities and Concepts lists say exactly how many there will be, and
     done() already computes what is still outstanding. Same numbers, reported as it goes
-    rather than only when refusing at the end. Empty string before the source page exists,
-    or outside an ingest.
+    rather than only when refusing at the end.
+
+    Only when the count actually moves. The first write of an ingest is the source page
+    itself — the page that *holds* the list rather than one of the names on it — so it
+    cannot advance anything, and reporting "0/21 done" right after a successful create
+    reads as a bug. That moment is instead the one where the total first becomes known,
+    so it says so. Repeats are dropped for the same reason: a write to a page that is not
+    on the list, or a second write to one already counted, leaves the number where it was.
     """
     ctx = _ctx()
     if not ctx._current_inbox_path:
@@ -2142,9 +2150,17 @@ def _ingest_progress() -> str:
         if not total:
             return ""
         to_update, to_create = _unhandled_listed_pages(ctx)
-        return f"{total - len(to_update) - len(to_create)}/{total}"
+        done = total - len(to_update) - len(to_create)
     except (OSError, ValueError):
         return ""
+    if ctx._session_progress_last is None:
+        ctx._session_progress_last = done
+        return f"ingest: {total} listed page(s) to handle" + (
+            f", {done} already done" if done else "")
+    if done == ctx._session_progress_last:
+        return ""
+    ctx._session_progress_last = done
+    return f"ingest progress: {done}/{total} listed pages done"
 
 
 def _unhandled_listed_pages(ctx) -> tuple:
@@ -4337,7 +4353,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
             if fn_name in _PAGE_WRITE_TOOLS and not result_preview.lower().startswith("error"):
                 _prog = _ingest_progress()
                 if _prog:
-                    log.info("ingest progress: %s listed pages done", _prog)
+                    log.info("%s", _prog)
             # Record for log entry — skip done() itself
             if fn_name != "done":
                 ok = not (isinstance(result, str) and result.lower().startswith("error"))
@@ -4657,7 +4673,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
             if fn_name in _PAGE_WRITE_TOOLS and not result_preview.lower().startswith("error"):
                 _prog = _ingest_progress()
                 if _prog:
-                    log.info("ingest progress: %s listed pages done", _prog)
+                    log.info("%s", _prog)
             # Record for log entry — skip done() itself
             if fn_name != "done":
                 ok = not (isinstance(result, str) and result.lower().startswith("error"))
