@@ -246,6 +246,13 @@ Required sections:
   "Film Criticism", not "film-criticism". This list is permanent — the page it's on cannot
   be edited afterward — and it becomes the title of a page in Step 5, so get the form right
   the first time.
+
+  **If the wiki already has a page for a name, use that page's title here, exactly.**
+  Calling `lookup_titles` on your candidate names *before* you finalise this list is worth
+  the round: it is how "Pacific Gas & Electric Co." stops being created alongside the
+  existing "Pacific Gas and Electric Company". Two spellings of one subject means two
+  half-filled pages, and nothing merges them afterwards.
+
   This list drives page creation in Step 5, so apply real judgement here — the bar is
   **central to the story**, not merely present in it.
 
@@ -328,6 +335,11 @@ Take the `## Entities` and `## Concepts` lists from the source page you created 
 pass **all of those names together** to `lookup_titles` in one call. That single call tells you
 which already have pages and which do not. Do not call `search_wiki` for this, and do not make
 one lookup call per name.
+
+**If you already looked these names up while drafting the list in Step 3, you have this
+answer — do not ask again.** Look up only the names you have not checked yet, and skip the
+call entirely if there are none. Repeating a lookup costs a full round and returns what you
+were already told.
 
 The results are your worklist for Steps 5 and 6: every EXISTS entry gets updated, every
 NO PAGE entry gets created.
