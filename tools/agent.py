@@ -1900,6 +1900,11 @@ def _prepend_log(entry: str) -> str:
 
 _DONE_SENTINEL = "__AGENT_DONE__:"
 
+# Tools that put a page on disk. After one of these lands, the ingest is measurably
+# further along, which is the only moment worth recounting.
+_PAGE_WRITE_TOOLS = {"create_file", "update_file", "update_section",
+                     "append_section", "replace_text"}
+
 # Matches quoted wiki paths like 'sources/foo.md' or 'wiki/entities/bar.md'
 _WIKI_PATH_RE = re.compile(r"'((?:wiki/)?(?:[\w-]+/)+[\w-]+\.md)'")
 
@@ -2084,18 +2089,11 @@ def _post_process_session() -> None:
 _DONE_REFUSAL_LIMIT = 2
 
 
-def _unhandled_listed_pages(ctx) -> tuple:
-    """Names listed in the source page's ## Entities / ## Concepts that this session did
-    not handle. Returns (to_update, to_create).
+def _listed_names(ctx) -> list:
+    """Deduped names from the source page's ## Entities / ## Concepts lists.
 
-    to_update: name already has a page, but no write to it this session.
-    to_create:  name has no page at all.
-
-    Both are violations of the same commitment — Steps 5 and 6 say every listed name gets
-    a page created or updated, and the page-worthiness judgement belongs in Step 3 where
-    the list is written. An earlier version reported only to_update, on the theory that
-    skipping a create was a legitimate call; that let an ingest list six concepts, create
-    one, and pass, leaving five names on the source page with nothing behind them.
+    Shared by done()'s completeness check and the progress counter, so the two can never
+    disagree about what the ingest committed to.
     """
     if not ctx._current_source_page:
         return []
@@ -2107,7 +2105,7 @@ def _unhandled_listed_pages(ctx) -> tuple:
     except OSError:
         return []
 
-    names = []
+    names, seen = [], set()
     for section in ("Entities", "Concepts"):
         m = re.search(r"^#{1,6}\s*" + section + r"\s*$(.*?)(?=^#{1,6}\s|\Z)",
                       text, re.MULTILINE | re.DOTALL)
@@ -2121,19 +2119,54 @@ def _unhandled_listed_pages(ctx) -> tuple:
             # A re-ingested source page may already be autolinked — take the label.
             name = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", name)
             name = re.sub(r"\*\*(.+?)\*\*", r"\1", name).strip().rstrip(".")
-            if name:
+            if name and name.lower() not in seen:
+                seen.add(name.lower())
                 names.append(name)
+    return names
 
+
+def _ingest_progress() -> str:
+    """"7/23" — listed names already handled, against the total committed to.
+
+    An ingest is a long series of writes with no indication of how many are left; the
+    source page's Entities and Concepts lists say exactly how many there will be, and
+    done() already computes what is still outstanding. Same numbers, reported as it goes
+    rather than only when refusing at the end. Empty string before the source page exists,
+    or outside an ingest.
+    """
+    ctx = _ctx()
+    if not ctx._current_inbox_path:
+        return ""
+    try:
+        total = len(_listed_names(ctx))
+        if not total:
+            return ""
+        to_update, to_create = _unhandled_listed_pages(ctx)
+        return f"{total - len(to_update) - len(to_create)}/{total}"
+    except (OSError, ValueError):
+        return ""
+
+
+def _unhandled_listed_pages(ctx) -> tuple:
+    """Names listed in the source page's ## Entities / ## Concepts that this session did
+    not handle. Returns (to_update, to_create).
+
+    to_update: name already has a page, but no write to it this session.
+    to_create:  name has no page at all.
+
+    Both are violations of the same commitment — Steps 5 and 6 say every listed name gets
+    a page created or updated, and the page-worthiness judgement belongs in Step 3 where
+    the list is written. An earlier version reported only to_update, on the theory that
+    skipping a create was a legitimate call; that let an ingest list six concepts, create
+    one, and pass, leaving five names on the source page with nothing behind them.
+    """
+    names = _listed_names(ctx)
     if not names:
         return [], []
     by_key = {t.lower(): rel for t, rel in _build_title_map()}
     written = set(ctx._session_entity_pages) | set(ctx._session_updated_pages)
-    to_update, to_create, seen = [], [], set()
+    to_update, to_create = [], []
     for name in names:
-        key = name.lower()
-        if key in seen:
-            continue
-        seen.add(key)
         # Same resolver lookup_titles uses. A title-only check here would keep demanding a
         # page that already exists under this name's slug, and done() would refuse an
         # ingest that had nothing left to do.
@@ -4301,6 +4334,10 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                         if fn_name in ("read_section", "update_section", "append_section")
                         else str(list(args.values())[:1]))
             log.debug("Tool result [%s] %s: %s", fn_name or "(unknown)", _preview[:60], result_preview)
+            if fn_name in _PAGE_WRITE_TOOLS and not result_preview.lower().startswith("error"):
+                _prog = _ingest_progress()
+                if _prog:
+                    log.info("ingest progress: %s listed pages done", _prog)
             # Record for log entry — skip done() itself
             if fn_name != "done":
                 ok = not (isinstance(result, str) and result.lower().startswith("error"))
@@ -4617,6 +4654,10 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
 
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
             log.debug("Tool result [%s]: %s", fn_name or "(unknown)", result_preview)
+            if fn_name in _PAGE_WRITE_TOOLS and not result_preview.lower().startswith("error"):
+                _prog = _ingest_progress()
+                if _prog:
+                    log.info("ingest progress: %s listed pages done", _prog)
             # Record for log entry — skip done() itself
             if fn_name != "done":
                 ok = not (isinstance(result, str) and result.lower().startswith("error"))
