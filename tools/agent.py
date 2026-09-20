@@ -1435,25 +1435,44 @@ def _update_section(args: dict) -> str:
         _pct = 100 - int(len(new_text) / len(old_text) * 100)
         log.warning("update_section: refused %s '%s' — would shrink %d%% (%d -> %d chars)",
                     path, section, _pct, len(old_text), len(new_text))
-        # "Resend it with your additions merged in" is the right advice for a section the
-        # model can reproduce, and unfollowable for one it cannot — which is how this
-        # refusal came to be hit twice in a row on a 14K section and the ingest abandoned
-        # the page. Naming append_section as the way through costs nothing when merging
-        # was possible (the model just merges) and is the only move that works when it was
-        # not. It stays the fallback, not the default: appending instead of merging is
-        # what turns a synthesis into a pile, so the wording only offers it for material
-        # that is genuinely new.
+        # Two different situations, and one answer does not serve both.
+        #
+        # A section the model can reproduce should be merged, and the reason it failed is
+        # usually that it no longer has the text — read_file truncated, or the read is
+        # thousands of tokens back. Handing the section back with the refusal turns "try
+        # again" into something it can actually do, the same trick the read-before-write
+        # refusals use.
+        #
+        # A section too long to re-emit is a different problem: handing it back is
+        # expensive and it still cannot reproduce it, so append_section is the only move
+        # that succeeds. Offering that for a 3K section instead — as this did — is how an
+        # Obama page with a perfectly reproducible 3,078-char Overview got a paragraph
+        # bolted onto the end rather than merged, which is the pile the wiki is not
+        # supposed to become. The line between the two is drawn from the model's own
+        # output budget: a section that is a small fraction of what it can emit in one
+        # response is one it can be expected to reproduce.
+        _budget_chars = cfg_int("llm", "max_tokens", default=16384) * 4
+        if len(old_text) <= _budget_chars // 8:
+            return (
+                f"Error: update_section refused — this would cut '{section}' by {_pct}% "
+                f"({len(old_text)} chars now, {len(new_text)} in what you sent). Folding in "
+                f"a new source should preserve what is already there.\n\n"
+                f"This section is short enough to resend in full, so do that rather than "
+                f"appending: below is exactly what is on the page now. Merge your new "
+                f"material into THIS text — keep every existing claim — and call "
+                f"update_section again.\n\n{heading}\n{old_text}"
+            )
         return (
             f"Error: update_section refused — this would cut '{section}' by {_pct}% "
             f"({len(old_text)} chars now, {len(new_text)} in what you sent). Folding in a new "
             f"source should preserve what is already there.\n\n"
             f"If you can reproduce the section, resend it with your additions merged into "
             f"the existing text — that is the better result.\n\n"
-            f"If you cannot — this section is long, and re-emitting it in full is where "
-            f"that fails — then do NOT keep retrying a shortened version: call "
-            f"append_section(path, section, text) with only the new material. That adds it "
-            f"without touching what is already there. Retrying this call with another "
-            f"condensed rewrite will be refused again."
+            f"If you cannot — at {len(old_text)} chars this section is long, and re-emitting "
+            f"it in full is where that fails — then do NOT keep retrying a shortened "
+            f"version: call append_section(path, section, text) with only the new material. "
+            f"That adds it without touching what is already there. Retrying this call with "
+            f"another condensed rewrite will be refused again."
         )
 
     # The content is placed UNDER the existing heading, so a copy of that heading at the
