@@ -2752,6 +2752,25 @@ def _slug_for(name: str) -> str:
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", name.lower())).strip("-")
 
 
+def _norm_name_key(name: str) -> str:
+    """Comparison key for deciding whether two names mean the same page.
+
+    Case, punctuation, spacing, "&" against "and", and acronyms written with periods:
+    "A.I. Safety" and "AI Safety" are one subject, and treating them as two reported a
+    page as never created moments after it had been updated.
+
+    Deliberately NOT _norm_title_key, which also strips legal suffixes. That is right for
+    *suggesting* a near-match to a human or a model, and wrong for resolving one
+    automatically — it collapses "PG&E Corporation" into "PG&E", and a holding company
+    and its subsidiary are two pages.
+    """
+    s = re.sub(r"\([^)]*\)", " ", name.lower())
+    s = s.replace("&", " and ")
+    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+    s = re.sub(r"\b(?:[a-z] )+[a-z]\b", lambda m: m.group(0).replace(" ", ""), s)
+    return re.sub(r"\s+", " ", s)
+
+
 def _resolve_page(name: str, by_key: dict) -> str:
     """wiki-relative path of the page for `name`, or "" if there is none.
 
@@ -2770,6 +2789,14 @@ def _resolve_page(name: str, by_key: dict) -> str:
         for sd in ("entities", "concepts", "synthesis"):
             if (WIKI_DIR / sd / f"{slug}.md").exists():
                 return f"{sd}/{slug}.md"
+    # Last resort: the same name written differently. Both of the checks above are exact —
+    # on the string and on the filename it produces — so "A.I. Safety" misses a page
+    # titled "AI Safety" at ai-safety.md on both counts.
+    want = _norm_name_key(name)
+    if want:
+        for title, rel in by_key.items():
+            if _norm_name_key(title) == want:
+                return rel
     return ""
 
 
@@ -2836,7 +2863,8 @@ def _lookup_titles(args: dict) -> str:
                 # Matched by filename, not title — say so, or the model reads EXISTS,
                 # opens the page, finds a different name at the top, and concludes the
                 # lookup was wrong about which page this is.
-                note = " (page exists at this name's slug; its title: differs — update it, do not make a second page)"
+                note = (" (found by filename or by normalizing the name — the page's "
+                        "title: is written differently. Update this page; do not make a second one)")
             found.append(f"- {n} → EXISTS at wiki/{rel}{note}")
             continue
         cands = [(t, r) for t, r in by_norm.get(_norm_title_key(n), [])
@@ -3541,6 +3569,20 @@ def _create_file(args: dict) -> str:
     wiki_rel = str(p.relative_to(WIKI_DIR))
     if wiki_rel not in _ctx()._session_entity_pages:
         _ctx()._session_entity_pages.append(wiki_rel)
+
+    # A page this session just wrote counts as read. The read-before-write guards exist so
+    # a rewrite cannot discard text the agent has not seen — and there is no text here it
+    # has not seen, it authored every character. Without this, update_section on a page
+    # created moments earlier was refused with "you had not read 'Overview' in this
+    # session", which is unanswerable advice about the agent's own work. Recorded after
+    # the autolink above, so the coverage figure matches what is actually on disk.
+    _final = p.read_text(encoding="utf-8", errors="replace")
+    _body_len = len(_strip_system_fm_fields(_final))
+    _ctx()._session_read_pages.add(wiki_rel)
+    _cov = _ctx()._session_read_coverage
+    _cov[wiki_rel] = max(_cov.get(wiki_rel, 0), _body_len)
+    _ctx()._session_read_sections.update(
+        (wiki_rel, h) for h in _sections_fully_shown(_final, True))
 
     if _subdir == "sources":
         _ctx()._current_source_page = str(p.relative_to(WIKI_DIR))
