@@ -1687,6 +1687,7 @@ def _ctx():
         t._session_tool_calls = []
         t._session_search_counts = {}
         t._done_refusals = 0
+        t._done_progress_mark = None
         t._session_incomplete = []
         t._session_snapshotted = set()
         t._session_stale_pages = set()
@@ -1708,6 +1709,7 @@ def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
     t._session_tool_calls = []
     t._session_search_counts = {}
     t._done_refusals = 0
+    t._done_progress_mark = None
     t._session_incomplete = []
     t._session_snapshotted = set()
     t._session_stale_pages = set()
@@ -2264,16 +2266,35 @@ def _done(args: dict) -> str:
         # an ingest that names a subject and then never updates that subject's existing
         # page silently drops exactly the knowledge it was run to capture.
         _to_update, _to_create = _unhandled_listed_pages(ctx)
-        if (_to_update or _to_create) and ctx._done_refusals < _DONE_REFUSAL_LIMIT:
-            ctx._done_refusals += 1
-            log.warning("done() refused (%d/%d): %d listed name(s) need updating, %d need creating: %s",
-                        ctx._done_refusals, _DONE_REFUSAL_LIMIT, len(_to_update), len(_to_create),
-                        ", ".join([n for n, _ in _to_update[:5]] + _to_create[:5]))
+        _total = len(_listed_names(ctx))
+        _handled = _total - len(_to_update) - len(_to_create)
+        # A refusal only counts against the cap if nothing was handled since the last one.
+        # The cap exists to break an unproductive loop, and an ingest that did more work
+        # between refusals is not looping — it is finishing a long list and calling done()
+        # early on the way. Twelve outstanding names take twenty-odd rounds, so a fixed two
+        # strikes was being spent by an agent that was still working, which then passed
+        # through "incomplete" with half the list undone. Progress is monotonic and bounded
+        # by the total, so forgiving those cannot loop forever: stop working and the
+        # refusals start counting again.
+        _progressed = (ctx._done_progress_mark is not None
+                       and _handled > ctx._done_progress_mark)
+        if (_to_update or _to_create) and (_progressed or ctx._done_refusals < _DONE_REFUSAL_LIMIT):
+            if _progressed:
+                log.warning("done() refused (progress since last refusal: %d -> %d of %d, "
+                            "not counted against the limit): %d need updating, %d need creating",
+                            ctx._done_progress_mark, _handled, _total,
+                            len(_to_update), len(_to_create))
+            else:
+                ctx._done_refusals += 1
+                log.warning("done() refused (%d/%d): %d listed name(s) need updating, %d need creating: %s",
+                            ctx._done_refusals, _DONE_REFUSAL_LIMIT, len(_to_update), len(_to_create),
+                            ", ".join([n for n, _ in _to_update[:5]] + _to_create[:5]))
+            ctx._done_progress_mark = _handled
             _parts = []
             if _to_update:
                 _parts.append(
-                    "These already have a page you did not update — read_file it, then "
-                    "update_file with this source merged in:\n"
+                    "These already have a page you did not update — read_section the section "
+                    "you are changing, then update_section with this source merged in:\n"
                     + "\n".join(f"  - {name} → wiki/{rel}" for name, rel in _to_update[:15]))
             if _to_create:
                 _parts.append(
@@ -2281,11 +2302,12 @@ def _done(args: dict) -> str:
                     + "\n".join(f"  - {name}" for name in _to_create[:15]))
             _body = "\n\n".join(_parts)
             return (
-                "Error: done() refused — you listed these in the source page's ## Entities / "
-                "## Concepts but did not give them pages. That list is a commitment: whether a "
-                "name deserves a page is decided when you write the list in Step 3, not here. "
-                "A listed name with no page behind it shows up on the source page as plain "
-                f"text that goes nowhere.\n\n{_body}\n\nThen call done()."
+                f"Error: done() refused — {_handled} of {_total} listed names are done, "
+                f"{len(_to_update) + len(_to_create)} still are not. That list is a "
+                "commitment: whether a name deserves a page is decided when you write the "
+                "list in Step 3, not here. A listed name with no page behind it shows up on "
+                f"the source page as plain text that goes nowhere.\n\n{_body}\n\n"
+                "Work through them and then call done()."
             )
 
         # The refusal cap above exists so a source with a genuinely long entity list (a
