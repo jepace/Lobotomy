@@ -12,3 +12,4 @@ wiki/.tokens.json
 wiki/.login_log.json
 server.log
 server.log.*
+server-stacks.log

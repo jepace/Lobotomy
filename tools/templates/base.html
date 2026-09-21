@@ -294,10 +294,53 @@
   (function() {
     var navChat = document.getElementById('nav-chat');
     if (!navChat) return;
+
+    // Queue bar. Shown only while jobs are waiting, on every page, because the moment
+    // you want it is mid-workflow: a batch of wikifies queued, a bug spotted, and a
+    // deploy that should not abandon the article currently being written.
+    var bar = document.createElement('div');
+    bar.id = 'queue-bar';
+    bar.hidden = true;
+    Object.assign(bar.style, {
+      position: 'fixed', bottom: '68px', left: '50%', transform: 'translateX(-50%)',
+      zIndex: 900, display: 'flex', alignItems: 'center', gap: '10px',
+      padding: '7px 12px', borderRadius: '20px', fontSize: '13px',
+      background: 'var(--bg2)', color: 'var(--text)',
+      border: '1px solid var(--border)', boxShadow: '0 2px 10px rgba(0,0,0,.25)'
+    });
+    var label = document.createElement('span');
+    var btn = document.createElement('button');
+    btn.textContent = 'Clear queue';
+    Object.assign(btn.style, {
+      font: 'inherit', cursor: 'pointer', padding: '3px 10px', borderRadius: '12px',
+      border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)'
+    });
+    btn.onclick = async function () {
+      if (!confirm('Drop the queued articles?\n\nThe one being written now will finish — '
+                 + 'the rest stay in the reading list and can be run again later.')) return;
+      btn.disabled = true;
+      try {
+        var d = await (await fetch('/chat/queue/drain', {method: 'POST'})).json();
+        label.textContent = d.dropped + ' dropped — finishing the current one';
+      } catch (e) {
+        label.textContent = 'Could not clear the queue';
+      }
+      setTimeout(function () { btn.disabled = false; syncBusy(); }, 2500);
+    };
+    bar.appendChild(label); bar.appendChild(btn);
+    document.body.appendChild(bar);
+
     function syncBusy() {
       fetch('/chat/status').then(function(r){ return r.json(); }).then(function(s) {
         if (s.running) navChat.classList.add('ai-busy');
         else navChat.classList.remove('ai-busy');
+        var n = s.pending || 0;
+        if (n > 0 && !btn.disabled) {
+          label.textContent = n + (n === 1 ? ' article queued' : ' articles queued');
+          bar.hidden = false;
+        } else if (!btn.disabled) {
+          bar.hidden = true;
+        }
       }).catch(function(){});
     }
     syncBusy();

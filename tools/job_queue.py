@@ -44,10 +44,10 @@ class JobQueue:
     # ------------------------------------------------------------------
 
     def status(self) -> dict:
-        """Return the currently running job, if any."""
+        """Return the currently running job, if any, and how many are waiting."""
         with self._lock:
             jid = self._current_job_id
-        return {"running": jid is not None, "job_id": jid}
+        return {"running": jid is not None, "job_id": jid, "pending": self._q.qsize()}
 
     def submit(self, client, model: str, messages: list,
                system: str, on_done=None, setup=None) -> str:
@@ -72,6 +72,40 @@ class JobQueue:
             ev.set()
             return True
         return False
+
+    def drain(self) -> int:
+        """Discard every job still waiting to start. Returns how many were dropped.
+
+        The running job is left alone deliberately: the point is to stop *after* the
+        current article rather than abandon it half-written. Queue up a dozen wikifies,
+        notice a bug, and this is what lets the server reach a quiet point so it can be
+        restarted onto new code without losing the one in flight.
+
+        Each dropped job gets a terminal event written to its stream, so anything tailing
+        it in a browser finishes instead of hanging until the 30-minute idle timeout.
+        """
+        dropped = 0
+        while True:
+            try:
+                job_id, _client, _model, _messages, _system, _on_done, _ev, _setup = \
+                    self._q.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                with open(self._event_file(job_id), "a", encoding="utf-8") as fp:
+                    fp.write(json.dumps({"type": "error",
+                                         "content": "Queue cleared before this job started — "
+                                                    "the article is still in the reading list."}) + "\n")
+                    fp.write(json.dumps({"type": "done"}) + "\n")
+            except OSError as e:
+                log.warning("drain: could not close out %s: %s", job_id, e)
+            with self._lock:
+                self._cancel_events.pop(job_id, None)
+            self._q.task_done()
+            dropped += 1
+        if dropped:
+            log.info("Queue drained: %d job(s) dropped, running job left to finish", dropped)
+        return dropped
 
     def tail(self, job_id: str):
         """
@@ -140,12 +174,21 @@ class JobQueue:
         """
         On startup: any .ndjson without a 'done' event was interrupted by a server
         restart. Write terminal events so tail() doesn't hang on reconnect.
+
+        This does NOT resume anything, despite the name it used to log. The job's messages
+        and setup were never persisted — only its event stream was — so there is nothing
+        to restart from. What it does is close out the stream. The work itself is not lost
+        either way: an ingest that did not reach done() never marked its source wikified,
+        so the article is still sitting in the reading list waiting to be run again.
         """
         for f in sorted(self._dir.glob("*.ndjson")):
             try:
                 content = f.read_bytes()
                 if b'"done"' not in content:
-                    log.warning("Recovering interrupted job file: %s", f.name)
+                    log.warning("Job %s was interrupted by a restart and is NOT being "
+                                "resumed — closing out its stream. Its article was never "
+                                "marked wikified, so it is still in the reading list; "
+                                "re-run it from there.", f.stem)
                     with open(f, "ab") as fp:
                         fp.write((json.dumps({
                             "type": "error",

@@ -1385,6 +1385,21 @@ def chat_cancel():
     return {"ok": found}
 
 
+@app.route("/chat/queue/drain", methods=["POST"])
+@require_login
+def chat_queue_drain():
+    """Drop every queued job; let the running one finish.
+
+    The deploy workflow this exists for: queue a batch of wikifies, spot a bug, want the
+    server on new code. Cancelling the running job abandons a half-written article;
+    waiting for the whole queue can take hours. This stops the bleeding after the current
+    one.
+    """
+    dropped = job_queue.drain()
+    log.info("Queue drained by user: %d job(s) dropped", dropped)
+    return {"ok": True, "dropped": dropped, "running": job_queue.status()["running"]}
+
+
 @app.route("/wiki/search")
 @require_login
 def wiki_search():
