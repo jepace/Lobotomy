@@ -2884,25 +2884,36 @@ def _lookup_titles(args: dict) -> str:
                 # lookup was wrong about which page this is.
                 note = (" (found by filename or by normalizing the name — the page's "
                         "title: is written differently. Update this page; do not make a second one)")
-            found.append(f"- {n} → EXISTS at wiki/{rel}{note}")
+            found.append(f"  - {n} → wiki/{rel}{note}")
             continue
         cands = [(t, r) for t, r in by_norm.get(_norm_title_key(n), [])
                  if t.lower() != n.lower()]
         if cands:
             near = True
             alts = "; ".join(f'"{t}" at wiki/{r}' for t, r in cands[:3])
-            missing.append(f"- {n} → NO PAGE under this exact name. SIMILAR: {alts}")
+            missing.append(f"  - {n}  (nothing under this exact name. SIMILAR: {alts})")
         else:
-            missing.append(f"- {n} → NO PAGE")
+            missing.append(f"  - {n}")
 
-    lines = [f"Looked up {len(names)} name(s) against {len(by_key)} wiki page titles and aliases.", ""]
-    lines.extend(found + missing)
-    lines.append("")
-    lines.append(
-        "EXISTS → read_file that path, then update_file it to incorporate this source. "
-        "NO PAGE → create_file a new page. The EXISTS/NO PAGE answer is exact and covers "
-        "aliases; do not call search_wiki to double-check it."
-    )
+    # Presented as two labelled worklists rather than one annotated list. Both kinds of
+    # answer used to be the same shape — "- Name → EXISTS at ..." beside "- Name → NO
+    # PAGE" — with the legend explaining them at the bottom, twenty-odd lines below the
+    # first name. An agent working down that wall called create_file on a page it had been
+    # told two rounds earlier already existed. Saying what to DO at the head of each group,
+    # and forbidding create_file inside the group where it is wrong, puts the instruction
+    # where the names are.
+    lines = [f"Looked up {len(names)} name(s) against {len(by_key)} wiki page titles and aliases."]
+    if found:
+        lines += ["", f"UPDATE ({len(found)}) — these already have a page. Do NOT call "
+                      f"create_file for any of them; read the page, then fold this source "
+                      f"in with update_section:"]
+        lines += found
+    if missing:
+        lines += ["", f"CREATE ({len(missing)}) — these have no page. Call create_file for "
+                      f"each one:"]
+        lines += missing
+    lines += ["", "This answer is exact and covers aliases — do not call search_wiki to "
+                  "double-check it."]
     if near:
         lines.append("")
         lines.append(

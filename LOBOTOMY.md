@@ -346,11 +346,16 @@ NO PAGE entry gets created.
 
 ### Step 5 — Update or create entity documents
 
-**Mandatory. Work through the `## Entities` list of the source page you created in Step 3
-and handle every name on it.** You already applied the page-worthiness test when you wrote
-that list, so do not second-guess it here — every name on it gets a page created or
-updated. Do not stop after one, and do not proceed to `done()` until this step and Step 6
-are finished.
+**Mandatory. Work through Step 4's `lookup_titles` result and handle every name on it.**
+That result is the worklist, already sorted into the two actions: everything under UPDATE
+has a page and must be updated, everything under CREATE has none and must be created. Work
+from it rather than from the bare `## Entities` list on the source page, which carries the
+names but not which action each one needs — reading the names from one place and the
+actions from another is how a page gets created that you were told already exists.
+
+You already applied the page-worthiness test when you wrote that list, so do not
+second-guess it here — every name on it gets a page created or updated. Do not stop after
+one, and do not proceed to `done()` until this step and Step 6 are finished.
 
 For each entity (person, organization, product, project) on that list:
 - **Use the `lookup_titles` results from Step 4.** They already tell you whether this entity
@@ -441,9 +446,10 @@ For each entity (person, organization, product, project) on that list:
 
 ### Step 6 — Update or create concept documents
 
-**Mandatory. Work through the `## Concepts` list of the source page you created in Step 3
-and handle every name on it.** As with entities, the list is already filtered — do not
-re-apply the page-worthiness test here.
+**Mandatory. Work through Step 4's `lookup_titles` result and handle every concept on
+it.** As in Step 5, that result is the worklist — UPDATE means the page exists, CREATE
+means it does not. As with entities, the list is already filtered — do not re-apply the
+page-worthiness test here.
 
 For each concept, technique, framework, or term on that list:
 - **Use the `lookup_titles` results from Step 4.** They already tell you whether this concept
