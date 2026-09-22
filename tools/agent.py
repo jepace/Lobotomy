@@ -198,6 +198,10 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 _RAW_READ_LIMIT  = 60_000  # chars for raw source files
 _WIKI_READ_LIMIT = 20_000  # chars for wiki pages — generous but prevents context blowout
+# Chars of each section quoted in the outline a too-large wiki page returns instead of its
+# text. Enough to see what the section already covers — which is what decides where a new
+# fact goes — without quoting it.
+_OUTLINE_PREVIEW = 200
 
 
 _WIKI_META_STEMS = {"log", "index"}
@@ -273,7 +277,7 @@ def _elsewhere_hint(p: Path) -> str:
     return f" It exists at {', '.join(other)} — use that path instead." if other else ""
 
 
-def _read_file(path: str, offset: int = 0) -> "str | list":
+def _read_file(path: str, offset: int = -1) -> "str | list":
     """Return a string, or a list of content blocks for image/image-only PDF."""
     p = REPO_ROOT / path
     if not p.exists():
@@ -331,6 +335,13 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
     # sources: is intentionally kept — the LLM needs it to iterate source pages.
     text = _strip_system_fm_fields(text)
 
+    # offset < 0 means the caller did not ask to page — the ordinary "read me this page"
+    # call. Only that one gets the outline treatment for an over-limit wiki page; an
+    # explicit offset (including 0) is a deliberate request to page through the text, which
+    # the Regenerate Workflow needs in order to reach full read coverage for update_file.
+    _paging = offset >= 0
+    offset = max(offset, 0)
+
     total = len(text)
     if offset:
         text = text[offset:]
@@ -338,33 +349,66 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
         remaining = total - offset - limit
         covered_upto = offset + limit
         _shown = text[:limit]
-        if _is_wiki:
+        if _is_wiki and not _paging:
             # Paging through a large wiki page is the most expensive thing an ingest can do.
             # Nothing prunes the conversation, so every chunk pulled in here is re-sent on
             # every later round of the ingest — reading a 60K page costs that page several
             # times over before the run ends, and an ingest touching a dozen such pages goes
-            # quadratic. read_section gets the one section being edited and names the rest,
-            # which is all that is needed to place a new fact. (Raw sources keep the paging
-            # instruction below: there is no section tool for them, and the whole source has
-            # to be read to summarize it.)
-            _full = p.read_text(encoding="utf-8", errors="replace")
-            _heads = re.findall(r"^#{1,6}[ \t]*(\S.*?)[ \t]*$",
-                                _strip_system_fm_fields(_full), re.MULTILINE)
+            # quadratic.
+            #
+            # So above the limit this does not return a chunk at all. It used to return the
+            # first 20,000 chars and then tell the agent not to work from them — paying full
+            # price, every round, for text the instruction disowned. What it returns instead
+            # is the page's shape: frontmatter, every section name, and the opening of each
+            # one. That is what the read is actually for — knowing what the page already
+            # covers and where a new fact belongs — and it costs about a tenth as much.
+            # read_section then returns the one section being edited, in full.
+            #
+            # Only the un-offset read does this. An explicit offset still pages, because the
+            # Regenerate Workflow rewrites a whole page with update_file and needs full read
+            # coverage to be reachable. (Raw sources page too: there is no section tool for
+            # them, and the whole source has to be read to summarize it.)
+            _full = _strip_system_fm_fields(p.read_text(encoding="utf-8", errors="replace"))
+            _fm_m = re.match(r"^(---\s*\n.*?\n---\s*\n)", _full, re.DOTALL)
+            _fm, _body = (_fm_m.group(1), _full[_fm_m.end():]) if _fm_m else ("", _full)
             # Drop the page's own H1 title and the auto-generated Sources section — neither
             # is a section anything should be written to. Same exclusions as _read_section's
             # outline, and the title is matched against frontmatter rather than by heading
             # level, since some pages carry a real section at H1.
             _title_m = re.search(r'^title:\s*["\']?(.+?)["\']?\s*$', _full, re.MULTILINE)
             _skip = {"sources"} | ({_title_m.group(1).strip().lower()} if _title_m else set())
-            _heads = [h for h in _heads if h.strip().lower() not in _skip]
-            _outline = (f" Its sections are: {', '.join(_heads)}." if _heads else "")
-            text = _shown + (
-                f"\n\n[TRUNCATED — showing chars {offset}–{offset+limit} of {total} total.\n"
-                f"Do NOT call read_file again with an offset: this page is large, and every "
-                f"chunk read stays in the conversation and is re-sent on every later round of "
-                f"this ingest.{_outline}\n"
-                f"Call read_section(path, section) for the section you need to change instead "
-                f"— it returns that section in full and lists the others.]")
+
+            _marks = list(re.finditer(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", _body, re.MULTILINE))
+            _lines = []
+            for _i, _m in enumerate(_marks):
+                _name = _m.group(2).strip()
+                if _name.lower() in _skip:
+                    continue
+                _end = _marks[_i + 1].start() if _i + 1 < len(_marks) else len(_body)
+                _sec = _body[_m.end():_end].strip()
+                _flat = " ".join(_sec.split())
+                _head = _flat[:_OUTLINE_PREVIEW]
+                _more = f" …[+{len(_flat) - len(_head):,} more chars]" if len(_flat) > len(_head) else ""
+                _lines.append(f"{'#' * len(_m.group(1))} {_name}  ({len(_sec):,} chars)\n"
+                              f"    {_head}{_more}" if _sec else
+                              f"{'#' * len(_m.group(1))} {_name}  (empty)")
+            _outline = "\n".join(_lines) if _lines else "(no sections)"
+            text = (
+                f"{_fm}"
+                f"[OUTLINE — this page is {total:,} chars, over the {limit:,}-char read limit, "
+                f"so its sections are summarized rather than quoted.\n"
+                f"Each section below shows its size and opening. Call read_section(path, section) "
+                f"for the one you are changing — it returns that section in full.\n"
+                f"Do NOT call read_file again with an offset: every chunk read stays in the "
+                f"conversation and is re-sent on every later round of this ingest. The one "
+                f"exception is a regenerate, which rewrites the whole page with update_file "
+                f"and so must genuinely see all of it — start that with offset=0.]\n\n"
+                f"{_outline}\n")
+            # Nothing was quoted, so nothing is credited as read. update_section will ask for
+            # the section explicitly, which is the intended next step — better than a refusal
+            # quietly doing that work as a side effect.
+            _shown = ""
+            covered_upto = 0
         else:
             text = _shown + f"\n\n[TRUNCATED — showing chars {offset}–{offset+limit} of {total} total. Call read_file with offset={offset+limit} to continue.]"
     else:
@@ -4165,7 +4209,12 @@ def _validate_ingest(args: dict) -> str:
 TOOL_FNS = {
     # Use .get() throughout: a missing key must come back as a tool-level error the LLM
     # can correct, never a KeyError that unwinds the whole agent loop.
-    "read_file":       lambda a: _read_file(a.get("path", ""), int(a.get("offset", 0) or 0)),
+    # offset defaults to the -1 sentinel, not 0: "no offset given" and "offset 0" are
+    # different requests — the first gets an outline for an over-limit wiki page, the
+    # second pages. int(x or 0) collapsed them, since 0 is falsy.
+    "read_file":       lambda a: _read_file(
+        a.get("path", ""),
+        int(a["offset"]) if str(a.get("offset", "")).strip() not in ("", "None") else -1),
     "update_file":      lambda a: _update_file(a.get("path", ""), a.get("content", ""),
                                                str(a.get("allow_shrink", "")).lower() in ("true", "1", "yes")),
     "read_section":     _read_section,
@@ -4198,7 +4247,12 @@ TOOL_DEFS = [
                 "type": "object",
                 "properties": {
                     "path":   {"type": "string",  "description": "Path relative to repo root"},
-                    "offset": {"type": "integer", "description": "Character offset to start reading from (default 0)"},
+                    "offset": {"type": "integer", "description": (
+                                    "Character offset to start reading from. Omit it — the default "
+                                    "returns an outline for an over-large wiki page, which is what "
+                                    "an ingest needs. Pass it only to page deliberately through a "
+                                    "whole page, which only a regenerate requires; start at 0."
+                                )},
                 },
                 "required": ["path"],
             },
@@ -4514,7 +4568,7 @@ def system_prompt() -> str:
         "## Tool quick-reference\n\n"
         "| Tool | When to use |\n"
         "|------|-------------|\n"
-        "| read_file | Read any repo file. Raw sources truncated at 60k chars, wiki pages at 20k. |\n"
+        "| read_file | Read any repo file. Raw sources truncated at 60k chars. A wiki page over 20k chars comes back as an OUTLINE — section names, sizes and openings — not its text; use read_section for the section you are changing. |\n"
         "| update_file | Update an existing wiki page (must already exist; raw/ is blocked). **Must read_file first** — refused otherwise. |\n"
         "| create_file | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. Supports scope tokens: 'in:sources', 'in:entities', 'in:concepts'. Supports tag filter: 'tag:<tagname>' (e.g. 'tag:trump-administration'). |\n"

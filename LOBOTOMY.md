@@ -432,13 +432,15 @@ For each entity (person, organization, product, project) on that list:
      notice when it is already covered somewhere else on the page — so read the whole thing
      whenever the page comes back in one piece.
 
-     **If it comes back `[TRUNCATED …]`, stop reading and switch to `read_section`.** Do not
-     keep calling `read_file` with the offset. Reading is not free: every chunk you pull in
-     stays in the conversation and is re-sent on every round for the rest of this ingest, so
-     paging through a 60K page costs that page several times over before the ingest ends. A
-     page that large is one where sections are self-contained enough to edit on their own —
-     `read_section` names the page's other sections in its reply, so you still know what is
-     there without paying to read all of it.
+     **If it comes back `[OUTLINE …]`, the page was too large to quote** — you are given
+     its frontmatter, every section name, each section's size, and the opening of each one.
+     That is enough to decide where new information belongs and to see what is already
+     covered. Call `read_section(path, section)` for the section you are changing; it
+     returns that one in full. Do not call `read_file` again with an offset: reading is not
+     free — every chunk you pull in stays in the conversation and is re-sent on every round
+     for the rest of this ingest, so paging through a 60K page costs that page several
+     times over before the ingest ends. A page that large is one where sections are
+     self-contained enough to edit on their own.
   2. Decide where each piece of new information belongs.
   3. For each section that changes, call `update_section` with **that section's body and
      nothing else** — the text under its heading, without the heading line, without any
@@ -532,13 +534,15 @@ For each concept, technique, framework, or term on that list:
      notice when it is already covered somewhere else on the page — so read the whole thing
      whenever the page comes back in one piece.
 
-     **If it comes back `[TRUNCATED …]`, stop reading and switch to `read_section`.** Do not
-     keep calling `read_file` with the offset. Reading is not free: every chunk you pull in
-     stays in the conversation and is re-sent on every round for the rest of this ingest, so
-     paging through a 60K page costs that page several times over before the ingest ends. A
-     page that large is one where sections are self-contained enough to edit on their own —
-     `read_section` names the page's other sections in its reply, so you still know what is
-     there without paying to read all of it.
+     **If it comes back `[OUTLINE …]`, the page was too large to quote** — you are given
+     its frontmatter, every section name, each section's size, and the opening of each one.
+     That is enough to decide where new information belongs and to see what is already
+     covered. Call `read_section(path, section)` for the section you are changing; it
+     returns that one in full. Do not call `read_file` again with an offset: reading is not
+     free — every chunk you pull in stays in the conversation and is re-sent on every round
+     for the rest of this ingest, so paging through a 60K page costs that page several
+     times over before the ingest ends. A page that large is one where sections are
+     self-contained enough to edit on their own.
   2. Decide where each piece of new information belongs.
   3. For each section that changes, call `update_section` with **that section's body and
      nothing else** — the text under its heading, without the heading line, without any
