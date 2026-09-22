@@ -263,6 +263,24 @@ title-map caches), and a test that misses one of them can pass while testing not
 its docstring before writing a new test file, and build every fixture through its `TempWiki`
 class rather than touching `agent.py`'s globals directly.
 
+### `tests/mutate.py` — does the suite actually catch anything?
+A green suite proves nothing on its own. This breaks one guard in `agent.py` at a time,
+runs the suite, and reports whether any test noticed. **Every mutation must be CAUGHT.**
+
+```sh
+python3 tools/tests/mutate.py              # all mutations
+python3 tools/tests/mutate.py timeline     # just the ones matching a name
+```
+
+A `MISSED` line names a guard that could be deleted tomorrow without a single test
+objecting — which is how the duplicate-heading guard and the `read_file` dispatch layer
+were found uncovered after the suite was first written, both passing 90 tests while
+protecting nothing. A `STALE` line means an anchor no longer matches, so the code moved
+and that mutation is no longer testing what it claims.
+
+`agent.py` is restored afterwards, including on Ctrl-C. Add a mutation whenever you add a
+guard; if you cannot write one the suite catches, the guard is untested.
+
 ### `tests/run_autolink_cases.py` — autolinker characterization harness
 The autolinker is the most bug-prone code in the project: its matching rules are subtle
 (link every occurrence, never inside an existing link, upgrade a partial link to the longer
