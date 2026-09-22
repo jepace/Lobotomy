@@ -2,10 +2,12 @@
 set -e
 
 # Deploy Lobotomy to FreeBSD jail using rsync
-# Usage: ./deploy.sh [--full] [--dry-run] [--skip-tests]
-#   --full:       include wiki/ and raw/ (default: preserve them)
-#   --dry-run:    show what would be synced without making changes
-#   --skip-tests: deploy without running the test suite first (not recommended)
+# Usage: ./deploy.sh [--full] [--dry-run]
+#   --full:    include wiki/ and raw/ (default: preserve them)
+#   --dry-run: show what would be synced without making changes
+#
+# This copies files. It does not run tests, restart the service, or verify anything
+# beyond the uncommitted-changes check below — run the suite yourself before deploying.
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 JAIL_ROOT="/usr/local/bastille/jails/lobotomy/root/var/www/Lobotomy"
@@ -34,40 +36,12 @@ fi
 
 FULL_DEPLOY=0
 DRY_RUN=""
-SKIP_TESTS=0
 for arg in "$@"; do
     case "$arg" in
         --full) FULL_DEPLOY=1 ;;
         --dry-run) DRY_RUN="--dry-run" ;;
-        --skip-tests) SKIP_TESTS=1 ;;
     esac
 done
-
-# Run the test suite before shipping anything. It is stdlib-only — no flask, no network,
-# no LLM, no config.json needed — so it runs on this host whether or not the app's
-# dependencies are installed here, and takes well under a second.
-#
-# This is the check that matters: the uncommitted-changes check above only proves the code
-# is saved, not that it works. Most of what this deploys is guards, and a broken guard is
-# silent — it does not crash the server, it just stops protecting the wiki.
-if [ "$SKIP_TESTS" = "1" ]; then
-    echo "⚠️  Skipping tests (--skip-tests)"
-elif [ ! -f "$REPO_DIR/tools/tests/run_all.py" ]; then
-    echo "⚠️  No test suite found at tools/tests/run_all.py — deploying unverified"
-else
-    echo "🧪 Running tests..."
-    if ! python3 "$REPO_DIR/tools/tests/run_all.py" >/tmp/lobotomy-deploy-tests.$$ 2>&1; then
-        tail -30 /tmp/lobotomy-deploy-tests.$$
-        rm -f /tmp/lobotomy-deploy-tests.$$
-        echo ""
-        echo "❌ Tests failed — nothing was deployed."
-        echo "   Fix them, or deploy anyway with: ./deploy.sh --skip-tests"
-        exit 1
-    fi
-    tail -3 /tmp/lobotomy-deploy-tests.$$ | head -2
-    rm -f /tmp/lobotomy-deploy-tests.$$
-    echo ""
-fi
 
 if [ "$FULL_DEPLOY" = "1" ]; then
     echo "🔴 FULL DEPLOY MODE: will overwrite wiki/, raw/"
@@ -91,10 +65,9 @@ RSYNC_ARGS="$RSYNC_ARGS --exclude=/deploy.sh"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=/README.md"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=/CLAUDE.md"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=server.log*"
-# The test suite runs here, before the rsync below — it has no business on the server.
-# tools/tests/mutate.py in particular edits agent.py in place to check that the suite
-# notices a broken guard, which is exactly what should never exist next to a running
-# server.
+# Tests stay on the development host. tools/tests/mutate.py in particular edits agent.py
+# in place to check that the suite notices a broken guard, which is the last thing that
+# should exist beside a running server.
 RSYNC_ARGS="$RSYNC_ARGS --exclude=/tools/tests/"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=/usr/"
 

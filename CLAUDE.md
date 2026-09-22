@@ -211,9 +211,9 @@ mutation must report CAUGHT. Add one whenever you add a guard — if you cannot 
 mutation the suite catches, the guard is untested. It edits `agent.py` in place and
 restores it, so do not run it anywhere near a live server.
 
-`deploy.sh` runs the suite before it rsyncs and aborts on failure, and excludes
-`tools/tests/` from what it ships. The suite is stdlib-only — no flask, no network, no
-LLM, no `config.json` — so it runs on a host that has none of the app's dependencies.
+`deploy.sh` excludes `tools/tests/` from what it ships — tests belong where the code is
+changed, and `mutate.py` must never sit beside a running server. It does not run them
+either: deploy copies files and nothing else. Run the suite yourself before deploying.
 
 `docs/test-plan.md` is the spec the suite was built from; read it before adding a module.
 
