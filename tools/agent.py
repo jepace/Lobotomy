@@ -277,6 +277,51 @@ def _elsewhere_hint(p: Path) -> str:
     return f" It exists at {', '.join(other)} — use that path instead." if other else ""
 
 
+def _page_section_names(body: str, title: str = "") -> "list[tuple]":
+    """(level, name) for every heading that is a real section of the page.
+
+    Excludes the page's own H1 and the generated ## Sources. Neither is a section anything
+    should be written to, and listing them is not harmless: read_section's not-found reply
+    was built from a bare findall, so a page whose H1 is "Donald Trump" offered
+    "Donald Trump" as a section to update. The model then either wastes a round or edits
+    the title line.
+    """
+    skip = {"sources"} | ({title.strip().lower()} if title else set())
+    out = []
+    for m in re.finditer(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE):
+        name = m.group(2).strip()
+        if name.lower() in skip or len(m.group(1)) == 1:
+            continue
+        out.append((len(m.group(1)), name))
+    return out
+
+
+def _page_outline(body: str, title: str = "", preview: int = 0) -> str:
+    """The page's shape: every section, its size, and optionally its opening `preview`
+    chars. Shared by read_file (for a page too large to quote) and by read_section's
+    not-found reply, so the two cannot disagree about what a page contains."""
+    marks = list(re.finditer(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE))
+    keep = {n for _, n in _page_section_names(body, title)}
+    lines = []
+    for i, m in enumerate(marks):
+        name = m.group(2).strip()
+        if name not in keep:
+            continue
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(body)
+        sec = body[m.end():end].strip()
+        head = "#" * len(m.group(1)) + f" {name}"
+        if not sec:
+            lines.append(f"{head}  (empty)")
+        elif preview:
+            flat = " ".join(sec.split())
+            shown = flat[:preview]
+            more = f" …[+{len(flat) - len(shown):,} more chars]" if len(flat) > len(shown) else ""
+            lines.append(f"{head}  ({len(sec):,} chars)\n    {shown}{more}")
+        else:
+            lines.append(f"{head}  ({len(sec):,} chars)")
+    return "\n".join(lines) if lines else "(no sections)"
+
+
 def _read_file(path: str, offset: int = -1) -> "str | list":
     """Return a string, or a list of content blocks for image/image-only PDF."""
     p = REPO_ROOT / path
@@ -390,21 +435,8 @@ def _read_file(path: str, offset: int = -1) -> "str | list":
             _title_m = re.search(r'^title:\s*["\']?(.+?)["\']?\s*$', _full, re.MULTILINE)
             _skip = {"sources"} | ({_title_m.group(1).strip().lower()} if _title_m else set())
 
-            _marks = list(re.finditer(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", _body, re.MULTILINE))
-            _lines = []
-            for _i, _m in enumerate(_marks):
-                _name = _m.group(2).strip()
-                if _name.lower() in _skip:
-                    continue
-                _end = _marks[_i + 1].start() if _i + 1 < len(_marks) else len(_body)
-                _sec = _body[_m.end():_end].strip()
-                _flat = " ".join(_sec.split())
-                _head = _flat[:_OUTLINE_PREVIEW]
-                _more = f" …[+{len(_flat) - len(_head):,} more chars]" if len(_flat) > len(_head) else ""
-                _lines.append(f"{'#' * len(_m.group(1))} {_name}  ({len(_sec):,} chars)\n"
-                              f"    {_head}{_more}" if _sec else
-                              f"{'#' * len(_m.group(1))} {_name}  (empty)")
-            _outline = "\n".join(_lines) if _lines else "(no sections)"
+            _outline = _page_outline(_body, _title_m.group(1).strip() if _title_m else "",
+                                     preview=_OUTLINE_PREVIEW)
             text = (
                 f"{_fm}"
                 f"[OUTLINE — this page is {total:,} chars, over the {limit:,}-char read limit, "
@@ -433,8 +465,14 @@ def _read_file(path: str, offset: int = -1) -> "str | list":
     # look identical there — which makes the read_section call that correctly follows a
     # truncated read look like the model forgetting it had already read the page.
     if covered_upto < total:
-        log.info("read_file: %s truncated — showed chars %d-%d of %d; read_section is the "
-                 "documented next step", path, offset, covered_upto, total)
+        if covered_upto == 0 and offset == 0:
+            # The outline path quotes nothing, so the old "showed chars 0-0 of 43700"
+            # described a truncation that did not happen. Say what was actually returned.
+            log.info("read_file: %s is %d chars — returned a section outline instead of "
+                     "text; read_section is the documented next step", path, total)
+        else:
+            log.info("read_file: %s truncated — showed chars %d-%d of %d; read_section is "
+                     "the documented next step", path, offset, covered_upto, total)
 
     try:
         wiki_rel = str(p.resolve().relative_to(WIKI_DIR.resolve()))
@@ -1474,9 +1512,20 @@ def _read_section(args: dict) -> str:
     body = content[fm_m.end():] if fm_m else content
     found = _find_section(body, section)
     if not found:
-        heads = re.findall(r"^#{1,6}[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE)
-        return (f"Error: {path} has no section '{section}'. Its sections are: "
-                f"{', '.join(heads) if heads else '(none)'}. Use append_section to add a new one.")
+        # The page's shape, with each section's opening, rather than a bare list of names.
+        # Two costs this removes, both seen in a single live ingest: the list was built
+        # from a raw findall, so a page whose H1 is "Donald Trump" offered "Donald Trump"
+        # as a section; and 736 pages have no Overview, so the schema-correct first guess
+        # misses, and a name-only reply sends the agent back for a second read before it
+        # can write. With the openings included it can pick AND compose in one round.
+        _t_m = re.search(r'^title:\s*["\']?(.+?)["\']?\s*$', content, re.MULTILINE)
+        _digest = _page_outline(body, _t_m.group(1).strip() if _t_m else "",
+                                preview=_OUTLINE_PREVIEW)
+        heads = [n for _, n in _page_section_names(body, _t_m.group(1).strip() if _t_m else "")]
+        return (f"Error: {path} has no section '{section}'.\n\n{_digest}\n\n"
+                f"Pick the one this material belongs to and call update_section on it, or "
+                f"append_section to add a new section. Do not re-read the page first — its "
+                f"sections are above.")
     heading, start, end = found
     wiki_rel = str(p.relative_to(WIKI_DIR))
     _ctx()._session_read_sections.add((wiki_rel, section.strip().lower()))
@@ -1713,9 +1762,20 @@ def _update_section(args: dict) -> str:
     frontmatter, body = (fm_m.group(1), content[fm_m.end():]) if fm_m else ("", content)
     found = _find_section(body, section)
     if not found:
-        heads = re.findall(r"^#{1,6}[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE)
-        return (f"Error: {path} has no section '{section}'. Its sections are: "
-                f"{', '.join(heads) if heads else '(none)'}. Use append_section to add a new one.")
+        # The page's shape, with each section's opening, rather than a bare list of names.
+        # Two costs this removes, both seen in a single live ingest: the list was built
+        # from a raw findall, so a page whose H1 is "Donald Trump" offered "Donald Trump"
+        # as a section; and 736 pages have no Overview, so the schema-correct first guess
+        # misses, and a name-only reply sends the agent back for a second read before it
+        # can write. With the openings included it can pick AND compose in one round.
+        _t_m = re.search(r'^title:\s*["\']?(.+?)["\']?\s*$', content, re.MULTILINE)
+        _digest = _page_outline(body, _t_m.group(1).strip() if _t_m else "",
+                                preview=_OUTLINE_PREVIEW)
+        heads = [n for _, n in _page_section_names(body, _t_m.group(1).strip() if _t_m else "")]
+        return (f"Error: {path} has no section '{section}'.\n\n{_digest}\n\n"
+                f"Pick the one this material belongs to and call update_section on it, or "
+                f"append_section to add a new section. Do not re-read the page first — its "
+                f"sections are above.")
     heading, start, end = found
     old_text = body[start:end].strip()
 

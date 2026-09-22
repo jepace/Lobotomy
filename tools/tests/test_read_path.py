@@ -77,13 +77,75 @@ class ReadPathTest(TempWikiTestCase):
         self.assertNotIn("[OUTLINE", text)
         self.assertIn("[TRUNCATED", text)
 
-    def test_truncation_logs(self):
+    def _big(self):
         sections = "".join(f"## Section {i}\n\n{'word ' * 400}\n\n" for i in range(60))
         self.w.page("entities/big.md", title="Big", type="entity",
                      body="## Overview\n\nIntro.\n\n" + sections)
+
+    def test_outline_read_logs_that_it_returned_an_outline(self):
+        # The outline path quotes nothing, so it must not claim a truncation. It used to
+        # log "truncated — showed chars 0-0 of 43700", describing something that did not
+        # happen, because the message reused a char counter the outline path sets to 0.
+        self._big()
         with self.assertLogs("lobotomy.agent", level="INFO") as cm:
             self.w.read("wiki/entities/big.md")
-        self.assertTrue(any("truncated" in m for m in cm.output))
+        self.assertTrue(any("section outline" in m for m in cm.output), cm.output)
+        self.assertFalse(any("0-0" in m for m in cm.output), cm.output)
+
+    def test_paged_read_logs_a_real_truncation(self):
+        self._big()
+        with self.assertLogs("lobotomy.agent", level="INFO") as cm:
+            self.w.read("wiki/entities/big.md", offset=0)
+        self.assertTrue(any("truncated" in m for m in cm.output), cm.output)
+        self.assertFalse(any("0-0" in m for m in cm.output), cm.output)
+
+
+class SectionNotFoundTest(TempWikiTestCase):
+    """read_section's reply when the section is missing — a live ingest hit this on four
+    of twenty-eight pages, because 736 pages have no Overview and Overview is the
+    schema-correct first guess."""
+
+    def _page(self):
+        self.w.page("entities/donald-trump.md", title="Donald Trump", type="entity",
+                    body=("# Donald Trump\n\nTitle line.\n\n"
+                          "## Background\n\n" + "b " * 40 + "\n\n"
+                          "## First Presidental Term\n\n" + "t " * 60 + "\n\n"
+                          "## Sources\n\n- x\n"))
+
+    def test_page_own_h1_is_not_offered_as_a_section(self):
+        self._page()
+        r = agent.TOOL_FNS["read_section"]({"path": "wiki/entities/donald-trump.md",
+                                            "section": "Overview"})
+        self.assertTrue(r.startswith("Error:"), r)
+        self.assertNotIn("# Donald Trump\n", r.replace("## ", "# ") + "\n")
+        self.assertNotIn("Donald Trump  (", r)
+
+    def test_generated_sources_section_is_not_offered(self):
+        self._page()
+        r = agent.TOOL_FNS["read_section"]({"path": "wiki/entities/donald-trump.md",
+                                            "section": "Overview"})
+        self.assertNotIn("## Sources", r)
+
+    def test_reply_carries_each_sections_opening_not_just_its_name(self):
+        # Names alone cost a round: the agent must read again before it can compose.
+        self._page()
+        r = agent.TOOL_FNS["read_section"]({"path": "wiki/entities/donald-trump.md",
+                                            "section": "Overview"})
+        self.assertIn("## Background", r)
+        self.assertIn("## First Presidental Term", r)
+        self.assertIn("b b b", r, "section openings were not included")
+        self.assertIn("chars)", r, "section sizes were not included")
+
+    def test_update_section_not_found_reply_matches_read_section(self):
+        self._page()
+        a = agent.TOOL_FNS["read_section"]({"path": "wiki/entities/donald-trump.md",
+                                            "section": "Overview"})
+        b = agent.TOOL_FNS["update_section"]({"path": "wiki/entities/donald-trump.md",
+                                              "section": "Overview", "content": "x"})
+        for probe in ("## Background", "## First Presidental Term"):
+            self.assertIn(probe, a)
+            self.assertIn(probe, b)
+        self.assertNotIn("Donald Trump  (", b)
 
 
 if __name__ == "__main__":
