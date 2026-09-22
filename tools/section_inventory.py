@@ -46,8 +46,10 @@ HEAD_RE = re.compile(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", re.MULTILINE)
 # count as following it. Splitting them, as an earlier version did, reported 64 uses of a
 # heading the schema itself specifies as off-template and inflated the count badly.
 TEMPLATE = {
+    # "Timeline" is the unfolding-event template's accumulator, maintained by
+    # add_timeline_entry — on-template for an entity page, not drift.
     "entity":    ["Overview", "Background", "Key Works / Products", "Key Works", "Products",
-                  "Claims & Positions", "Contradictions", "Sources"],
+                  "Claims & Positions", "Timeline", "Contradictions", "Sources"],
     "concept":   ["Definition", "How It Works", "Origins & History", "Applications",
                   "Variants & Related Concepts", "Contradictions / Debates",
                   "Contradictions", "Debates", "Sources"],

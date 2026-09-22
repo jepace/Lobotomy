@@ -1786,6 +1786,183 @@ def _append_section(args: dict) -> str:
     return f"{where} in {path} (+{len(addition)} chars, page now {len(new_content)} bytes)"
 
 
+_TIMELINE_HEADING = "Timeline"
+# A timeline bullet: "- **2026-03-14** — the Pennsylvania Department of Health confirms…"
+# The em dash separator is what the writer produces; the parser accepts a hyphen too,
+# because that is what a model reaching for the format from memory tends to type.
+_TL_BULLET_RE = re.compile(r"^[-*][ 	]*\*\*(\d{4}(?:-\d{2}){0,2})\*\*[ 	]*[—-][ 	]*(.*)$")
+_TL_DATE_RE = re.compile(r"^\d{4}(?:-\d{2}){0,2}$")
+
+
+def _tl_sort_key(date: str) -> str:
+    """Pad a partial date so lexical order is chronological. '2026' -> '2026-00-00',
+    '2026-03' -> '2026-03-00', so a month-only entry sorts before any day in that month
+    and a year-only entry before any month in that year — which is where a vaguer date
+    belongs relative to the precise ones it contains."""
+    parts = date.split("-")
+    while len(parts) < 3:
+        parts.append("00")
+    return "-".join(parts)
+
+
+def _render_timeline(entries: "list[tuple]") -> str:
+    """Entries as (date, text, seq) -> the section body, chronological.
+
+    seq is the entry's existing position and breaks ties, so two events sharing a date
+    keep the order they were written in and re-rendering an unchanged section is a no-op.
+    """
+    return "\n".join(f"- **{d}** — {t}" for d, t, _ in
+                      sorted(entries, key=lambda e: (_tl_sort_key(e[0]), e[2])))
+
+
+def _add_timeline_entry(args: dict) -> str:
+    """Add one dated entry to a page's ## Timeline, in chronological position.
+
+    An unfolding story — an outbreak, an election, a trial — arrives as a series of
+    sources over days or weeks, and the wiki has no way to accumulate it: the material
+    becomes a dated section that nothing ever revisits, or it scatters across whichever
+    standing pages each day's story happened to mention. A Timeline is where that
+    material belongs, and this is the tool that maintains it.
+
+    Insertion is sorted, not appended, because sources are not ingested in the order the
+    events happened — a background piece read today may describe something from last
+    month. Asking the model to find the right insertion point by hand is the kind of
+    instruction this project has repeatedly found does not hold; sorting here costs
+    nothing and cannot be got wrong.
+
+    The whole section is re-sorted on every insert, so a timeline that is already out of
+    order — written before this tool existed, or edited by hand — heals the first time
+    anything is added to it.
+    """
+    import datetime as _dt
+    path = args.get("path", "")
+    date = (args.get("date") or "").strip()
+    text = (args.get("text") or "").strip()
+
+    if not path or not date or not text:
+        return ("Error: add_timeline_entry requires 'path', 'date' and 'text', e.g. "
+                '{"path": "wiki/entities/pennsylvania-measles-outbreak.md", '
+                '"date": "2026-03-14", "text": "State health officials confirm 12 cases '
+                'in Lancaster County."}')
+
+    if not _TL_DATE_RE.match(date):
+        return (f"Error: add_timeline_entry refused — date {date!r} is not a date. Use "
+                f"YYYY-MM-DD, or YYYY-MM / YYYY when the source is vaguer than that "
+                f"(a story saying 'in March' gives you 2026-03, not a guessed day). "
+                f"A date you cannot pin down at all does not belong on a timeline — put "
+                f"it in the prose of the section it concerns.")
+    if date > _dt.date.today().isoformat():
+        return (f"Error: add_timeline_entry refused — {date} is in the future. A timeline "
+                f"records what has happened; a scheduled event belongs in the prose of "
+                f"the relevant section until it does.")
+
+    text = " ".join(text.split())
+    text = re.sub(r"^[-*][ \t]*", "", text)
+    # A model handed a "- **date** — text" format tends to send the whole bullet as the
+    # text. Take the text half rather than refusing, and never render the date twice.
+    _echo = _TL_BULLET_RE.match("- " + text)
+    if _echo:
+        text = _echo.group(2).strip()
+    if not text:
+        return "Error: add_timeline_entry refused — the entry has no text, only a date."
+    if text.lstrip().startswith("#"):
+        return ("Error: add_timeline_entry refused — a timeline entry is one sentence of "
+                "prose, not a heading.")
+
+    p = REPO_ROOT / path
+    try:
+        p.resolve().relative_to(WIKI_DIR.resolve())
+    except ValueError:
+        return f"Error: add_timeline_entry only writes inside wiki/. Got: {path}"
+    if not p.exists():
+        return (f"Error: add_timeline_entry refused — {path} does not exist."
+                f"{_elsewhere_hint(p) or ' Use create_file for new pages.'}")
+    for _reserved in ("log.md", "index.md"):
+        if p.resolve() == (WIKI_DIR / _reserved).resolve():
+            return f"Error: add_timeline_entry refused on wiki/{_reserved} — it is managed automatically."
+    try:
+        p.resolve().relative_to((WIKI_DIR / "sources").resolve())
+        return ("Error: add_timeline_entry refused — wiki/sources/ pages are immutable. "
+                "The timeline belongs on the entity page for the event itself.")
+    except ValueError:
+        pass
+
+    content = p.read_text(encoding="utf-8", errors="replace")
+    fm_m = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
+    frontmatter, body = (fm_m.group(1), content[fm_m.end():]) if fm_m else ("", content)
+
+    head_m = None
+    for m in re.finditer(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE):
+        if _norm_heading(m.group(2)) == _norm_heading(_TIMELINE_HEADING):
+            head_m = m
+            break
+
+    if head_m:
+        level = len(head_m.group(1))
+        nxt = re.search(r"^#{1," + str(level) + r"}[ \t]*\S", body[head_m.end():], re.MULTILINE)
+        sec_start = head_m.end()
+        sec_end = sec_start + nxt.start() if nxt else len(body)
+        section_text = body[sec_start:sec_end]
+    else:
+        section_text = ""
+
+    entries, prose = [], []
+    for line in section_text.split("\n"):
+        bm = _TL_BULLET_RE.match(line.strip())
+        if bm:
+            entries.append((bm.group(1), bm.group(2).strip(), len(entries)))
+        elif line.strip():
+            # Anything in the section that is not a dated bullet — an introductory
+            # sentence, a stray note. Kept, above the bullets, in the order found. The
+            # tool has no business discarding text it did not write.
+            prose.append(line.rstrip())
+
+    # Re-ingesting the same story, or two sources reporting one event, must not double
+    # the entry. Compared on the date plus the text with links stripped, since the
+    # autolinker will have rewritten what is already on the page.
+    _key = (date, _MD_LINK_RE.sub(r"\1", text).strip().lower())
+    for d, t, _ in entries:
+        if (d, _MD_LINK_RE.sub(r"\1", t).strip().lower()) == _key:
+            return (f"Timeline entry for {date} is already on {path} — nothing to add. "
+                    f"If this source adds detail to it, use update_section or "
+                    f"replace_text to revise that entry rather than repeating it.")
+
+    entries.append((date, text, len(entries)))
+    rendered = _render_timeline(entries)
+    new_section = "\n\n" + ("\n".join(prose) + "\n\n" if prose else "") + rendered + "\n\n"
+
+    if head_m:
+        new_body = body[:sec_start] + new_section + body[sec_end:].lstrip("\n")
+        where = f"added to '{_TIMELINE_HEADING}'"
+    else:
+        # A new Timeline goes before ## Sources, which is always rendered last.
+        src_m = re.search(r"^#{1,6}[ \t]*Sources[ \t]*$", body, re.MULTILINE | re.IGNORECASE)
+        at = src_m.start() if src_m else len(body)
+        new_body = (body[:at].rstrip() + f"\n\n## {_TIMELINE_HEADING}" + new_section
+                    + body[at:].lstrip("\n"))
+        where = f"created '{_TIMELINE_HEADING}'"
+
+    new_content = frontmatter + new_body
+    if not new_content.endswith("\n"):
+        new_content += "\n"
+    new_content = _set_fm_field(new_content, "updated", f"updated: {_dt.date.today().isoformat()}")
+    if p.parent.name in ("entities", "concepts", "synthesis"):
+        new_content = _merge_sources_field(new_content, p)
+    new_content = _inject_sources_section(new_content, p)
+
+    wiki_rel = str(p.relative_to(WIKI_DIR))
+    if wiki_rel not in _ctx()._session_entity_pages and wiki_rel not in _ctx()._session_updated_pages:
+        _ctx()._session_updated_pages.append(wiki_rel)
+    _ctx()._session_stale_pages.add(wiki_rel)
+    _atomic_write(p, new_content)
+    _autolink_now(p)
+
+    _pos = sorted(range(len(entries)),
+                  key=lambda i: (_tl_sort_key(entries[i][0]), entries[i][2])).index(len(entries) - 1)
+    return (f"{where} in {path}: {date} placed at position {_pos + 1} of {len(entries)} "
+            f"(page now {len(new_content)} bytes)")
+
+
 def _list_dir(directory: str) -> str:
     d = REPO_ROOT / directory
     if not d.is_dir():
@@ -2082,7 +2259,7 @@ _DONE_SENTINEL = "__AGENT_DONE__:"
 # Tools that put a page on disk. After one of these lands, the ingest is measurably
 # further along, which is the only moment worth recounting.
 _PAGE_WRITE_TOOLS = {"create_file", "update_file", "update_section",
-                     "append_section", "replace_text"}
+                     "append_section", "replace_text", "add_timeline_entry"}
 
 # Matches quoted wiki paths like 'sources/foo.md' or 'wiki/entities/bar.md'
 _WIKI_PATH_RE = re.compile(r"'((?:wiki/)?(?:[\w-]+/)+[\w-]+\.md)'")
@@ -3987,6 +4164,7 @@ TOOL_FNS = {
     "update_section":   _update_section,
     "replace_text":     _replace_text,
     "append_section":   _append_section,
+    "add_timeline_entry": _add_timeline_entry,
     "list_dir":         lambda a: _list_dir(a.get("directory", "")),
     "fetch_url":        lambda a: _fetch_url(a.get("url", "")),
 
@@ -4115,6 +4293,35 @@ TOOL_DEFS = [
                                 "description": "Markdown to add — usually a paragraph or a few bullets. Plain text, no links."},
                 },
                 "required": ["path", "section", "text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name":        "add_timeline_entry",
+            "description": (
+                "Add one dated entry to a page's ## Timeline, for a story that unfolds across "
+                "several sources over time — an outbreak, an election, a trial, an "
+                "investigation. Use this INSTEAD of creating a section named after a date or a "
+                "single event, which is refused. The entry is inserted in chronological "
+                "position, so sources ingested out of order still produce a correct timeline; "
+                "you do not need to find the right place yourself. One sentence of plain prose "
+                "per entry, no links. Revise the page's ## Overview separately so it still "
+                "reads as the current state of the story."
+            ),
+            "parameters":  {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string",
+                             "description": "The event's page, e.g. wiki/entities/pennsylvania-measles-outbreak.md"},
+                    "date": {"type": "string",
+                             "description": "When it happened: YYYY-MM-DD, or YYYY-MM / YYYY if the source is vaguer. "
+                                            "The date of the event, not the date of the article reporting it."},
+                    "text": {"type": "string",
+                             "description": "What happened, in one sentence. Plain text, no links, no date — the date is the 'date' argument."},
+                },
+                "required": ["path", "date", "text"],
             },
         },
     },
@@ -4304,6 +4511,7 @@ def system_prompt() -> str:
         "| create_file | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. Supports scope tokens: 'in:sources', 'in:entities', 'in:concepts'. Supports tag filter: 'tag:<tagname>' (e.g. 'tag:trump-administration'). |\n"
         "| search_raw | Search raw source files by keyword — use when retroactively reviewing old articles for a newly prominent entity. |\n"
+        "| add_timeline_entry | Add one dated entry to an event page's ## Timeline. Inserted in chronological position, so out-of-order ingests still come out right. Use this instead of a section named after a date. |\n"
         "| list_dir | List directory contents. |\n"
         "| fetch_url | Fetch a web page for inbox processing. |\n"
         "| done | **Required** — signal task complete. Never stop without calling done(). |\n\n"
@@ -4692,6 +4900,8 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
             _preview = (f'{args.get("path", "?")} § {args.get("section", "?")}'
                         if fn_name in ("read_section", "update_section", "append_section")
+                        else f'{args.get("path", "?")} @ {args.get("date", "?")}'
+                        if fn_name == "add_timeline_entry"
                         else str(list(args.values())[:1]))
             log.debug("Tool result [%s] %s: %s", fn_name or "(unknown)", _preview[:60], result_preview)
             if fn_name in _PAGE_WRITE_TOOLS and not result_preview.lower().startswith("error"):
@@ -4976,7 +5186,9 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                     args["query"] = args["query"] + " " + _scope_in_name
                 elif _scope_in_name:
                     args["query"] = _scope_in_name
-                if fn_name in ("read_section", "update_section", "append_section"):
+                if fn_name == "add_timeline_entry":
+                    arg_preview = f'{args.get("path", "?")} @ {args.get("date", "?")}'[:80]
+                elif fn_name in ("read_section", "update_section", "append_section"):
                     # Show both path and section: dict order varies between calls, so a
                     # single-value preview showed the path on some calls and the section
                     # on others, making the log impossible to follow.

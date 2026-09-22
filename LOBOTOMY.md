@@ -145,6 +145,25 @@ Sources, and replace the middle sections with ones that actually fit the subject
 force-fit a subject into headings built for someone else, and never drop a subject from
 the wiki because the default template doesn't suit it.
 
+**Unfolding event** (an outbreak, election, trial, investigation — an entity page):
+- Overview *(what the situation is **now** — rewritten each time, not appended to)*
+- Timeline *(maintained by `add_timeline_entry`, never by hand)*
+- Background *(what led up to it — this stops changing once written)*
+- Contradictions *(if any)*
+- Sources *(auto-generated — do not write)*
+
+The division of labour matters: **Overview is the current state, Timeline is the record.**
+A reader who wants to know where the outbreak stands reads the first and stops; a reader
+who wants to know how it got there reads the second. Each new source revises Overview —
+with `update_section`, replacing it, not adding to it — and adds one Timeline entry.
+
+`add_timeline_entry(path, date, text)` takes the date of the **event**, not of the article
+reporting it, and places the entry in chronological position itself. Sources arrive out of
+order — a background piece read today may describe something from last month — so do not
+try to find the insertion point, and do not use `append_section` on a Timeline. If the
+source is vaguer than a day, pass `2026-03` or `2026`; if it gives no date at all, the
+fact is not a timeline entry and belongs in the prose of the section it concerns.
+
 **Concept document** (`wiki/concepts/`):
 - Definition
 - How It Works
@@ -174,6 +193,8 @@ that breaks them, so it costs a round-trip to discover them the hard way:
    (May 2026)". Sections are permanent and get revised in place; a dated one is a
    changelog entry nothing will ever update, and the next ingest adds another beside it.
    Put the material in the standing section it belongs to and say *when* in the prose.
+   If the page is about an unfolding event, the material is a Timeline entry — call
+   `add_timeline_entry` instead. That is what this rule is pushing you toward.
 4. **No markdown link in a heading.** `## Relation to [Christianity](../concepts/christianity.md)`.
    Headings are plain text. `read_section`, `update_section` and `append_section` all find
    a section by its heading text, so a link in one makes that section unreachable by name
@@ -350,6 +371,19 @@ Required sections:
 
   If the source's subject is better understood as a concept than an entity, list it here
   instead — but list it somewhere; the subject never goes unlisted.
+
+  **An unfolding event is an entity, and gets its own page.** An outbreak, an election, a
+  trial, an investigation, a strike, a disaster — anything the news will still be
+  reporting next week — is listed under `## Entities`, not folded into the standing pages
+  it happens to mention. A story about a measles outbreak in Pennsylvania is *not* filed
+  as an update to `Measles` or to `Pennsylvania Department of Health`; it gets
+  `Pennsylvania Measles Outbreak`, and those pages link to it.
+
+  Name it the same way every time: **place + subject + event**, spelled out in full
+  ("Pennsylvania Measles Outbreak", "2026 California Governor Election"). The name is what
+  `lookup_titles` matches on tomorrow, so an event named "Measles Outbreak" today and
+  "Lancaster Measles Cases" next week becomes two half-told pages instead of one whole
+  one. If the event already has a page, the source is an update to it.
 - **Quotes**: 3–5 direct quotes with section references if available
 - **Context**: how it relates to, extends, supports, or contradicts existing documents
 
@@ -452,6 +486,12 @@ For each entity (person, organization, product, project) on that list:
   same reason appending paragraphs does: the page stops being a synthesis. A one-off fact
   belongs *inside* a thematic section, not in a section of its own.
 
+  **The exception is an unfolding event**, where the dated material is the point. Those
+  pages carry a `## Timeline`, and each new source adds one entry to it with
+  `add_timeline_entry` — which sorts the entry into place, so an out-of-order ingest still
+  produces a correct timeline. Revise `## Overview` in the same visit so the top of the
+  page still reads as the current state of the story.
+
   `update_file` (whole page at once) is fine on a short page and is what the Regenerate
   Workflow uses, but on a large page it forces re-emitting every character and will be
   refused. `append_section` only adds, so reach for it only when creating a section that
@@ -545,6 +585,12 @@ For each concept, technique, framework, or term on that list:
   Findings", "August Update". That is a changelog wearing a heading, and it fails for the
   same reason appending paragraphs does: the page stops being a synthesis. A one-off fact
   belongs *inside* a thematic section, not in a section of its own.
+
+  **The exception is an unfolding event**, where the dated material is the point. Those
+  pages carry a `## Timeline`, and each new source adds one entry to it with
+  `add_timeline_entry` — which sorts the entry into place, so an out-of-order ingest still
+  produces a correct timeline. Revise `## Overview` in the same visit so the top of the
+  page still reads as the current state of the story.
 
   `update_file` (whole page at once) is fine on a short page and is what the Regenerate
   Workflow uses, but on a large page it forces re-emitting every character and will be
