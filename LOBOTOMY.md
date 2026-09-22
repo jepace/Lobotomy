@@ -161,6 +161,23 @@ the wiki because the default template doesn't suit it.
 - Open Questions
 - Sources *(auto-generated — do not write)*
 
+**Three of these rules are enforced, not suggested.** Every write tool refuses a page
+that breaks them, so it costs a round-trip to discover them the hard way:
+
+1. **Every entity page has `## Overview`; every concept page has `## Definition`.** The
+   opener stays even when the rest of the template is replaced to fit the subject. It is
+   the first thing any later read of the page — yours or a human's — looks at.
+2. **No section named after its own page.** "## Cybersecurity" on the Cybersecurity page:
+   the whole page is about that subject, so it cannot also be one section of itself. That
+   text goes under Overview, or under a heading describing what it actually covers.
+3. **No section named after a date.** "## Q3 2026 Results", "## Current Standing
+   (May 2026)". Sections are permanent and get revised in place; a dated one is a
+   changelog entry nothing will ever update, and the next ingest adds another beside it.
+   Put the material in the standing section it belongs to and say *when* in the prose.
+
+The update tools apply 2 and 3 only to headings your edit introduces, so a page that
+already carries one stays editable — including by the edit that folds it away.
+
 ---
 
 ## 4. Naming Conventions

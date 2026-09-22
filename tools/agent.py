@@ -1011,6 +1011,16 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
             f"content)."
         )
 
+    # Same delta rule as the duplicate check: only headings this rewrite introduces. A
+    # page already carrying a dated section must stay editable, or the edit that would
+    # fold it away is refused too.
+    _title = _fm_title(content) or _fm_title(p.read_text(encoding="utf-8", errors="replace"))
+    _bad = [b for b in _bad_headings(_new_body, _title)
+            if _norm_heading(b[0]) not in {_norm_heading(x[0])
+                                           for x in _bad_headings(_disk_body, _title)}]
+    if _bad:
+        return _bad_heading_error("update_file", _bad, _title)
+
     _disk_cmp, _new_cmp_body = _unlinked_len(_disk_body), _unlinked_len(_new_body)
     if _disk_cmp >= 2000 and _new_cmp_body < _disk_cmp * 0.6 and not allow_shrink:
         _pct = 100 - int(_new_cmp_body / _disk_cmp * 100)
@@ -1120,6 +1130,79 @@ def _heading_dupes(body: str) -> "list[str]":
             dupes.append(seen[key])
         seen.setdefault(key, m.group(2).strip())
     return dupes
+
+
+# A heading naming a date. Deliberately stricter than the one section_inventory.py reports
+# with, because this one refuses writes: a bare month name matches there and would fire on
+# "What It May Mean" here, so a month only counts when a number follows it ("May 2026",
+# "March 3"). A four-digit 19xx/20xx year counts anywhere.
+_DATED_HEADING_RE = re.compile(
+    r"\b(?:19|20)\d{2}\b"
+    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
+    r"(?:uary|ruary|ch|il|e|y|ust|tember|ober|ember)?\b[ ,]+\d",
+    re.IGNORECASE)
+
+_OPENER = {"entity": "Overview", "concept": "Definition"}
+
+
+def _bad_headings(body: str, title: str) -> "list[tuple]":
+    """Headings that are structurally wrong for the page, as (heading, reason) pairs.
+
+    Two rules, both mechanical — no judgment about whether a heading is the *best* name,
+    only whether it can be a section at all:
+
+      named after the page   "## Cybersecurity" on cybersecurity.md. A page's body is not
+                             a section of itself; the material belongs under Overview or
+                             whichever section actually covers it. Level 1 is exempt —
+                             that is the page's own H1.
+      names a date           "## Current Standing (May 2026)". LOBOTOMY.md Step 5 already
+                             forbids these in prose and 365 pages have one anyway, which
+                             is the usual sign that an instruction needs a guard behind
+                             it. A dated heading is a changelog entry wearing a heading:
+                             nothing ever updates it, and the next ingest adds another
+                             beside it instead of revising what is there.
+
+    Shared by every write path so they cannot disagree about what counts, and reported as
+    a delta by the update paths — a page that already carries one has to stay editable,
+    the same lesson the duplicate-heading check learned.
+    """
+    bad = []
+    want_title = _norm_heading(title) if title else None
+    for m in re.finditer(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE):
+        level, name = len(m.group(1)), m.group(2).strip()
+        if level > 1 and want_title and _norm_heading(name) == want_title:
+            bad.append((name, "repeats the page's own title"))
+        elif _DATED_HEADING_RE.search(name):
+            bad.append((name, "names a date"))
+    return bad
+
+
+def _bad_heading_error(tool: str, bad: "list[tuple]", title: str) -> str:
+    """The refusal text for _bad_headings, phrased so the next move is obvious."""
+    lines = []
+    for name, reason in bad:
+        if reason == "names a date":
+            lines.append(
+                f"  '{name}' — names a date. Sections are permanent and get revised in "
+                f"place; a dated one is a changelog entry that nothing will ever update. "
+                f"Fold this material into the standing section it belongs to (Overview, "
+                f"Background, Claims & Positions, …) and say when it happened in the "
+                f"prose instead.")
+        else:
+            lines.append(
+                f"  '{name}' — repeats the page title {title!r}. The whole page is about "
+                f"that subject, so it cannot also be one section of itself. Drop this "
+                f"heading and put its text under Overview, or give the section a name "
+                f"describing what it actually covers.")
+    return (f"Error: {tool} refused — "
+            f"{'these headings are' if len(bad) > 1 else 'this heading is'} not a valid "
+            f"section:\n" + "\n".join(lines) + "\n\nFix and resend.")
+
+
+def _fm_title(text: str) -> str:
+    """The title: from a page's frontmatter, or "" if it has none."""
+    m = re.search(r'^title:[ \t]*["\']?(.+?)["\']?[ \t]*$', text, re.MULTILINE)
+    return m.group(1).strip() if m else ""
 
 
 def _sections_fully_shown(chunk: str, reached_eof: bool) -> "list[str]":
@@ -1383,6 +1466,13 @@ def _replace_text(args: dict) -> str:
             f"there instead of introducing another heading."
         )
 
+    _title = _fm_title(frontmatter)
+    _bad = [b for b in _bad_headings(new_body, _title)
+            if _norm_heading(b[0]) not in {_norm_heading(x[0])
+                                           for x in _bad_headings(body, _title)}]
+    if _bad:
+        return _bad_heading_error("replace_text", _bad, _title)
+
     new_content = frontmatter + new_body
     if not new_content.endswith("\n"):
         new_content += "\n"
@@ -1539,6 +1629,13 @@ def _update_section(args: dict) -> str:
             f"Send the section's body only."
         )
 
+    _title = _fm_title(frontmatter)
+    _bad = [b for b in _bad_headings(new_body, _title)
+            if _norm_heading(b[0]) not in {_norm_heading(x[0])
+                                           for x in _bad_headings(body, _title)}]
+    if _bad:
+        return _bad_heading_error("update_section", _bad, _title)
+
     new_content = frontmatter + new_body
     if not new_content.endswith("\n"):
         new_content += "\n"
@@ -1643,6 +1740,13 @@ def _append_section(args: dict) -> str:
         new_body = (body[:at].rstrip() + f"\n\n## {section}\n\n" + addition + "\n\n"
                     + body[at:].lstrip("\n"))
         where = f"created section '{section}'"
+
+    _title = _fm_title(frontmatter)
+    _bad = [b for b in _bad_headings(new_body, _title)
+            if _norm_heading(b[0]) not in {_norm_heading(x[0])
+                                           for x in _bad_headings(body, _title)}]
+    if _bad:
+        return _bad_heading_error("append_section", _bad, _title)
 
     new_content = frontmatter + new_body
     if not new_content.endswith("\n"):
@@ -3586,6 +3690,12 @@ def _create_file(args: dict) -> str:
             f"one into a single section and resend."
         )
 
+    # A new page is the one place with no pre-existing damage to work around, so both
+    # structural rules apply outright rather than as a delta.
+    _bad = _bad_headings(body, title)
+    if _bad:
+        return _bad_heading_error("create_file", _bad, title)
+
     if pg_type not in _VALID_PAGE_TYPES:
         return (f"Error: type must be one of {', '.join(sorted(_VALID_PAGE_TYPES))}. "
                 f"Got: {args.get('type')!r}")
@@ -3626,6 +3736,28 @@ def _create_file(args: dict) -> str:
                 f"create or update — without them this ingest cannot do its job. Add the "
                 f"missing section(s) as '## <Name>' headings and resend create_file with "
                 f"the complete body."
+            )
+
+    # The one heading the template says every page of these types keeps. Checking it here
+    # is the same bet the source-page check above already paid off on: source pages are
+    # the only type whose sections were ever verified, and they use 168 distinct headings
+    # across 1,682 pages where entity pages — same model, same schema, no check — use
+    # 2,455 across 4,575. An opener is also what the rest of the system reads first, and
+    # 736 existing pages do not have one.
+    _opener = _OPENER.get(pg_type)
+    if _opener:
+        _heads = [m.group(1) for m in
+                  re.finditer(r"^#{2,6}[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE)]
+        if not any(_norm_heading(h) == _norm_heading(_opener) for h in _heads):
+            return (
+                f"Error: create_file refused — {'an' if pg_type[0] in 'aeiou' else 'a'} "
+                f"{pg_type} page must have a "
+                f"'## {_opener}' section, and this one has "
+                + (f"only: {', '.join(repr(h) for h in _heads)}." if _heads
+                   else "no sections at all.") +
+                f"\n\nEvery {pg_type} page opens with {_opener}: two or three sentences "
+                f"saying what the subject is, before anything more specific. Add it as the "
+                f"first '## ' heading and resend create_file with the complete body."
             )
 
 
