@@ -189,12 +189,18 @@ that breaks them, so it costs a round-trip to discover them the hard way:
 2. **No section named after its own page.** "## Cybersecurity" on the Cybersecurity page:
    the whole page is about that subject, so it cannot also be one section of itself. That
    text goes under Overview, or under a heading describing what it actually covers.
-3. **No section named after a date.** "## Q3 2026 Results", "## Current Standing
-   (May 2026)". Sections are permanent and get revised in place; a dated one is a
-   changelog entry nothing will ever update, and the next ingest adds another beside it.
-   Put the material in the standing section it belongs to and say *when* in the prose.
-   If the page is about an unfolding event, the material is a Timeline entry — call
-   `add_timeline_entry` instead. That is what this rule is pushing you toward.
+3. **No section named after a date.** "## Q3 2026 Results", "## 2026 Outbreak".
+   Sections are permanent and get revised in place; a dated one is a changelog entry
+   nothing will ever update, and the next ingest adds another beside it. Put the material
+   in the standing section it belongs to and say *when* in the prose. If the page is about
+   an unfolding event, the material is a Timeline entry — call `add_timeline_entry`
+   instead. That is what this rule is pushing you toward.
+
+   A date *trailing* a standing heading — "Fiscal Challenges (2026)", "Role and Context
+   in 2026" — is dropped for you rather than refused, leaving "Fiscal Challenges" and
+   "Role and Context" with the body untouched. Write the standing name yourself and save
+   the rewrite. The rename is skipped, and the write refused, when the page already has a
+   section of that name: that is a merge, and the refusal names the section to merge into.
 4. **No markdown link in a heading.** `## Relation to [Christianity](../concepts/christianity.md)`.
    Headings are plain text. `read_section`, `update_section` and `append_section` all find
    a section by its heading text, so a link in one makes that section unreachable by name
