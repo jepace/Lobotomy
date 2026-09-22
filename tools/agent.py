@@ -1219,6 +1219,14 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
                     path, 100 - int(_new_cmp_body / _disk_cmp * 100),
                     _disk_cmp, _new_cmp_body)
     content = _strip_broken_wiki_links(content, p)
+    # A whole-page rewrite routinely omits the H1, the same way it omits frontmatter.
+    # Restore it from the title rather than refusing: it is derivable, so a refusal would
+    # buy nothing but a round.
+    _fm_m = _re.match(r"^(---\s*\n.*?\n---\s*\n)", content, _re.DOTALL)
+    if _fm_m:
+        _t = _fm_title(content)
+        if _t:
+            content = _fm_m.group(1) + ensure_h1(content[_fm_m.end():], _t)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
     _autolink_now(p)
@@ -1427,6 +1435,37 @@ def _bad_heading_error(tool: str, bad: "list[tuple]", title: str,
     return (f"Error: {tool} refused — "
             f"{'these headings are' if len(bad) > 1 else 'this heading is'} not a valid "
             f"section:\n" + "\n".join(lines) + "\n\nFix and resend.")
+
+
+# Exactly one '#', then required whitespace. Without the (?!#) and the + this matches
+# "## Overview" too — group 1 becomes "# Overview" — and a body opening with its first
+# section gets that section's heading REPLACED by the title instead of gaining an H1
+# above it. Caught by reading the output of the first test, not by the regex looking wrong.
+_H1_RE = re.compile(r"\A\s*#(?!#)[ \t]+(\S[^\n]*?)[ \t]*\n")
+
+
+def ensure_h1(body: str, title: str) -> str:
+    """Make the body open with `# {title}`, the page's own heading.
+
+    The wiki is plain markdown and meant to be readable in anything — glow, mdcat, GitHub,
+    a text editor — none of which know about `title:` frontmatter. Without an H1 those
+    readers see a page with no name on it. The web UI renders the title in its top bar
+    instead and strips this line, so it is not shown twice there.
+
+    The frontmatter title is authoritative, so a leading H1 that says something else is
+    rewritten rather than left to drift — rename_page.py already moves `title:` and the H1
+    together on the same assumption. Only the FIRST heading is touched, and only when it
+    is level 1: a `## Overview` at the top means the page has no H1 and one is inserted
+    above it, and nothing deeper down is ever considered.
+    """
+    if not title:
+        return body
+    m = _H1_RE.match(body)
+    if m:
+        if m.group(1).strip() == title:
+            return body
+        return f"# {title}\n" + body[m.end():]
+    return f"# {title}\n\n" + body.lstrip("\n")
 
 
 def page_display_title(text: str, stem: str) -> str:
@@ -3316,6 +3355,19 @@ def heal_pages(dry_run: bool = False) -> dict:
                             f"{rel}: type is {_t.group(1)!r}, not one of "
                             f"{', '.join(sorted(_VALID_PAGE_TYPES))} (not auto-fillable)")
 
+                # The page's own H1. Derivable from title:, so it is filled rather than
+                # reported — and because heal_pages runs at startup and after every
+                # ingest, pages written before this rule acquire one on their own.
+                _t_m = re.search(r'^title:[ \t]*["\']?(.+?)["\']?[ \t]*$',
+                                 fm.group(1), re.MULTILINE)
+                if _t_m and _t_m.group(1).strip():
+                    _fm_end = re.match(r"^---\s*\n.*?\n---\s*\n", new, re.DOTALL)
+                    if _fm_end:
+                        _healed = ensure_h1(new[_fm_end.end():], _t_m.group(1).strip())
+                        if _healed != new[_fm_end.end():]:
+                            new = new[:_fm_end.end()] + _healed
+                            n_fm += 1
+
                 mtime = _dt.date.fromtimestamp(f.stat().st_mtime).isoformat()
                 for field, value in (("created", mtime), ("updated", mtime),
                                      ("tags", "[]"), ("sources", "[]")):
@@ -4395,8 +4447,13 @@ def _create_file(args: dict) -> str:
         _fm_strip = re.match(r'^---\s*\n.*?\n---\s*\n', body_text, re.DOTALL)
         if _fm_strip:
             body_text = body_text[_fm_strip.end():]
+    # The page's own heading. Written here rather than asked of the model: create_file
+    # already knows the title, so requiring it in `body` would be a rule to remember and a
+    # refusal to spend when it is forgotten, for a line that is entirely derivable.
+    body_text = ensure_h1(body_text, title)
     if _missing_sources:
-        body_text = "<!-- WARNING: no sources cited — update sources: frontmatter -->\n\n" + body_text
+        body_text = ("<!-- WARNING: no sources cited — update sources: frontmatter -->\n\n"
+                     + body_text)
     content = frontmatter + _strip_broken_wiki_links(body_text, p)
     content = _inject_sources_section(content, p)
     _mkdir_inheriting(p.parent)

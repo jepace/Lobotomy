@@ -153,7 +153,7 @@ logging.getLogger("werkzeug").addFilter(_SuppressPollingPaths())
 from config import (cfg_get, cfg_bool, cfg_int, validate_config,
                     cfg_active_provider, cfg_provider, cfg_available_models,
                     cfg_all_providers, cfg_write_llm)
-from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title,
+from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title, _H1_RE,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, run_agent_turn, system_prompt,
                    _fix_wiki_links, _rebuild_index, _validate_ingest,
@@ -735,6 +735,10 @@ def render_md(path: Path) -> str:
         return "<p><em>Page not found.</em></p>"
     text = path.read_text(encoding="utf-8")
     text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
+    # Drop the page's own H1. Every wiki page carries one so the file reads correctly in
+    # any markdown viewer, but this template already prints the title in its top bar, and
+    # rendering both shows the name twice. The file is canonical; this is presentation.
+    text = _H1_RE.sub("", text, count=1)
     text = _ensure_blank_line_before_lists(text)
     html = md_lib.markdown(text, extensions=_MD_EXTENSIONS)
     html = re.sub(
@@ -771,6 +775,7 @@ def render_md_shareable(path: Path) -> str:
         return "<p><em>Page not found.</em></p>"
     text = path.read_text(encoding="utf-8")
     text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
+    text = _H1_RE.sub("", text, count=1)   # share.html prints the title itself
     text = _strip_internal_links(text)
     text = _ensure_blank_line_before_lists(text)
     return md_lib.markdown(text, extensions=_MD_EXTENSIONS)

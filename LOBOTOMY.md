@@ -72,14 +72,19 @@ sources: ["sources/source-slug.md", "sources/other-slug.md"]
 url: "https://original-article-url"   # source documents only; omit on all others
 ---
 
+# Human Readable Title
+
 ## First Section
 
 <!-- body content -->
 ```
 
-**Do not write an H1.** The page's name comes from its `title:` frontmatter, and every
-view renders it above the body already — a `# Human Readable Title` line in the body just
-shows the name twice. The body starts at its first `## ` section.
+**You do not have to write the `# ` line.** It is added for you from `title:`, and
+corrected if it drifts — the wiki is plain markdown that has to read correctly in any
+viewer, and a viewer that knows nothing about frontmatter would otherwise see a page with
+no name on it. The web UI prints the title in its top bar and hides this line, so it is
+never shown twice. Write the body starting at its first `## ` section; if you do include
+the H1, make it match `title:` exactly.
 
 **Every section is `## `.** `###` only for a genuine subsection inside one. A section
 written as `# Overview` is invisible to `read_section`, `update_section` and the page
