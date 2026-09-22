@@ -1078,7 +1078,7 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
     # patching only the copy used for checking would have validated one thing and written
     # another. Frontmatter carries no heading lines, so running the rewrite over the whole
     # file is safe.
-    content, _renamed, _collided = _absorb_date_qualifiers(content, _disk_body)
+    content, _renamed, _collided = _absorb_date_qualifiers(content, _disk_body, _title)
     _new_body = _re.sub(r"^---\s*\n.*?\n---\s*\n", "", content, flags=_re.DOTALL)
     for _before, _after in _renamed:
         log.info("update_file: %s — dropped the date qualifier from '%s', now '%s'",
@@ -1266,7 +1266,7 @@ _TRAILING_DATE_RE = re.compile(
     re.IGNORECASE)
 
 
-def _absorb_date_qualifiers(new_body: str, old_body: str = "") -> "tuple":
+def _absorb_date_qualifiers(new_body: str, old_body: str = "", title: str = "") -> "tuple":
     """Rewrite "Fiscal Challenges (2026)" to "Fiscal Challenges" where that is safe.
 
     Refusing these cost a full round (observed: round 30, 62 messages) and, unlike the
@@ -1281,7 +1281,14 @@ def _absorb_date_qualifiers(new_body: str, old_body: str = "") -> "tuple":
     stripped name would collide with a heading already on the page — that is a merge, and
     merging is a judgment call, so it stays a refusal that names the section to merge into.
 
-    Returns (body, [(before, after)], [(heading, existing) that collided]).
+    `title` is the page's own title, and a rewrite is skipped when stripping would produce
+    it: "Cybersecurity in 2026" on cybersecurity.md would become "Cybersecurity", which
+    breaks the separate rule that a page is not a section of itself. Renaming one violation
+    into another is worse than not renaming, because the refusal would then quote a heading
+    the model never wrote and could not act on.
+
+    Returns (body, [(before, after)], [(heading, why-not) that could not be renamed]),
+    where why-not is the existing section to merge into, or the page title.
     """
     old_keys = {_norm_heading(m.group(1)) for m in
                 re.finditer(r"^#{1,6}[ \t]*(\S.*?)[ \t]*$", old_body, re.MULTILINE)}
@@ -1301,8 +1308,11 @@ def _absorb_date_qualifiers(new_body: str, old_body: str = "") -> "tuple":
             return m.group(0)
         if _DATED_HEADING_RE.search(stripped):     # more than one date in there
             return m.group(0)
+        if title and _norm_heading(stripped) == _norm_heading(title):
+            collisions.append((name, ("title", title)))
+            return m.group(0)
         if _norm_heading(stripped) in present:
-            collisions.append((name, stripped))
+            collisions.append((name, ("section", stripped)))
             return m.group(0)
         present.add(_norm_heading(stripped))
         renames.append((name, stripped))
@@ -1327,22 +1337,30 @@ def _bad_heading_error(tool: str, bad: "list[tuple]", title: str,
                 f"'{plain}'. Links belong in the prose "
                 f"underneath, and you do not write them by hand there either — the "
                 f"autolinker adds them.")
-        elif reason == "names a date" and name in _merge_into:
+        elif reason == "names a date" and _merge_into.get(name, ("",))[0] == "section":
+            _existing = _merge_into[name][1]
             lines.append(
-                f"  '{name}' — names a date, and the page already has a "
-                f"'{_merge_into[name]}' section. Dropping the date would have given the "
-                f"page two of those, so this one is not a rename: merge the text into the "
-                f"existing '{_merge_into[name]}' and drop this heading.")
+                f"  '{name}' — names a date, and the page already has a '{_existing}' "
+                f"section. Dropping the date would have given the page two of those, so "
+                f"this one is not a rename: merge the text into the existing "
+                f"'{_existing}' and drop this heading.")
+        elif reason == "names a date" and _merge_into.get(name, ("",))[0] == "title":
+            lines.append(
+                f"  '{name}' — names a date, and dropping the date would leave "
+                f"'{_merge_into[name][1]}', which is the page's own title. The page is "
+                f"already about that subject, so it cannot also be one section of itself. "
+                f"Put this material under Overview, or under a heading describing what it "
+                f"actually covers.")
         elif reason == "names a date":
             lines.append(
                 f"  '{name}' — names a date. Sections are permanent and get revised in "
                 f"place; a dated one is a changelog entry that nothing will ever update. "
-                f"The date leads the heading, so it is naming the event itself rather "
-                f"than qualifying a standing section. If the page is about an unfolding "
-                f"event, this is a Timeline entry — call add_timeline_entry. Otherwise "
-                f"fold the material into the standing section it belongs to (Overview, "
-                f"Background, Claims & Positions, …) and say when it happened in the "
-                f"prose.")
+                f"A date at the FRONT of a heading names the event itself rather than "
+                f"qualifying a standing section, so there is nothing to strip. If the "
+                f"page is about an unfolding event, this is a Timeline entry — call "
+                f"add_timeline_entry. Otherwise fold the material into the standing "
+                f"section it belongs to (Overview, Background, Claims & Positions, …) "
+                f"and say when it happened in the prose.")
         else:
             lines.append(
                 f"  '{name}' — repeats the page title {title!r}. The whole page is about "
@@ -1622,7 +1640,7 @@ def _replace_text(args: dict) -> str:
         )
 
     _title = _fm_title(frontmatter)
-    new_body, _renamed, _collided = _absorb_date_qualifiers(new_body, body)
+    new_body, _renamed, _collided = _absorb_date_qualifiers(new_body, body, _title)
     for _before, _after in _renamed:
         log.info("replace_text: %s — dropped the date qualifier from '%s', now '%s'",
                  path, _before, _after)
@@ -1789,7 +1807,7 @@ def _update_section(args: dict) -> str:
         )
 
     _title = _fm_title(frontmatter)
-    new_body, _renamed, _collided = _absorb_date_qualifiers(new_body, body)
+    new_body, _renamed, _collided = _absorb_date_qualifiers(new_body, body, _title)
     for _before, _after in _renamed:
         log.info("update_section: %s — dropped the date qualifier from '%s', now '%s'",
                  path, _before, _after)
@@ -1905,7 +1923,7 @@ def _append_section(args: dict) -> str:
         where = f"created section '{section}'"
 
     _title = _fm_title(frontmatter)
-    new_body, _renamed, _collided = _absorb_date_qualifiers(new_body, body)
+    new_body, _renamed, _collided = _absorb_date_qualifiers(new_body, body, _title)
     for _before, _after in _renamed:
         log.info("append_section: %s — dropped the date qualifier from '%s', now '%s'",
                  path, _before, _after)
@@ -4080,7 +4098,7 @@ def _create_file(args: dict) -> str:
 
     # A new page is the one place with no pre-existing damage to work around, so both
     # structural rules apply outright rather than as a delta.
-    body, _renamed, _collided = _absorb_date_qualifiers(body)
+    body, _renamed, _collided = _absorb_date_qualifiers(body, "", title)
     for _before, _after in _renamed:
         log.info("create_file: %s — dropped the date qualifier from '%s', now '%s'",
                  path, _before, _after)

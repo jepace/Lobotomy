@@ -31,6 +31,13 @@ Fixes two classes of problems:
 
    Scans raw/ as well as wiki/, since the raw file carries the same bad url:.
 
+Writes go through agent._atomic_write, like every other maintenance tool here: each page
+changed gets a version-history entry first, so a bad repair is revertable from that page's
+History view, and the file keeps its existing owner and mode rather than being re-owned to
+whoever ran the tool. It used to call Path.write_text directly and had neither — the only
+tool in this directory that did, while tools/README.md claimed all of them went through
+the server's write path.
+
 Run from the repo root:
   python3 tools/repair_links.py [--dry-run]
 """
@@ -39,6 +46,9 @@ import re
 import sys
 import urllib.parse
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from agent import _atomic_write
 
 WIKI_DIR = Path(__file__).resolve().parent.parent / "wiki"
 RAW_DIR  = Path(__file__).resolve().parent.parent / "raw"
@@ -115,8 +125,9 @@ def _repair_path(page: Path, link_path: str) -> str | None:
 
 
 # --- Fix 3: unwrap Firefox Reader View URLs --------------------------------------------
-# Mirrors agent.py:_normalize_capture_url, kept standalone so this repair tool stays
-# dependency-free (importing agent.py would pull in config.json loading).
+# Mirrors agent.py:_normalize_capture_url rather than importing it — the function there is
+# entangled with capture-time concerns this pass does not want. (The module is imported
+# either way now, for _atomic_write.)
 
 _reader_re = re.compile(r"about:reader\?url=[^\s\"'<>)\]]+", re.IGNORECASE)
 
@@ -166,7 +177,7 @@ for f in _wiki_pages():
         if DRY_RUN:
             print(f"  [dry-run] {rel}: would fix {total} ({n1} nested, {n2} bad-path, {n3} reader-url)")
         else:
-            f.write_text(new_text, encoding="utf-8")
+            _atomic_write(f, new_text)
             print(f"  {rel}: fixed {total} ({n1} nested, {n2} bad-path, {n3} reader-url)")
 
 # raw/ carries the same bad url: frontmatter from capture — link repair does not apply
@@ -183,7 +194,7 @@ for f in sorted(RAW_DIR.glob("*.md")) if RAW_DIR.is_dir() else []:
         if DRY_RUN:
             print(f"  [dry-run] raw/{f.name}: would fix {n} (reader-url)")
         else:
-            f.write_text(new_text, encoding="utf-8")
+            _atomic_write(f, new_text)
             print(f"  raw/{f.name}: fixed {n} (reader-url)")
 
 print(f"\n{'[dry-run] ' if DRY_RUN else ''}Repaired {fixed_links} links across {fixed_files} files.")
