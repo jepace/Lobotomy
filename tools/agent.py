@@ -372,6 +372,14 @@ def _read_file(path: str, offset: int = 0) -> "str | list":
         _shown = text
         if offset:
             text = text + f"\n\n[END OF FILE — read chars {offset}–{total} of {total} total.]"
+    # Say so in the log. The tool-result preview shows the first 200 chars and the
+    # [TRUNCATED] marker is appended at the end, so a truncated read and a complete one
+    # look identical there — which makes the read_section call that correctly follows a
+    # truncated read look like the model forgetting it had already read the page.
+    if covered_upto < total:
+        log.info("read_file: %s truncated — showed chars %d-%d of %d; read_section is the "
+                 "documented next step", path, offset, covered_upto, total)
+
     try:
         wiki_rel = str(p.resolve().relative_to(WIKI_DIR.resolve()))
         _ctx()._session_read_pages.add(wiki_rel)
