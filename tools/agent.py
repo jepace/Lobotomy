@@ -3107,6 +3107,82 @@ _HEAL_SUBDIRS = ("sources", "entities", "concepts", "synthesis")
 _READER_URL_RE = re.compile(r"about:reader\?url=[^\s\"'<>)\]]+", re.IGNORECASE)
 
 
+def promote_lead_to_opener(dry_run: bool = False) -> dict:
+    """Give an entity/concept page the opener its template requires, where the text for it
+    is already on the page.
+
+    The opener — ## Overview on an entity, ## Definition on a concept — is required at
+    create_file, and nothing adds one afterwards, so pages written before that check (736
+    of them) will never acquire one on their own. Every ingest that touches such a page
+    pays for it: the agent asks for the section the schema promises, misses, and spends a
+    round recovering.
+
+    Most of those pages are not missing the prose, only the heading. A page reading
+
+        # Lee Jae Myung
+
+        Lee Jae Myung is the President of South Korea...
+
+        ## Political Career & Foreign Relations
+
+    already opens with exactly what Overview is for; the text is just untitled, so no tool
+    can address it and no reader of the outline can see it. This promotes that lead
+    paragraph to a proper heading. It moves nothing, rewrites nothing, and invents nothing
+    — it inserts one line.
+
+    A page with no lead text is left alone and reported. Its first section is something
+    like "Background & Leadership", which is not an overview, and renaming it would be a
+    lie about what it contains; writing an overview from scratch is authorship, not repair,
+    and belongs to the model or to you.
+    """
+    result = {"pages": 0, "promoted": [], "needs_text": []}
+    for f in wiki_pages():
+        rel = f.relative_to(WIKI_DIR).as_posix()
+        if f.name == "index.md" or rel == "log.md":
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        fm_m = re.match(r"^(---\s*\n.*?\n---\s*\n)", text, re.DOTALL)
+        if not fm_m:
+            continue
+        fm, body = fm_m.group(1), text[fm_m.end():]
+        t_m = re.search(r"^type:[ \t]*(\S+)", fm, re.MULTILINE)
+        opener = _OPENER.get(t_m.group(1).strip() if t_m else "")
+        if not opener:
+            continue
+        title_m = re.search(r'^title:[ \t]*["\']?(.+?)["\']?[ \t]*$', fm, re.MULTILINE)
+        title = title_m.group(1).strip() if title_m else ""
+        if any(_norm_heading(n) == _norm_heading(opener)
+               for _, n in _page_section_names(body, title)):
+            continue                                   # already has its opener
+        result["pages"] += 1
+
+        # Everything before the first H2+ heading, minus the page's own H1 line.
+        first = re.search(r"^#{2,6}[ \t]*\S", body, re.MULTILINE)
+        head = body[:first.start()] if first else body
+        rest = body[first.start():] if first else ""
+        lead = re.sub(r"\A\s*#[ \t]*\S[^\n]*\n", "", head).strip()
+        h1 = head[:len(head) - len(head.lstrip())] + (
+            re.match(r"\A\s*(#[ \t]*\S[^\n]*\n)", head).group(1)
+            if re.match(r"\A\s*#[ \t]*\S[^\n]*\n", head) else "")
+
+        if len(lead) < 40:
+            result["needs_text"].append(
+                f"{rel}: no {opener} and no lead paragraph to promote"
+                + (f" (first section is {_page_section_names(body, title)[0][1]!r})"
+                   if _page_section_names(body, title) else ""))
+            continue
+
+        new_body = f"{h1}\n## {opener}\n\n{lead}\n\n{rest}" if h1 else \
+                   f"## {opener}\n\n{lead}\n\n{rest}"
+        result["promoted"].append(f"{rel}: promoted {len(lead):,} chars of lead to ## {opener}")
+        if not dry_run:
+            _atomic_write(f, fm + new_body)
+    return result
+
+
 def unlink_headings(dry_run: bool = False) -> dict:
     """Strip markdown link syntax out of headings, keeping the display text.
 

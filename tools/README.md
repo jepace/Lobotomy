@@ -150,6 +150,31 @@ Nothing is lost: the link target is still reachable from the prose under the hea
 `relink.py` re-links the subject there anyway. Every page changed goes through the normal
 write path, so it is revertable from that page's History view.
 
+### `promote_openers.py` — give pages the `## Overview` their template requires
+`create_file` requires an opener — `## Overview` on an entity, `## Definition` on a
+concept — and nothing adds one afterwards, so pages written before that check never
+acquire one. `section_inventory.py` counts them; this fixes the ones that can be fixed
+mechanically. Every ingest touching such a page pays a wasted round: the agent asks for
+the section the schema promises, misses, and has to recover.
+
+Most of those pages are not missing the prose, only the heading — a lead paragraph sits
+under the H1 with nothing naming it, so no tool can address it and it does not show up in
+a page outline. This inserts the heading above it.
+
+```sh
+python3 tools/promote_openers.py --dry-run
+python3 tools/promote_openers.py
+python3 tools/promote_openers.py --dry-run --all   # list every page, not the first 25
+```
+
+A page with no lead paragraph is left alone and listed: its first section is something
+like "Background & Leadership", renaming which would misdescribe what it holds, and
+writing an overview from scratch is authorship, not repair. Send those through a
+regenerate, or leave them.
+
+Report-only with `--dry-run`. Changes go through the normal write path, so each page is
+revertable from its History view.
+
 ### `repair_frontmatter.py` — backfill missing frontmatter
 Thin wrapper over `agent.heal_pages()`: fills in missing `created:`/`updated:` from the
 file's own mtime, missing `tags:`/`sources:` as `[]`, and unwraps reader-mode URLs. Pages
