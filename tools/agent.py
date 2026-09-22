@@ -1429,6 +1429,19 @@ def _bad_heading_error(tool: str, bad: "list[tuple]", title: str,
             f"section:\n" + "\n".join(lines) + "\n\nFix and resend.")
 
 
+def page_display_title(text: str, stem: str) -> str:
+    """The name to show for a page: its frontmatter title, or the slug if it has none.
+
+    The slug is a fallback, not a source. Deriving the title from the filename —
+    stem.replace("-", " ").title() — round-trips only for names that happen to be plain
+    words: "jd-vance" renders "Jd Vance", "ai-safety" renders "Ai Safety", "u-s-senate"
+    renders "U S Senate", and "pg-e" renders "Pg E" for a page titled "Pacific Gas &
+    Electric". The frontmatter title is the one the rest of the system already treats as
+    authoritative — it is what lookup_titles matches and what the autolinker links.
+    """
+    return _fm_title(text) or (stem.replace("-", " ").title() if stem else "")
+
+
 def _fm_title(text: str) -> str:
     """The title: from a page's frontmatter, or "" if it has none."""
     m = re.search(r'^title:[ \t]*["\']?(.+?)["\']?[ \t]*$', text, re.MULTILINE)

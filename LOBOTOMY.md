@@ -72,10 +72,18 @@ sources: ["sources/source-slug.md", "sources/other-slug.md"]
 url: "https://original-article-url"   # source documents only; omit on all others
 ---
 
-# Human Readable Title
+## First Section
 
 <!-- body content -->
 ```
+
+**Do not write an H1.** The page's name comes from its `title:` frontmatter, and every
+view renders it above the body already — a `# Human Readable Title` line in the body just
+shows the name twice. The body starts at its first `## ` section.
+
+**Every section is `## `.** `###` only for a genuine subsection inside one. A section
+written as `# Overview` is invisible to `read_section`, `update_section` and the page
+outline, all of which skip level 1 — so it can never be read or edited again.
 
 **Every list needs a blank line above it.** Each required section below (Summary, Claims,
 Entities, etc.) typically opens with a paragraph and then a bulleted list — put a blank

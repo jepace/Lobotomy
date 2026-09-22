@@ -153,7 +153,7 @@ logging.getLogger("werkzeug").addFilter(_SuppressPollingPaths())
 from config import (cfg_get, cfg_bool, cfg_int, validate_config,
                     cfg_active_provider, cfg_provider, cfg_available_models,
                     cfg_all_providers, cfg_write_llm)
-from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR,
+from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, run_agent_turn, system_prompt,
                    _fix_wiki_links, _rebuild_index, _validate_ingest,
@@ -1514,7 +1514,7 @@ def wiki_page(page_path):
     return render_template(
         "wiki.html",
         content=_content,
-        title=p.stem.replace("-", " ").title(),
+        title=page_display_title(raw_text, p.stem),
         sections=wiki_sections(),
         current_path=wiki_rel,
         source_url=source_url,
@@ -1537,10 +1537,11 @@ def wiki_edit(page_path):
         abort(404)
     if not p.exists():
         abort(404)
+    _raw = p.read_text(encoding="utf-8")
     return render_template(
         "wiki-edit.html",
-        raw=p.read_text(encoding="utf-8"),
-        title=p.stem.replace("-", " ").title(),
+        raw=_raw,
+        title=page_display_title(_raw, p.stem),
         page_path=str(p.relative_to(WIKI_DIR)),
     )
 
@@ -1611,7 +1612,8 @@ def wiki_history(page_path):
                      "when": when.strftime("%Y-%m-%d %H:%M:%S"),
                      "size": f.stat().st_size})
     return render_template("wiki-history.html",
-                           title=p.stem.replace("-", " ").title(),
+                           title=page_display_title(
+                               p.read_text(encoding="utf-8", errors="replace"), p.stem),
                            current_path=str(p.relative_to(WIKI_DIR)),
                            revisions=revs,
                            current_size=p.stat().st_size)
@@ -1633,7 +1635,8 @@ def wiki_history_diff(page_path, rev):
     diff = list(difflib.unified_diff(old.splitlines(), new.splitlines(),
                                      fromfile=f"{rev} (saved)", tofile="current", lineterm=""))
     return render_template("wiki-history.html",
-                           title=p.stem.replace("-", " ").title(),
+                           title=page_display_title(
+                               p.read_text(encoding="utf-8", errors="replace"), p.stem),
                            current_path=str(p.relative_to(WIKI_DIR)),
                            revisions=None, rev=rev, diff=diff, old_text=old,
                            identical=(old == new))
@@ -1704,10 +1707,11 @@ def share_page(token):
     p = WIKI_DIR / entry["path"]
     if not p.exists():
         abort(404)
-    meta, _ = _parse_frontmatter(p.read_text(encoding="utf-8", errors="replace"))
+    _raw = p.read_text(encoding="utf-8", errors="replace")
+    meta, _ = _parse_frontmatter(_raw)
     return render_template(
         "share.html",
-        title=p.stem.replace("-", " ").title(),
+        title=page_display_title(_raw, p.stem),
         content=render_md_shareable(p),
         source_url=meta.get("url", "").strip() or None,
     )
@@ -1950,7 +1954,7 @@ def raw_file(filename):
         content = p.read_text(encoding='utf-8', errors='replace')
         return render_template(
             "raw.html",
-            title=p.stem.replace("-", " ").title(),
+            title=page_display_title(content, p.stem),
             content=content if p.suffix == '.txt' else render_md_raw(content),
             filename=filename,
         )

@@ -193,6 +193,7 @@ refusal costs a round; reading it in the schema costs nothing.
 - **No `[[wikilink]]` syntax** — standard relative markdown links only.
 - **`create_file` for new pages, `update_file` for existing ones** — `create_file` auto-fills `created`/`updated`; `update_file` restores system-owned fields (`created`, `raw_source`, `type`) from disk.
 - **Headings are plain text.** No links in them, no dates naming the section, no heading repeating the page's own title.
+- **Sections are `##`; the body has no H1.** The page's name is its `title:` frontmatter and every view renders it above the body (`page_display_title`), so an H1 in the body shows the name twice. Level-1 headings are skipped by `_page_section_names`, so a section written as `# Overview` can never be read or edited by the section tools. Older pages carry a body H1 — harmless, and `_bad_headings` exempts it.
 - Internal wiki links use paths relative to the page's location: `../entities/foo.md` from `wiki/sources/`.
 - File names: `lowercase-hyphenated-slugs.md`. Source slugs encode `{author-or-org}-{year}-{short-title}`.
 - The `## Sources` section in entity/concept pages is auto-generated from frontmatter — never write it manually.
