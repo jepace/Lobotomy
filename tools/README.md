@@ -288,6 +288,12 @@ title-map caches), and a test that misses one of them can pass while testing not
 its docstring before writing a new test file, and build every fixture through its `TempWiki`
 class rather than touching `agent.py`'s globals directly.
 
+**The suite is not deployed.** `deploy.sh` excludes `tools/tests/` and runs the suite on
+the development host before the rsync, aborting the deploy if it fails (`--skip-tests` to
+override). Tests belong where the code is changed, not next to a running server — and
+`mutate.py` below edits `agent.py` in place, which is the last thing that should exist on
+a production box.
+
 ### `tests/mutate.py` — does the suite actually catch anything?
 A green suite proves nothing on its own. This breaks one guard in `agent.py` at a time,
 runs the suite, and reports whether any test noticed. **Every mutation must be CAUGHT.**

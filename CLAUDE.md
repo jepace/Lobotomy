@@ -25,7 +25,8 @@ before adding another one.** The maintenance CLIs need no LLM and no API cost: `
 `relink.py` (the catch-up sweep that adds links to pages written before their subjects
 existed), `rename_page.py`, `unlink_headings.py`, `repair_links.py`,
 `repair_frontmatter.py`, `rebuild_sources.py`, `section_inventory.py`,
-`find_duplicate_pages.py`, `find_duplicate_sections.py`, and `lint.sh`.
+`promote_openers.py`, `find_duplicate_pages.py`, `find_duplicate_sections.py`, and
+`lint.sh`.
 
 All of them go through `agent._atomic_write`, so their edits are recorded in page history
 and keep each file's owner and mode. Anything new that writes to the wiki must do the same
@@ -194,18 +195,27 @@ refusal costs a round; reading it in the schema costs nothing.
 ## Tests
 
 ```sh
-python3 tools/tests/run_autolink_cases.py out.json   # autolinker corpus -> JSON, for eyeballing
+python3 tools/tests/run_all.py              # everything; exits non-zero on failure
+python3 tools/tests/run_all.py test_timeline  # one module
+python3 tools/tests/mutate.py               # break each guard, check a test notices
 ```
 
-**Current coverage is the autolinker and nothing else.** `docs/test-plan.md` specifies the
-suite this repo should have — stdlib `unittest`, a `TempWiki` harness that resets all three
-kinds of module state above, and a case table per guard. Implement that before making
-further changes to the write paths; they are now interlocking enough that a change to one
-guard routinely lands in another.
+`run_all.py` is stdlib `unittest` over `tools/tests/`, built on a `TempWiki` harness that
+rebinds all four module globals, resets the thread-local session context, clears the
+autolinker caches, and asserts its own isolation. Nothing there touches the repo's real
+`wiki/` or `raw/`.
 
-Until it exists, verify an autolinker-adjacent change by capturing the corpus output
-before and after and diffing — it should be byte-identical unless the change is meant to
-alter linking.
+**`mutate.py` is the one that proves the suite works.** A green run says nothing on its
+own: this disables one guard at a time and requires a test to go red for each. Every
+mutation must report CAUGHT. Add one whenever you add a guard — if you cannot write a
+mutation the suite catches, the guard is untested. It edits `agent.py` in place and
+restores it, so do not run it anywhere near a live server.
+
+`deploy.sh` runs the suite before it rsyncs and aborts on failure, and excludes
+`tools/tests/` from what it ships. The suite is stdlib-only — no flask, no network, no
+LLM, no `config.json` — so it runs on a host that has none of the app's dependencies.
+
+`docs/test-plan.md` is the spec the suite was built from; read it before adding a module.
 
 ## Config Structure
 
