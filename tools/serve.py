@@ -3198,6 +3198,33 @@ def _migrate_raw_subdirs() -> None:
             log.warning("Migration: raw/%s/ not empty after migration, leaving it", subdir_name)
 
 
+def deployed_version() -> str:
+    """What code this server is running, for the log at startup.
+
+    Answering "is my fix deployed?" from the server's own log rather than by inferring it
+    from behaviour. deploy.sh writes .version into the jail after the rsync; the repo's
+    own .git is excluded from what ships, so git is not available to ask there. Falls back
+    to the local git checkout when running from a development clone, and says plainly when
+    it knows neither.
+    """
+    vf = REPO_ROOT / ".version"
+    try:
+        if vf.is_file():
+            return vf.read_text(encoding="utf-8").strip() or "unknown"
+    except OSError:
+        pass
+    try:
+        import subprocess
+        out = subprocess.run(["git", "-C", str(REPO_ROOT), "log", "-1",
+                              "--format=%h %cd %s", "--date=short"],
+                             capture_output=True, text=True, timeout=5)
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip() + " (git checkout)"
+    except Exception:                                   # noqa: BLE001 - never block startup
+        pass
+    return "unknown (no .version file and no git checkout)"
+
+
 if __name__ == "__main__":
     host = cfg_get("server", "host", "127.0.0.1")
     port = cfg_int("server", "port", default=8080)
@@ -3229,5 +3256,8 @@ if __name__ == "__main__":
         print(f"[INFO] No account found. Visit http://{host}:{port}/setup to create one.")
 
     provider = cfg_get("llm", "provider", "openai")
-    print(f"\nLobotomy  http://{host}:{port}  (provider: {provider})\n")
+    _ver = deployed_version()
+    log.info("Lobotomy starting — version: %s", _ver)
+    print(f"\nLobotomy  http://{host}:{port}  (provider: {provider})")
+    print(f"version: {_ver}\n")
     app.run(host=host, port=port, debug=False, threaded=True)

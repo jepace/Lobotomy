@@ -13,3 +13,6 @@ wiki/.login_log.json
 server.log
 server.log.*
 server-stacks.log
+
+# Written into the jail by deploy.sh; never part of the repo
+.version

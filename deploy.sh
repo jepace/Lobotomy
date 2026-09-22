@@ -88,6 +88,12 @@ fi
 # Trailing slash on source = sync contents (not the dir itself)
 eval rsync $RSYNC_ARGS "$REPO_DIR/" "$JAIL_ROOT/"
 
+# Stamp what was deployed. The repo's .git is excluded from the rsync, so the server has
+# no way to work out its own version otherwise — and "is my fix deployed?" is a question
+# that otherwise gets answered by guessing from behaviour. serve.py logs this at startup.
+git -C "$REPO_DIR" log -1 --format='%h %cd %s' --date=short > "$JAIL_ROOT/.version"
+echo "✔ version stamped → $(cat "$JAIL_ROOT/.version")"
+
 # Install rc script directly — rsync puts it under the app dir,
 # but it belongs in the jail's /usr/local/etc/rc.d/
 mkdir -p "$(dirname "$RC_DEST")"

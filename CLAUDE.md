@@ -218,6 +218,12 @@ mutation must report CAUGHT. Add one whenever you add a guard — if you cannot 
 mutation the suite catches, the guard is untested. It edits `agent.py` in place and
 restores it, so do not run it anywhere near a live server.
 
+**`deploy.sh` stamps `.version` into the jail** (`git log -1`, written after the rsync)
+and `serve.py` logs it at startup — `Lobotomy starting — version: <sha> <date> <subject>`.
+The repo's `.git` is not shipped, so that file is the only way the server can say what
+code it is running. Check it before concluding a fix did not work: twice now, behaviour
+the logs showed as unfixed was simply not deployed yet.
+
 `deploy.sh` excludes `tests/` from what it ships — tests belong where the code is
 changed, and `mutate.py` must never sit beside a running server. It does not run them
 either: deploy copies files and nothing else. Run the suite yourself before deploying.
