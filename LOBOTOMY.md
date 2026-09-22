@@ -372,12 +372,26 @@ Required sections:
   If the source's subject is better understood as a concept than an entity, list it here
   instead — but list it somewhere; the subject never goes unlisted.
 
-  **An unfolding event is an entity, and gets its own page.** An outbreak, an election, a
-  trial, an investigation, a strike, a disaster — anything the news will still be
-  reporting next week — is listed under `## Entities`, not folded into the standing pages
-  it happens to mention. A story about a measles outbreak in Pennsylvania is *not* filed
-  as an update to `Measles` or to `Pennsylvania Department of Health`; it gets
-  `Pennsylvania Measles Outbreak`, and those pages link to it.
+  **An unfolding event is an entity, and gets its own page.** A story about a measles
+  outbreak in Pennsylvania is *not* filed as an update to `Measles` or to `Pennsylvania
+  Department of Health`; it gets `Pennsylvania Measles Outbreak`, listed under
+  `## Entities`, and those pages link to it.
+
+  **The test is one question: does this thing have a state that can change?** An outbreak
+  has a case count and a containment status. A trial has a stage. An investigation has
+  findings pending. An election has a race in progress. Each has a "where does it stand
+  now", which is exactly what an Overview-plus-Timeline page is built to answer.
+
+  **An incident that was complete when it was reported is not an unfolding event**, however
+  newsworthy. A building fire that was out by the time the story ran, a one-day protest, a
+  single arrest, a record broken — these have no state to check back on, and a page for
+  one is a page that will say the same thing forever while looking like coverage. That
+  material is a Timeline entry on a standing page, or prose in the section it concerns.
+
+  Do not predict. You cannot know at ingest time whether the news will still be covering
+  something next week, and guessing generously is how the wiki fills with pages holding a
+  single sentence. Ask only what the source in front of you says: is this over, or is it
+  ongoing?
 
   Name it the same way every time: **place + subject + event**, spelled out in full
   ("Pennsylvania Measles Outbreak", "2026 California Governor Election"). The name is what

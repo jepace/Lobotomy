@@ -655,8 +655,14 @@ HISTORY_DIR = WIKI_DIR / ".history"
 _HISTORY_KEEP = 50  # revisions per page
 
 
-def wiki_pages(root: Path = WIKI_DIR):
+def wiki_pages(root: "Path | None" = None):
     """Yield every real wiki page under `root`, skipping wiki/.history/.
+
+    `root` defaults to WIKI_DIR, resolved at CALL time rather than as a default argument
+    value. A `root: Path = WIKI_DIR` default is bound once at import, so every caller that
+    omitted it scanned whatever WIKI_DIR pointed at then — silently the real wiki, even in
+    a harness that had rebound the module global to a throwaway one. That is not a test-only
+    concern: it made the scanning tools appear to work while reporting on the wrong tree.
 
     A plain `root.rglob("*.md")` also walks the saved-revision copies under .history/ —
     they are not live pages, so lint, search, tagging, and repair passes must not touch
@@ -664,6 +670,7 @@ def wiki_pages(root: Path = WIKI_DIR):
     snapshot of the page as it was), and rewriting a revision's content defeats the point
     of keeping it as a record of what the page used to say.
     """
+    root = root if root is not None else WIKI_DIR
     for f in sorted(root.rglob("*.md")):
         try:
             f.relative_to(HISTORY_DIR)
@@ -2934,9 +2941,7 @@ def unlink_headings(dry_run: bool = False) -> dict:
     """
     result = {"pages": 0, "headings": 0, "detail": []}
     head_re = re.compile(r"^(#{1,6}[ \t]*)(.*\]\(.*)$", re.MULTILINE)
-    # WIKI_DIR explicitly, not wiki_pages()'s default — the default is bound at import
-    # and the test harnesses rebind the module global to a throwaway wiki.
-    for f in wiki_pages(WIKI_DIR):
+    for f in wiki_pages():
         if f.name == "index.md" or f == WIKI_DIR / "log.md":
             continue
         try:
@@ -4040,6 +4045,26 @@ def _create_file(args: dict) -> str:
     if _opener:
         _heads = [m.group(1) for m in
                   re.finditer(r"^#{2,6}[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE)]
+
+        # The two templates' openers leak into each other — the live wiki has Definition on
+        # 80 entity pages and Overview on 206 concept pages. When the page carries the OTHER
+        # type's opener and not its own, that is not a judgment call, it is one heading with
+        # the wrong name on it, and the fix is mechanical. Refusing spent a whole round
+        # (observed: 44 messages, 270KB, ~62s) to rename a heading. So rename it and accept
+        # the page. Only when it is unambiguous: the wrong opener present, the right one
+        # absent, exactly one of them. A page with neither is still refused — there is no
+        # section to rename, and writing an Overview that was never drafted is fabrication,
+        # not repair.
+        _wrong = {"entity": "Definition", "concept": "Overview"}.get(pg_type)
+        if (_wrong and not any(_norm_heading(h) == _norm_heading(_opener) for h in _heads)
+                and sum(_norm_heading(h) == _norm_heading(_wrong) for h in _heads) == 1):
+            def _rename(m, _o=_opener, _w=_wrong):
+                return (m.group(1) + _o) if _norm_heading(m.group(2)) == _norm_heading(_w) else m.group(0)
+            body = re.sub(r"^(#{2,6}[ \t]*)(\S.*?)[ \t]*$", _rename, body, flags=re.MULTILINE)
+            _heads = [_opener if _norm_heading(h) == _norm_heading(_wrong) else h for h in _heads]
+            log.info("create_file: %s is %s %s page opening with '%s' — renamed to '%s'",
+                     path, "an" if pg_type[0] in "aeiou" else "a", pg_type, _wrong, _opener)
+
         if not any(_norm_heading(h) == _norm_heading(_opener) for h in _heads):
             return (
                 f"Error: create_file refused — {'an' if pg_type[0] in 'aeiou' else 'a'} "

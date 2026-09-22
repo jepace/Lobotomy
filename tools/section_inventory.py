@@ -10,7 +10,7 @@ This counts it.
 Use it to decide what, if anything, to constrain: a heading used on 400 pages is part of
 the vocabulary whether or not the template names it, and one used twice is drift.
 
-It also flags four specific smells:
+It also flags six specific smells:
 
   off-template   a heading the page type's template does not list
   = page title   a section named after the page it is on ("Cybersecurity" on
@@ -23,6 +23,13 @@ It also flags four specific smells:
                  next ingest adds another beside it
   no opener      an entity page with no Overview, or a concept with no Definition — the
                  one heading its template says every page of that type keeps
+  stub event     an event page whose Timeline has exactly one entry, backed by one
+                 source, untouched for 30 days. An event page is created from the first
+                 story about it, before anyone can know whether a second will come; when
+                 none does, what is left holds a single sentence while reading, to a
+                 later query, like coverage. Any one of the three signals alone is
+                 innocent — a new page is new, and a quiet month is not proof. Together
+                 they mean no second story ever arrived.
 
 Report-only.
 
@@ -32,11 +39,12 @@ Run from the repo root:
 """
 import re
 import sys
+import datetime as dt
 from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from agent import WIKI_DIR, wiki_pages, _norm_heading
+from agent import WIKI_DIR, wiki_pages, _norm_heading, _TL_BULLET_RE
 
 SHOW_PAGES = "--pages" in sys.argv
 HEAD_RE = re.compile(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", re.MULTILINE)
@@ -58,6 +66,7 @@ TEMPLATE = {
     "source":    ["Summary", "Claims", "Entities", "Concepts", "Quotes", "Context", "Sources"],
 }
 OPENER = {"entity": "Overview", "concept": "Definition"}
+STUB_QUIET_DAYS = 30
 DATED_RE = re.compile(r"\b(?:19|20)\d{2}\b"
                       r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
                       r"(?:uary|ruary|ch|il|e|y|ust|tember|ober|ember)?\b", re.IGNORECASE)
@@ -105,6 +114,23 @@ for p in wiki_pages():
     if want and _norm_heading(want) not in found:
         smells["no opener"].append((rel, f"no {want}"))
 
+    # A page carrying a Timeline is an event page — that section is what the unfolding-event
+    # template adds and add_timeline_entry maintains, so no separate page type is needed to
+    # recognize one.
+    tl = re.search(r"^(#{1,6})[ \t]*Timeline[ \t]*$", body, re.MULTILINE | re.IGNORECASE)
+    if tl:
+        nxt = re.search(r"^#{1," + str(len(tl.group(1))) + r"}[ \t]*\S",
+                        body[tl.end():], re.MULTILINE)
+        sec = body[tl.end():tl.end() + nxt.start()] if nxt else body[tl.end():]
+        entries = [ln for ln in sec.split("\n") if _TL_BULLET_RE.match(ln.strip())]
+        src_m = re.search(r"^sources:\s*\[(.*?)\]", meta, re.MULTILINE | re.DOTALL)
+        n_src = len([x for x in re.findall(r'"([^"]+)"', src_m.group(1) if src_m else "")
+                     if x.strip()])
+        quiet = (dt.date.today() - dt.date.fromtimestamp(p.stat().st_mtime)).days
+        if len(entries) == 1 and n_src <= 1 and quiet >= STUB_QUIET_DAYS:
+            smells["stub event"].append(
+                (rel, f"1 timeline entry, {n_src} source(s), untouched {quiet} days"))
+
 for ptype in sorted(totals):
     c = counts[ptype]
     if not c:
@@ -119,7 +145,8 @@ for ptype in sorted(totals):
         print(f"  … and {onceonly} heading(s) used on exactly one page")
 
 print("\n=== smells ===")
-for smell in ("no opener", "= page title", "linked heading", "dated", "off-template"):
+for smell in ("no opener", "stub event", "= page title", "linked heading",
+              "dated", "off-template"):
     hits = smells[smell]
     if not hits:
         print(f"  {smell:14} none")
