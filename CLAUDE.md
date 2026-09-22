@@ -20,19 +20,33 @@ python3 tools/wiki.py                      # interactive REPL
 python3 tools/wiki.py "ingest raw/file.md" # one-shot command
 ```
 
-Utility CLIs (no LLM needed):
-```sh
-python3 tools/search.py "keyword"          # full-text search across wiki
-python3 tools/repair_links.py              # fix broken relative paths, unwrap reader-mode URLs
-python3 tools/repair_frontmatter.py        # backfill missing created:/updated: fields
-sh tools/lint.sh                           # shell-based broken-link checker
-```
+**`tools/README.md` documents every tool in `tools/` with sample command lines — read it
+before adding another one.** The maintenance CLIs need no LLM and no API cost: `search.py`,
+`relink.py` (the catch-up sweep that adds links to pages written before their subjects
+existed), `rename_page.py`, `unlink_headings.py`, `repair_links.py`,
+`repair_frontmatter.py`, `rebuild_sources.py`, `section_inventory.py`,
+`find_duplicate_pages.py`, `find_duplicate_sections.py`, and `lint.sh`.
+
+All of them go through `agent._atomic_write`, so their edits are recorded in page history
+and keep each file's owner and mode. Anything new that writes to the wiki must do the same
+— `repair_links.py` did not for a long time, and its repairs were neither revertable nor
+safe to run as root.
 
 ## Architecture
 
 ### Core modules
 
-**`tools/agent.py`** — the heart of the system. Contains all AI tool implementations (`_read_file`, `_update_file`, `_create_file`, `_lookup_titles`, `_search_wiki`, `_autolink`, `_fetch_url`, `_done`, `_rebuild_index`, etc.) plus the agentic loop (`stream_agent_turn`, `run_agent_turn`) and LLM provider abstraction. Both `serve.py` and `wiki.py` import from here.
+**`tools/agent.py`** — the heart of the system. All AI tool implementations (`_read_file`,
+`_read_section`, `_update_file`, `_update_section`, `_append_section`, `_replace_text`,
+`_add_timeline_entry`, `_create_file`, `_lookup_titles`, `_search_wiki`, `_search_raw`,
+`_autolink`, `_fetch_url`, `_done`, `_rebuild_index`), the agentic loop
+(`stream_agent_turn`, `run_agent_turn`), the LLM provider abstraction, page version
+history, and the whole-wiki maintenance passes (`heal_pages`, `relink_all`,
+`unlink_headings`). Both `serve.py` and `wiki.py` are thin layers over it.
+
+Tools are registered in two places that must stay in sync: `TOOL_FNS` (name → callable)
+and `TOOL_DEFS` (the JSON schema sent to the model). `system_prompt()` appends a
+quick-reference table that also needs the new row.
 
 **`tools/serve.py`** — Flask web server. Routes for: `/chat` (streaming AI), `/wiki/*` (rendered markdown), `/inbox` (read-it-later), auth, and settings. Imports `agent.py` for AI functionality and `job_queue.py` for background jobs.
 
@@ -42,15 +56,99 @@ sh tools/lint.sh                           # shell-based broken-link checker
 
 **`tools/job_queue.py`** — background job queue used by `serve.py` for async inbox processing.
 
+### Module state — read this before writing a test or a maintenance pass
+
+`agent.py` keeps mutable state in three places, and code that ignores any of them will
+appear to work while doing nothing:
+
+- **Module globals** `REPO_ROOT`, `WIKI_DIR`, `RAW_DIR`, `HISTORY_DIR`. Never capture these
+  as default argument values — a `def f(root=WIKI_DIR)` default binds at import, so every
+  caller that omits it scans whatever `WIKI_DIR` pointed at *then*. `wiki_pages()` had this
+  bug and silently scanned the real wiki under test. Resolve at call time.
+- **A thread-local session context** (`_ctx()`, reset by `init_session()`): which pages
+  this session has read, how much of each, which sections, which are stale, refusal
+  counters. Guards depend on it, and it persists across calls on the same thread.
+- **Autolinker caches**: `_title_map_cache`, `_title_regex_cache`, `_title_tokens_cache`,
+  `_no_autolink_titles`. Keyed by title, not by wiki.
+
 ### The autolinker (common bug surface)
 
-**`tools/agent.py:_autolink()`** — run over every page touched in a session by `_post_process_session()` when the agent calls `done()`. **This is the only way wiki links are ever created** — the LLM never writes raw markdown links itself. Uses a combined regex where group 1 protects existing links and group 2 matches titles bare or with a sub-span already linked (via `_title_alts()`). **All** bare occurrences of each title (and any `aliases:`) are linked (not just the first). When a partial match is found (e.g. `CASA of [Monterey County](url)`), the inner link is stripped and the whole phrase is replaced with the longer-title link.
+**`tools/agent.py:_autolink()`** — **the only way wiki links are ever created.** The LLM
+never writes markdown links; `LOBOTOMY.md` tells it not to, and `_strip_broken_wiki_links`
+removes what it writes anyway. It runs in three places: `_autolink_now(p)` after every
+write tool, `_post_process_session()` over every touched page at `done()`, and
+`relink.py`/`relink_all()` as the whole-wiki catch-up sweep.
 
-The critical invariant: **never match inside existing markdown links**. Group 1 of the combined regex takes priority at each position, consuming existing links before group 2 can fire.
+Uses a combined regex where group 1 protects existing links and group 2 matches titles bare or with a sub-span already linked (via `_title_alts()`). **All** bare occurrences of each title (and any `aliases:`) are linked (not just the first). When a partial match is found (e.g. `CASA of [Monterey County](url)`), the inner link is stripped and the whole phrase is replaced with the longer-title link.
+
+The critical invariant: **never match inside existing markdown links**. Group 1 of the combined regex takes priority at each position, consuming existing links before group 2 can fire. Heading lines are skipped entirely (`is_heading`), so a link inside a heading was written by hand, not by this.
 
 Performance: the title+alias map and the per-title compiled regexes are cached in memory (`_title_map_cache`, `_title_regex_cache`). `_atomic_write` invalidates them only when a write actually changes `title`/`aliases`/`no_autolink`; an mtime-scan backstop in `_build_title_map()` catches writes that bypass `_atomic_write` (other processes, manual edits), with per-file vetted mtimes so the backstop doesn't false-fire on the autolinker's own body-only writes. This invalidation logic has been a repeat bug source — change it with care and test all of: safe write keeps cache, title change invalidates, bypass write is detected, safe write doesn't mask a concurrent bypass.
 
-Pages can carry an `aliases:` frontmatter list (e.g. `aliases: ["gonzales", "uc davis"]`) for common short names that the autolinker should also match. The LLM is not instructed to set this field — it's a manual human override for when the formal page title differs from how the subject is typically referenced in prose.
+A per-title token prefilter (`_title_tokens_cache`) skips any title whose words are not all
+present in the page — at ~9,000 titles this is what keeps a single autolink under a second.
+
+`_build_title_map()` must be **deterministic**. It was not once (unsorted glob, no sort
+tiebreak) and the resulting map order changed the output, so `relink` never converged: two
+consecutive whole-wiki runs both reported hundreds of changes.
+
+Pages can carry an `aliases:` frontmatter list (e.g. `aliases: ["gonzales", "uc davis"]`) for common short names that the autolinker should also match. The LLM is not instructed to set this field — it's a manual human override for when the formal page title differs from how the subject is typically referenced in prose. `no_autolink: true` excludes a page from *linking* but deliberately keeps it in the title map, because hiding it from `lookup_titles` made the agent create duplicate pages.
+
+### Write-path guards
+
+The densest logic in the file, and the reason the wiki survives an LLM editing it. Five
+tools write pages — `create_file`, `update_file`, `update_section`, `append_section`,
+`replace_text` — and each runs the same structural checks through shared helpers
+(`_heading_dupes`, `_bad_headings`, `_absorb_date_qualifiers`) so they cannot disagree
+about what is legal.
+
+Three principles, each learned expensively:
+
+1. **Absorb what is unambiguous; refuse only what needs a decision.** A refusal costs a
+   full round trip (observed: 44 messages, 270KB, ~60s) and the model has to be able to act
+   on it. An entity page opening with `## Definition` is one heading with the wrong name —
+   renamed silently. `## Fiscal Challenges (2026)` is a standing heading with a date bolted
+   on — the date is dropped. `## 2026 Outbreak` names the event itself, so there is nothing
+   to strip and it is refused, pointing at `add_timeline_entry`.
+2. **On update paths, check the delta, not the page.** Only violations the edit
+   *introduces* are refused. An earlier duplicate-heading guard checked the whole resulting
+   page and deadlocked 176 real pages: the only edits that could have fixed them were the
+   ones it refused.
+3. **A refusal must name a move that works.** The recurring failure here is a guard that is
+   locally correct about its own question but answers a question the caller cannot act on —
+   `lookup_titles` right that no title matched, `create_file` right that the path existed.
+   Worst case: renaming one violation into another, so the refusal quotes a heading the
+   model never wrote.
+
+Also enforced: search limited to 2 per term per session; `done()` refused if an ingest
+wrote no entity/concept pages or never established a source page; `update_file` refused
+until the session has read the page's full content, and `update_section` until it has read
+that section; all-lowercase titles refused; `wiki/log.md` and `wiki/index.md` refused;
+`wiki/sources/` pages immutable after creation. Refusals hand back the needed file content
+in the same response to save a round-trip.
+
+### Reading a large page
+
+`_read_file` on a wiki page over `_WIKI_READ_LIMIT` (20,000 chars) returns an **outline** —
+frontmatter, every section name, each section's size and its opening `_OUTLINE_PREVIEW`
+chars — not the text. It used to return the first 20,000 chars and then instruct the model
+not to work from them, so the ingest paid for that chunk on every subsequent round.
+
+`offset` defaults to **-1, not 0**: "no offset given" and "offset 0" are different
+requests. Without an offset you get the outline; with an explicit `offset=0` you get a
+paged chunk. That distinction is load-bearing — the Regenerate Workflow rewrites a whole
+page with `update_file`, which requires full read coverage, which requires paging to be
+reachable.
+
+### Unfolding events and timelines
+
+An event that arrives across several sources (an outbreak, an election, a trial) gets its
+own entity page, with `## Overview` as the current state (replaced each visit) and
+`## Timeline` as the record. `add_timeline_entry(path, date, text)` **inserts in
+chronological position rather than appending**, because sources are not ingested in the
+order events happened. It accepts partial dates (`2026-03`, `2026`), refuses future dates
+and duplicates, and re-sorts the whole section on every insert, so a timeline that is
+already out of order heals on the next write.
 
 ### Page version history
 
@@ -71,25 +169,43 @@ so it snapshots the current content first and is itself undoable.
 
 ### Wiki page lifecycle
 
-1. `create_file` / `update_file` → write frontmatter + body; `sources:` is merged from disk plus the session's source page (never trusted from the LLM); `_inject_sources_section` renders the `## Sources` section
+1. `create_file` / `update_file` / the section tools → write frontmatter + body; `sources:` is merged from disk plus the session's source page (never trusted from the LLM); `_inject_sources_section` renders the `## Sources` section; `_autolink_now` links the page
 2. `done()` → `_post_process_session()` runs once: patches `sources:` on every touched page, autolinks them all, re-injects `## Sources`, rebuilds the index
 3. Server lint checks run after `done()`; results visible at `/wiki/lint`
-
-Guardrails enforced in code (not just in LOBOTOMY.md — instructions alone proved insufficient): search limited to 2 per term per session; `done()` refused if an ingest wrote no entity/concept pages or never established a source page; `update_file` refused until the session has read the page's full content (long pages are chunked at 20K chars); refusals hand back the needed file content in the same response to save a round-trip; `create_file` refuses all-lowercase titles and adopts an existing source page on re-ingest of the same raw file.
 
 ### `system_prompt()` and `LOBOTOMY.md`
 
 `agent.py:system_prompt()` reads `LOBOTOMY.md` as the LLM's operating schema and appends a tool quick-reference table. The LLM operating instructions (ingest workflow, query workflow, page format, naming conventions, etc.) all live in `LOBOTOMY.md`, not here.
+
+**A guard added in code needs a matching line in `LOBOTOMY.md`.** Discovering a rule by
+refusal costs a round; reading it in the schema costs nothing.
 
 ## Key Conventions
 
 - **`raw/` is immutable for the LLM** — code in `_update_file` blocks the LLM from writing outside `wiki/`. Raw source files live flat in `raw/` (no subdirectories). `serve.py` manages their lifecycle via `_mark_inbox_wikified`.
 - **`wiki/log.md` is append-only** — written by `_auto_write_log_entry` at `done()`; `update_file` refuses it.
 - **No `[[wikilink]]` syntax** — standard relative markdown links only.
-- **`create_file` for new pages, `update_file` for existing ones** — `create_file` auto-fills `created`/`updated`; `update_file` restores system-owned fields from disk.
+- **`create_file` for new pages, `update_file` for existing ones** — `create_file` auto-fills `created`/`updated`; `update_file` restores system-owned fields (`created`, `raw_source`, `type`) from disk.
+- **Headings are plain text.** No links in them, no dates naming the section, no heading repeating the page's own title.
 - Internal wiki links use paths relative to the page's location: `../entities/foo.md` from `wiki/sources/`.
 - File names: `lowercase-hyphenated-slugs.md`. Source slugs encode `{author-or-org}-{year}-{short-title}`.
 - The `## Sources` section in entity/concept pages is auto-generated from frontmatter — never write it manually.
+
+## Tests
+
+```sh
+python3 tools/tests/run_autolink_cases.py out.json   # autolinker corpus -> JSON, for eyeballing
+```
+
+**Current coverage is the autolinker and nothing else.** `docs/test-plan.md` specifies the
+suite this repo should have — stdlib `unittest`, a `TempWiki` harness that resets all three
+kinds of module state above, and a case table per guard. Implement that before making
+further changes to the write paths; they are now interlocking enough that a change to one
+guard routinely lands in another.
+
+Until it exists, verify an autolinker-adjacent change by capturing the corpus output
+before and after and diffing — it should be byte-identical unless the change is meant to
+alter linking.
 
 ## Config Structure
 
@@ -102,10 +218,15 @@ Guardrails enforced in code (not just in LOBOTOMY.md — instructions alone prov
               "providers": { "gemini": { "api_key": "...", "model": "...",
                                          "fallback_models": ["..."] } },
               "max_retries": 6, "retry_poll_interval": 300, "daily_quota_poll_interval": 1800,
-              "max_rpm": 15, "inter_request_delay": 5 },
+              "max_rpm": 15, "inter_request_delay": 5, "max_tokens": 16384 },
   "email":  { "resend_api_key": "...", "from_address": "..." }
 }
 ```
+
+`max_tokens` (default 16384) is also the model's output budget, and the write paths derive
+a whole-page-rewrite threshold from it — a page whose rewrite would exceed roughly half the
+budget is steered to the section tools, because the model silently condenses rather than
+failing loudly when it runs out of room.
 
 LLM providers use OpenAI-compatible APIs. The `agent.py:PROVIDERS` dict maps provider names to base URLs and default models. Provider config can also override `api_base` and `model` per-provider inside `config.json`.
 

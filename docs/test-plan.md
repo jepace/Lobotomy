@@ -18,7 +18,12 @@ Read `CLAUDE.md` first for the architecture, then this.
    This codebase has a documented history of the same defect returning in a new place.
 3. **One command runs everything and exits non-zero on failure.** Today verification is
    nine scripts run by hand and a JSON diff eyeballed by a human.
-4. **Fast enough to run on every change** — the whole suite under 10 seconds.
+4. **Correct before quick.** There is no runtime budget. If a case needs a 9,000-page
+   wiki to be meaningful, build one. Do not weaken a test, share fixtures between tests,
+   or skip a slow case to save seconds — a suite that is fast because it checks less is
+   the failure mode this is meant to replace. If it ends up slow enough to discourage
+   running, say so and we will split it into a fast tier and a full tier; do not solve
+   that by cutting coverage.
 
 ### Non-goals
 
@@ -42,26 +47,57 @@ Read `CLAUDE.md` first for the architecture, then this.
 
 ## 3. Layout
 
+**Prefer many small files over few large ones.** One file per behavior area, named after
+the behavior. A reader who wants to know how dated headings are handled should find
+`test_date_qualifiers.py` and read the whole thing in one screen; if a file grows past
+roughly 200 lines or starts covering two unrelated rules, split it again. Discovery finds
+them all either way, and a failure names the file, so the filename is the first line of
+the diagnosis.
+
 ```
 tools/tests/
   __init__.py
-  harness.py                  the shared fixture — read this section carefully
-  autolink_cases.py           EXISTING — the 30-case corpus, unchanged
-  autolink_baseline.json      NEW — committed expected output
-  test_autolink.py            NEW — golden-file test over the corpus
-  test_heading_rules.py       NEW
-  test_openers.py             NEW
-  test_date_qualifiers.py     NEW
-  test_timeline.py            NEW
-  test_read_path.py           NEW
-  test_repairs.py             NEW
-  test_regressions.py         NEW
-  run_all.py                  NEW — entry point
+  harness.py                        the shared fixture — read section 4 carefully
+  run_all.py                        entry point
+
+  autolink_cases.py                 EXISTING — the 30-case corpus, unchanged
+  autolink_baseline.json            NEW — committed expected output
+  test_autolink_golden.py           corpus vs baseline
+  test_autolink_caches.py           map determinism, cache invalidation, no_autolink
+
+  test_heading_titles.py            a section may not repeat the page title
+  test_heading_dates.py             a section may not be named after a date
+  test_heading_links.py             a heading may not contain a markdown link
+  test_heading_duplicates.py        no heading twice on a page
+  test_heading_delta.py             update paths refuse only what the edit introduces
+
+  test_openers_required.py          entity needs Overview, concept needs Definition
+  test_openers_absorbed.py          the Definition <-> Overview swap is renamed, not refused
+
+  test_date_qualifiers_strip.py     trailing dates dropped
+  test_date_qualifiers_refuse.py    leading dates, collisions, page-title collisions
+
+  test_timeline_ordering.py         chronological insertion, partial dates, ties
+  test_timeline_validation.py       future dates, bad dates, duplicates, echoed bullets
+  test_timeline_placement.py        section created before Sources, prose preserved
+
+  test_read_outline.py              over-limit wiki pages return an outline
+  test_read_paging.py               the offset sentinel and full read coverage
+  test_read_coverage.py             read-before-write bookkeeping
+
+  test_repair_unlink_headings.py
+  test_repair_heal_pages.py
+  test_repair_links.py
+
+  test_regression_*.py              one file per fixed bug — see section 5
 ```
 
 `run_autolink_cases.py` stays as a **developer tool** for inspecting what the autolinker
-does to the corpus (it dumps JSON for eyeballing). `test_autolink.py` is the automated
-check. Do not delete the former; it is how you regenerate the baseline.
+does to the corpus (it dumps JSON for eyeballing). `test_autolink_golden.py` is the
+automated check. Do not delete the former; it is how you regenerate the baseline.
+
+The tables in section 5 are grouped by area rather than by file; split each group across
+the files above as the names suggest.
 
 ---
 
@@ -220,9 +256,13 @@ Generate the baseline once with `run_autolink_cases.py` and commit it. Document 
 `tools/README.md`: when a change is *meant* to alter linking, regenerate the baseline and
 the diff is the review artifact.
 
-### `test_regressions.py` — one test per bug already fixed
+### Regressions — one **file** per bug already fixed
 
-Name each after the defect so a failure explains itself.
+`test_regression_<short_name>.py`, each containing the one test plus a docstring saying
+what broke, how it was found, and what it cost. These are the highest-value files here:
+every one of them is a bug that shipped, and several are the same class of defect
+reappearing somewhere new. A failure should explain itself without anyone digging through
+git history.
 
 - `test_update_file_writes_the_body_it_validated` — it patched the check variable, not the
   content it wrote.
@@ -279,9 +319,9 @@ Add a `## Tests` section to `tools/README.md` documenting the command, the
 1. `python3 tools/tests/run_all.py` exits 0 on a clean checkout.
 2. Every table row in section 5 has a corresponding test.
 3. Each guard, when disabled, turns at least one test red (section 7, last bullet).
-4. Whole suite runs in under 10 seconds.
-5. No test reads or writes the repo's own `wiki/` or `raw/`.
-6. `tools/README.md` documents how to run it and how to regenerate the baseline.
+4. No test reads or writes the repo's own `wiki/` or `raw/`.
+5. `tools/README.md` documents how to run it and how to regenerate the baseline.
+6. The run prints its own wall-clock time, so the cost is visible rather than guessed at.
 
 ## 9. Out of scope
 
