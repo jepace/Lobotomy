@@ -1,0 +1,122 @@
+{
+  "simple": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nThe case was heard in [Monterey County](../entities/monterey-county.md) last year.\n"
+  },
+  "all_occurrences": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[Meta](../entities/meta.md) said X. Later, [Meta](../entities/meta.md) said Y. [Meta](../entities/meta.md) again.\n"
+  },
+  "existing_link_untouched": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nSee [Meta](../entities/meta.md) for details, and [Meta](../entities/meta.md) again.\n"
+  },
+  "no_nesting_other_link": {
+    "message": "Autolink: no changes in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nRead [about Meta here](https://example.com/meta) please.\n"
+  },
+  "partial_link_upgrade": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[CASA of Monterey County](../entities/casa-of-monterey-county.md) filed suit.\n"
+  },
+  "overlapping_titles": {
+    "message": "Autolinked 2 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[CASA of Monterey County](../entities/casa-of-monterey-county.md) filed in [Monterey County](../entities/monterey-county.md) court.\n"
+  },
+  "overlapping_reverse": {
+    "message": "Autolinked 2 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[CASA of Monterey County](../entities/casa-of-monterey-county.md) filed in [Monterey County](../entities/monterey-county.md) court.\n"
+  },
+  "case_insensitive": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[monterey county](../entities/monterey-county.md) and [MONTEREY COUNTY](../entities/monterey-county.md) and [Monterey County](../entities/monterey-county.md).\n"
+  },
+  "word_boundary": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nMetadata is not [Meta](../entities/meta.md). Metaphor. [Meta](../entities/meta.md)'s thing. premeta.\n"
+  },
+  "headings_skipped": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n# Meta\n\n## About Meta\n\n[Meta](../entities/meta.md) did a thing.\n\n### Meta again\n\nAnd [Meta](../entities/meta.md).\n"
+  },
+  "regex_special_chars": {
+    "message": "Autolinked 3 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[PG&E](../entities/pg-e.md) and [C++](../entities/c.md) and [AT&T](../entities/at-t.md) were named. [PG&E](../entities/pg-e.md) again.\n"
+  },
+  "aliases": {
+    "message": "Autolinked 3 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[PG&E](../entities/pacific-gas-and-electric-company.md) did it. [Pacific Gas and Electric Company](../entities/pacific-gas-and-electric-company.md) confirmed. [the utility](../entities/pacific-gas-and-electric-company.md) agreed.\n"
+  },
+  "no_autolink_excluded": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nMeta and [Canada](../entities/canada.md) were mentioned.\n"
+  },
+  "self_page_excluded": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nTarget Page should not link to itself but [Meta](../entities/meta.md) should link.\n"
+  },
+  "punctuation_adjacent": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[Meta](../entities/meta.md). [Meta](../entities/meta.md), [Meta](../entities/meta.md); ([Meta](../entities/meta.md)) [[Meta](../entities/meta.md)] \"[Meta](../entities/meta.md)\" '[Meta](../entities/meta.md)' [Meta](../entities/meta.md)!\n"
+  },
+  "multiword_spacing": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[Mark Carney](../entities/mark-carney.md) spoke. [Mark  Carney](../entities/mark-carney.md) with two spaces. [Mark\tCarney](../entities/mark-carney.md) with tab.\n"
+  },
+  "across_lines": {
+    "message": "Autolink: no changes in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nThe prime minister Mark\nCarney said something.\n"
+  },
+  "title_in_url": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nSee https://example.com/[meta](../entities/meta.md)/page and [Meta](../entities/meta.md) here.\n"
+  },
+  "title_inside_link_text": {
+    "message": "Autolink: no changes in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[The Monterey County Herald](https://example.com) reported it.\n"
+  },
+  "from_sources_subdir": {
+    "message": "Autolinked 1 title(s) in alwiki/sources/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[Meta](../entities/meta.md) was mentioned in this source.\n"
+  },
+  "from_synthesis_subdir": {
+    "message": "Autolinked 1 title(s) in alwiki/synthesis/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[Meta](../entities/meta.md) appears in this synthesis.\n"
+  },
+  "empty_body": {
+    "message": "Autolink: no changes in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n\n"
+  },
+  "frontmatter_untouched": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nBody mentions [Meta](../entities/meta.md) once.\n"
+  },
+  "adjacent_links": {
+    "message": "Autolinked 2 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[Meta](../entities/meta.md)[Canada](../entities/canada.md) and [Meta](../entities/meta.md) [Canada](../entities/canada.md).\n"
+  },
+  "three_word_partial": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[Bank of Canada](../entities/bank-of-canada.md) raised rates. [Bank](../entities/bank.md) of Canada too.\n"
+  },
+  "repeated_partial": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[CASA of Monterey County](../entities/casa-of-monterey-county.md) and [CASA of Monterey County](../entities/casa-of-monterey-county.md).\n"
+  },
+  "title_is_substring_word": {
+    "message": "Autolinked 2 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[Canada Post](../entities/canada-post.md) delivers in [Canada](../entities/canada.md).\n"
+  },
+  "hyphenated": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[Canada-US Relations](../entities/canada-us-relations.md) worsened. [canada-us relations](../entities/canada-us-relations.md) too.\n"
+  },
+  "numeric_title": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nThe [2026 Midterms](../entities/2026-midterms.md) approach.\n"
+  },
+  "apostrophe_title": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[Moody's](../entities/moody-s.md) downgraded it. [Moody's](../entities/moody-s.md) again.\n"
+  }
+}

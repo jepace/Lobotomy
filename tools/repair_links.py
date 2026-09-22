@@ -48,26 +48,13 @@ import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import agent
 from agent import _atomic_write
-
-WIKI_DIR = Path(__file__).resolve().parent.parent / "wiki"
-RAW_DIR  = Path(__file__).resolve().parent.parent / "raw"
-HISTORY_DIR = WIKI_DIR / ".history"
-DRY_RUN  = "--dry-run" in sys.argv
-
-
-def _wiki_pages():
-    """wiki/**/*.md, skipping wiki/.history/ — those are saved revisions, not live
-    pages, and rewriting one would defeat the point of keeping it as a record."""
-    for f in sorted(WIKI_DIR.rglob("*.md")):
-        try:
-            f.relative_to(HISTORY_DIR)
-        except ValueError:
-            yield f
 
 # --- Fix 1: nested/double-linked patterns -----------------------------------
 
-nested_re = re.compile(r'\[([^\]]+)\]\(([^)]*\[[^\]]*\][^)]*)\)')
+_NESTED_RE = re.compile(r'\[([^\]]+)\]\(([^)]*\[[^\]]*\][^)]*)\)')
+
 
 def _repair_nested(m):
     link_text = m.group(1)
@@ -83,9 +70,10 @@ def _repair_nested(m):
 # Matches any markdown link whose target doesn't start with http/# and
 # resolves to a non-existent file.
 
-link_re = re.compile(r'\[([^\]]*)\]\(([^)]+)\)')
+_LINK_RE = re.compile(r'\[([^\]]*)\]\(([^)]+)\)')
 
-def _repair_path(page: Path, link_path: str) -> str | None:
+
+def _repair_path(page: Path, link_path: str, wiki_dir: Path, raw_dir: Path) -> "str | None":
     """
     Given a link path that doesn't resolve from `page`, try to find the
     correct relative path by locating the filename anywhere in wiki/.
@@ -109,8 +97,7 @@ def _repair_path(page: Path, link_path: str) -> str | None:
     if not filename.endswith(".md") and not filename.endswith(".txt"):
         return None
 
-    RAW_DIR = WIKI_DIR.parent / "raw"
-    matches = list(WIKI_DIR.rglob(filename)) + list(RAW_DIR.glob(filename))
+    matches = list(wiki_dir.rglob(filename)) + list(raw_dir.glob(filename))
     if len(matches) == 1:
         correct_rel = Path(os.path.relpath(matches[0], page.parent))
         return str(correct_rel) + fragment
@@ -129,7 +116,7 @@ def _repair_path(page: Path, link_path: str) -> str | None:
 # entangled with capture-time concerns this pass does not want. (The module is imported
 # either way now, for _atomic_write.)
 
-_reader_re = re.compile(r"about:reader\?url=[^\s\"'<>)\]]+", re.IGNORECASE)
+_READER_RE = re.compile(r"about:reader\?url=[^\s\"'<>)\]]+", re.IGNORECASE)
 
 
 def _unwrap_reader(match: "re.Match") -> str:
@@ -139,62 +126,95 @@ def _unwrap_reader(match: "re.Match") -> str:
     return inner if inner.startswith(("http://", "https://")) else wrapper
 
 
-fixed_files = fixed_links = 0
+def _wiki_pages(wiki_dir: Path, history_dir: Path):
+    """wiki/**/*.md, skipping wiki/.history/ — those are saved revisions, not live
+    pages, and rewriting one would defeat the point of keeping it as a record."""
+    for f in sorted(wiki_dir.rglob("*.md")):
+        try:
+            f.relative_to(history_dir)
+        except ValueError:
+            yield f
 
-for f in _wiki_pages():
-    try:
-        text = f.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        continue
 
-    # Pass 1: nested links
-    new_text, n1 = nested_re.subn(_repair_nested, text)
+def repair_links(dry_run: bool = False) -> dict:
+    """Run all three repair passes over the wiki (and raw/ for the reader-URL unwrap).
 
-    # Pass 2: wrong relative paths
-    count = [0]
-    def _path_replacer(m, _page=f, _count=count):
-        display   = m.group(1)
-        link_path = m.group(2)
-        fixed     = _repair_path(_page, link_path)
-        if fixed:
-            _count[0] += 1
-            return f"[{display}]({fixed})"
-        return m.group(0)
+    Reads agent.WIKI_DIR / agent.RAW_DIR / agent.HISTORY_DIR at call time rather than
+    capturing them as defaults — the same "resolve at call time, not at import" rule
+    wiki_pages() learned the hard way (see CLAUDE.md "Module state"), so a test harness
+    that rebinds those globals to a throwaway wiki is actually honored here instead of
+    silently repairing the real one.
 
-    new_text = link_re.sub(_path_replacer, new_text)
-    n2 = count[0]
+    Returns {"fixed_files": int, "fixed_links": int, "detail": [str, ...]}.
+    """
+    wiki_dir = agent.WIKI_DIR
+    raw_dir = agent.RAW_DIR
+    history_dir = agent.HISTORY_DIR
 
-    # Pass 3: unwrap about:reader?url= anywhere in the file (frontmatter url: and the
-    # rendered ## Sources link alike). subn()'s count is safe here: _reader_re only
-    # matches actual wrappers, unlike link_re which matches every link.
-    new_text, n3 = _reader_re.subn(_unwrap_reader, new_text)
+    fixed_files = 0
+    fixed_links = 0
+    detail = []
 
-    total = n1 + n2 + n3
-    if total:
-        fixed_links += total
-        fixed_files += 1
-        rel = f.relative_to(WIKI_DIR)
-        if DRY_RUN:
-            print(f"  [dry-run] {rel}: would fix {total} ({n1} nested, {n2} bad-path, {n3} reader-url)")
-        else:
-            _atomic_write(f, new_text)
-            print(f"  {rel}: fixed {total} ({n1} nested, {n2} bad-path, {n3} reader-url)")
+    for f in _wiki_pages(wiki_dir, history_dir):
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
 
-# raw/ carries the same bad url: frontmatter from capture — link repair does not apply
-# there (raw files have no wiki links), only the reader-URL unwrap.
-for f in sorted(RAW_DIR.glob("*.md")) if RAW_DIR.is_dir() else []:
-    try:
-        text = f.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        continue
-    new_text, n = _reader_re.subn(_unwrap_reader, text)
-    if n:
-        fixed_links += n
-        fixed_files += 1
-        if DRY_RUN:
-            print(f"  [dry-run] raw/{f.name}: would fix {n} (reader-url)")
-        else:
-            _atomic_write(f, new_text)
-            print(f"  raw/{f.name}: fixed {n} (reader-url)")
+        # Pass 1: nested links
+        new_text, n1 = _NESTED_RE.subn(_repair_nested, text)
 
-print(f"\n{'[dry-run] ' if DRY_RUN else ''}Repaired {fixed_links} links across {fixed_files} files.")
+        # Pass 2: wrong relative paths
+        count = [0]
+
+        def _path_replacer(m, _page=f, _count=count):
+            display   = m.group(1)
+            link_path = m.group(2)
+            fixed     = _repair_path(_page, link_path, wiki_dir, raw_dir)
+            if fixed:
+                _count[0] += 1
+                return f"[{display}]({fixed})"
+            return m.group(0)
+
+        new_text = _LINK_RE.sub(_path_replacer, new_text)
+        n2 = count[0]
+
+        # Pass 3: unwrap about:reader?url= anywhere in the file (frontmatter url: and the
+        # rendered ## Sources link alike). subn()'s count is safe here: _READER_RE only
+        # matches actual wrappers, unlike _LINK_RE which matches every link.
+        new_text, n3 = _READER_RE.subn(_unwrap_reader, new_text)
+
+        total = n1 + n2 + n3
+        if total:
+            fixed_links += total
+            fixed_files += 1
+            rel = f.relative_to(wiki_dir)
+            detail.append(f"{rel}: fixed {total} ({n1} nested, {n2} bad-path, {n3} reader-url)")
+            if not dry_run:
+                _atomic_write(f, new_text)
+
+    # raw/ carries the same bad url: frontmatter from capture — link repair does not apply
+    # there (raw files have no wiki links), only the reader-URL unwrap.
+    for f in sorted(raw_dir.glob("*.md")) if raw_dir.is_dir() else []:
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        new_text, n = _READER_RE.subn(_unwrap_reader, text)
+        if n:
+            fixed_links += n
+            fixed_files += 1
+            detail.append(f"raw/{f.name}: fixed {n} (reader-url)")
+            if not dry_run:
+                _atomic_write(f, new_text)
+
+    return {"fixed_files": fixed_files, "fixed_links": fixed_links, "detail": detail}
+
+
+if __name__ == "__main__":
+    DRY_RUN = "--dry-run" in sys.argv
+    result = repair_links(dry_run=DRY_RUN)
+    for line in result["detail"]:
+        print(f"  {'[dry-run] ' if DRY_RUN else ''}{line}")
+    print(f"\n{'[dry-run] ' if DRY_RUN else ''}Repaired {result['fixed_links']} links "
+          f"across {result['fixed_files']} files.")
