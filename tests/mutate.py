@@ -14,8 +14,8 @@ heading guard and the read_file dispatch layer came to be uncovered.
 agent.py is restored afterwards, including on Ctrl-C or a crash. Nothing else is touched;
 this only ever writes to agent.py and only inside the repo it is run from.
 
-    python3 tools/tests/mutate.py            # all mutations
-    python3 tools/tests/mutate.py timeline   # only mutations whose name matches
+    python3 tests/mutate.py            # all mutations
+    python3 tests/mutate.py timeline   # only mutations whose name matches
 
 Add a mutation whenever you add a guard. If you cannot write one that the suite catches,
 the guard is untested.
@@ -24,9 +24,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent.parent
+REPO = Path(__file__).resolve().parent.parent
 AGENT = REPO / "tools" / "agent.py"
-RUNNER = REPO / "tools" / "tests" / "run_all.py"
+RUNNER = REPO / "tests" / "run_all.py"
 
 # (name, find, replace) — `find` must appear exactly once in agent.py, or the mutation is
 # reported as STALE rather than silently skipped: an anchor that stopped matching means

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Entry point for the test suite. Runs unittest discovery over tools/tests/, prints a
+"""Entry point for the test suite. Runs unittest discovery over tests/, prints a
 one-line summary per module and a final pass/fail, and exits non-zero on any failure.
 
-    python3 tools/tests/run_all.py                 # everything
-    python3 tools/tests/run_all.py test_timeline    # just tools/tests/test_timeline.py
+    python3 tests/run_all.py                 # everything
+    python3 tests/run_all.py test_timeline    # just tests/test_timeline.py
 
 config.json must exist for agent.py to import at all (see harness.py's _ensure_config,
 which runs before anything here imports agent) — this copies config.json.example if no

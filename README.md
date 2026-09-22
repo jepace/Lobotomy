@@ -238,6 +238,7 @@ tools/
   lint.sh               Shell-based broken-link checker
   templates/            HTML templates for the web server
   README.md             What every tool here does, with sample command lines
+tests/                  Test suite (stdlib unittest; python3 tests/run_all.py)
 contrib/freebsd/rc.d/   FreeBSD service script
 docs/api.md             Push API documentation
 LOBOTOMY.md             LLM operating instructions (the schema)

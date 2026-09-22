@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import TempWikiTestCase
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import agent
 
 
@@ -28,7 +28,10 @@ class WikiPagesHonoursReboundWikiDir(TempWikiTestCase):
         self.assertEqual(pages, [p])
 
     def test_wiki_pages_never_sees_the_real_repo_wiki(self):
-        real_wiki = Path(__file__).resolve().parent.parent.parent / "wiki"
+        real_wiki = Path(__file__).resolve().parent.parent / "wiki"
+        self.assertTrue(real_wiki.is_dir(),
+                        f"{real_wiki} is not the repo's wiki — this assertion would pass "
+                        f"against a path that does not exist, proving nothing")
         for p in agent.wiki_pages():
             self.assertNotEqual(p.resolve().parent.parent, real_wiki.resolve(),
                                  f"wiki_pages() returned a page from the real repo: {p}")

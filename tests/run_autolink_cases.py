@@ -8,9 +8,9 @@ This runs a corpus of tricky inputs through _autolink in a throwaway wiki and du
 results. Capture a baseline before a change, compare after; the outputs should be
 byte-identical unless the change is meant to alter behavior.
 
-    python3 tools/tests/run_autolink_cases.py before.json
+    python3 tests/run_autolink_cases.py before.json
     # ...make the change...
-    python3 tools/tests/run_autolink_cases.py after.json
+    python3 tests/run_autolink_cases.py after.json
     diff before.json after.json
 """
 import json
@@ -18,7 +18,7 @@ import shutil
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 sys.path.insert(0, str(Path(__file__).parent))
 import agent
 from autolink_cases import CASES

@@ -23,7 +23,7 @@ import time
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 
 def _ensure_config():
@@ -31,7 +31,7 @@ def _ensure_config():
     missing. The test suite must run on a clean checkout where only config.json.example
     exists, so this has to happen BEFORE agent (and therefore config) is ever imported —
     copying the example is enough, since no test here ever makes a real LLM call."""
-    repo_root = Path(__file__).resolve().parent.parent.parent
+    repo_root = Path(__file__).resolve().parent.parent
     cfg = repo_root / "config.json"
     example = repo_root / "config.json.example"
     if not cfg.exists() and example.exists():

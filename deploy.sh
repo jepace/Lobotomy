@@ -65,10 +65,10 @@ RSYNC_ARGS="$RSYNC_ARGS --exclude=/deploy.sh"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=/README.md"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=/CLAUDE.md"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=server.log*"
-# Tests stay on the development host. tools/tests/mutate.py in particular edits agent.py
+# Tests stay on the development host. tests/mutate.py in particular edits agent.py
 # in place to check that the suite notices a broken guard, which is the last thing that
 # should exist beside a running server.
-RSYNC_ARGS="$RSYNC_ARGS --exclude=/tools/tests/"
+RSYNC_ARGS="$RSYNC_ARGS --exclude=/tests/"
 RSYNC_ARGS="$RSYNC_ARGS --exclude=/usr/"
 
 # Exclude data dirs if not full deploy

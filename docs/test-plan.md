@@ -2,7 +2,8 @@
 
 A plan for a real test suite for Lobotomy, written to be implemented in one pass.
 
-Today `tools/tests/` holds two files, both about the autolinker. Everything else —
+Today `tools/tests/` holds two files, both about the autolinker.
+(The suite was built from this and now lives at `tests/` in the repo root.) Everything else —
 the write-path guards, the section tools, the timeline, the read path, the repair
 passes — has no automated coverage at all. This document specifies what to build.
 
@@ -55,7 +56,7 @@ them all either way, and a failure names the file, so the filename is the first 
 the diagnosis.
 
 ```
-tools/tests/
+tests/
   __init__.py
   harness.py                        the shared fixture — read section 4 carefully
   run_all.py                        entry point
@@ -280,16 +281,16 @@ git history.
 
 ## 6. Entry point
 
-`tools/tests/run_all.py`:
+`tests/run_all.py`:
 
-- Runs `unittest` discovery over `tools/tests/`.
+- Runs `unittest` discovery over `tests/`.
 - Prints a one-line summary per module and a final pass/fail.
 - **Exits 0 on success, 1 on any failure.**
 - Takes an optional module name to run one file.
 
 ```sh
-python3 tools/tests/run_all.py
-python3 tools/tests/run_all.py test_timeline
+python3 tests/run_all.py
+python3 tests/run_all.py test_timeline
 ```
 
 Add a `## Tests` section to `tools/README.md` documenting the command, the
@@ -316,7 +317,7 @@ Add a `## Tests` section to `tools/README.md` documenting the command, the
 
 ## 8. Definition of done
 
-1. `python3 tools/tests/run_all.py` exits 0 on a clean checkout.
+1. `python3 tests/run_all.py` exits 0 on a clean checkout.
 2. Every table row in section 5 has a corresponding test.
 3. Each guard, when disabled, turns at least one test red (section 7, last bullet).
 4. No test reads or writes the repo's own `wiki/` or `raw/`.

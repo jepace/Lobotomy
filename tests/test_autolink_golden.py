@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from harness import TempWiki
 from autolink_cases import CASES
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import agent
 
 BASELINE = Path(__file__).parent / "autolink_baseline.json"
@@ -27,7 +27,7 @@ class AutolinkGoldenTest(unittest.TestCase):
         if not BASELINE.exists():
             raise unittest.SkipTest(
                 f"{BASELINE} missing — generate it with "
-                f"'python3 tools/tests/run_autolink_cases.py tools/tests/autolink_baseline.json'")
+                f"'python3 tests/run_autolink_cases.py tests/autolink_baseline.json'")
         cls.baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
 
     def _run_case(self, pages, target_subdir, body):

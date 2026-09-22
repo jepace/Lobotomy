@@ -200,12 +200,13 @@ refusal costs a round; reading it in the schema costs nothing.
 ## Tests
 
 ```sh
-python3 tools/tests/run_all.py              # everything; exits non-zero on failure
-python3 tools/tests/run_all.py test_timeline  # one module
-python3 tools/tests/mutate.py               # break each guard, check a test notices
+python3 tests/run_all.py              # everything; exits non-zero on failure
+python3 tests/run_all.py test_timeline  # one module
+python3 tests/mutate.py               # break each guard, check a test notices
 ```
 
-`run_all.py` is stdlib `unittest` over `tools/tests/`, built on a `TempWiki` harness that
+`run_all.py` is stdlib `unittest` over `tests/` (repo root — the suite covers the
+whole project, not just `tools/`), built on a `TempWiki` harness that
 rebinds all four module globals, resets the thread-local session context, clears the
 autolinker caches, and asserts its own isolation. Nothing there touches the repo's real
 `wiki/` or `raw/`.
@@ -216,7 +217,7 @@ mutation must report CAUGHT. Add one whenever you add a guard — if you cannot 
 mutation the suite catches, the guard is untested. It edits `agent.py` in place and
 restores it, so do not run it anywhere near a live server.
 
-`deploy.sh` excludes `tools/tests/` from what it ships — tests belong where the code is
+`deploy.sh` excludes `tests/` from what it ships — tests belong where the code is
 changed, and `mutate.py` must never sit beside a running server. It does not run them
 either: deploy copies files and nothing else. Run the suite yourself before deploying.
 
