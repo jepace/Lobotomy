@@ -154,6 +154,23 @@ python3 tools/rebuild_sources.py wiki/entities/foo.md  # one page
 python3 tools/rebuild_sources.py --index               # regenerate wiki/index.md instead
 ```
 
+### `section_inventory.py` — what headings the wiki actually uses
+`LOBOTOMY.md` gives a template per page type, but nothing enforces it outside source
+pages, so what the wiki really contains has only been guessable. This counts it: the most
+used headings per type, how many are one-offs, and four specific smells — a heading the
+template does not list, a section named after its own page, one naming a date or single
+event, and an entity with no Overview (or concept with no Definition).
+
+Run it before deciding what to constrain: a heading on 400 pages is part of the
+vocabulary whether the template names it or not; one on two pages is drift.
+
+```sh
+python3 tools/section_inventory.py            # summary
+python3 tools/section_inventory.py --pages    # name the pages behind each smell
+```
+
+Report-only.
+
 ### `find_duplicate_pages.py` — find one subject split across several pages
 Reports pages whose titles normalize to the same thing — "Pacific Gas and Electric
 Company", "Pacific Gas & Electric Co." and "Pacific Gas & Electric" are one utility with
