@@ -241,6 +241,28 @@ sh tools/lint.sh          # note: sh, not python3
 
 ## Tests
 
+### `tests/run_all.py` — the test suite
+Real automated coverage for the write-path guards, the section tools, the timeline, the
+read path, and the non-LLM repair passes — everything `docs/test-plan.md` specifies.
+Standard-library `unittest` only; no network, no LLM, no clock dependence, and no test
+here ever reads or writes the repo's own `wiki/` or `raw/` — every test builds a throwaway
+wiki via `tests/harness.py`'s `TempWiki`.
+
+```sh
+python3 tools/tests/run_all.py                 # everything; exits 0 on success, 1 on failure
+python3 tools/tests/run_all.py test_timeline    # just tools/tests/test_timeline.py
+```
+
+`config.json` still has to exist for `agent.py` to import at all — `run_all.py` copies
+`config.json.example` automatically if no `config.json` is present, same as every other
+tool here. No test makes a real LLM call.
+
+`tests/harness.py` is the part that matters most if you're adding a test: `agent.py` hides
+state in three places (module globals, a thread-local session, and the autolinker's
+title-map caches), and a test that misses one of them can pass while testing nothing. Read
+its docstring before writing a new test file, and build every fixture through its `TempWiki`
+class rather than touching `agent.py`'s globals directly.
+
 ### `tests/run_autolink_cases.py` — autolinker characterization harness
 The autolinker is the most bug-prone code in the project: its matching rules are subtle
 (link every occurrence, never inside an existing link, upgrade a partial link to the longer
@@ -259,3 +281,12 @@ diff before.json after.json
 
 The corpus itself is `tests/autolink_cases.py`; add a case there when you find an edge the
 30 existing ones miss.
+
+`tests/test_autolink_golden.py` is the automated version of this same check — it runs the
+corpus in-process and fails with a readable diff against the committed
+`tests/autolink_baseline.json`. When a change is *meant* to alter linking, regenerate the
+baseline and commit it alongside the change:
+
+```sh
+python3 tools/tests/run_autolink_cases.py tools/tests/autolink_baseline.json
+```
