@@ -1047,6 +1047,19 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
     if not is_new:
         import datetime as _dt
         _disk_existing = p.read_text(encoding="utf-8", errors="replace")
+        # type: is restored from disk, not taken from the caller. It is validated in
+        # create_file and was checked nowhere afterwards, so a rewrite could put anything
+        # in it — which is how pages ended up typed "concept}EX_HEAT_CP" and "source,url:".
+        # A corrupt type is not cosmetic: _inject_sources_section renders the Sources
+        # section by it, and the index groups by it. A page's type also does not change,
+        # so there is nothing legitimate to take from the caller here.
+        _disk_type = _re.search(r"^type:[ \t]*(\S+)", _disk_existing, _re.MULTILINE)
+        if _disk_type:
+            _clean = _re.match(r"[A-Za-z][A-Za-z0-9_-]*", _disk_type.group(1))
+            _val = _clean.group(0).lower() if _clean else ""
+            if _val in _VALID_PAGE_TYPES:
+                content = _set_fm_field(content, "type", f"type: {_val}")
+
         for _field in ("created", "raw_source"):
             _disk_m = _re.search(r"^" + _field + r":[ \t]*\S.*", _disk_existing, _re.MULTILINE)
             if _disk_m:
@@ -2605,6 +2618,26 @@ def heal_pages(dry_run: bool = False) -> dict:
                 missing_core = [k for k in ("title", "type") if k not in keys]
                 if missing_core:
                     result["manual"].append(f"{rel}: missing {', '.join(missing_core)} (not auto-fillable)")
+                # A type: that picked up trailing junk — "concept}EX_HEAT_CP",
+                # "source,url:" — still has the real type at the front, because whatever
+                # corrupted it appended rather than replaced. Recoverable without
+                # guessing: take the leading identifier and keep it only if it is a real
+                # type. Anything else is left for a human, since inventing a page's type
+                # would be a guess.
+                _t = re.search(r"^type:[ \t]*(\S+)\s*$", fm.group(1), re.MULTILINE)
+                if _t and _t.group(1) not in _VALID_PAGE_TYPES:
+                    _lead = re.match(r"[A-Za-z][A-Za-z0-9_-]*", _t.group(1))
+                    _val = _lead.group(0).lower() if _lead else ""
+                    if _val in _VALID_PAGE_TYPES:
+                        log.info("heal_pages: %s had type %r — repairing to %r",
+                                 rel, _t.group(1), _val)
+                        new = _set_fm_field(new, "type", f"type: {_val}")
+                        n_fm += 1
+                    else:
+                        result["manual"].append(
+                            f"{rel}: type is {_t.group(1)!r}, not one of "
+                            f"{', '.join(sorted(_VALID_PAGE_TYPES))} (not auto-fillable)")
+
                 mtime = _dt.date.fromtimestamp(f.stat().st_mtime).isoformat()
                 for field, value in (("created", mtime), ("updated", mtime),
                                      ("tags", "[]"), ("sources", "[]")):

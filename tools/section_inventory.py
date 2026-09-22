@@ -15,6 +15,9 @@ It also flags four specific smells:
   off-template   a heading the page type's template does not list
   = page title   a section named after the page it is on ("Cybersecurity" on
                  cybersecurity.md) — the body of a page is not a section of itself
+  linked heading a heading containing a markdown link, e.g.
+                 "## [Atheism](../sources/atheism-wikipedia-2026.md)". Section tools match
+                 headings by text, so the link syntax makes the section hard to address
   dated          a heading naming a date or a single event ("Current Standing (May 2026)"),
                  which Step 5 forbids: it is a changelog entry wearing a heading, and the
                  next ingest adds another beside it
@@ -38,13 +41,18 @@ from agent import WIKI_DIR, wiki_pages, _norm_heading
 SHOW_PAGES = "--pages" in sys.argv
 HEAD_RE = re.compile(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", re.MULTILINE)
 
+# Exactly the headings LOBOTOMY.md section 3 lists, including the forms it writes with a
+# slash — "Key Works / Products" is one template heading offering a choice, so both halves
+# count as following it. Splitting them, as an earlier version did, reported 64 uses of a
+# heading the schema itself specifies as off-template and inflated the count badly.
 TEMPLATE = {
-    "entity":    ["Overview", "Background", "Key Works", "Products", "Claims & Positions",
-                  "Contradictions", "Sources"],
+    "entity":    ["Overview", "Background", "Key Works / Products", "Key Works", "Products",
+                  "Claims & Positions", "Contradictions", "Sources"],
     "concept":   ["Definition", "How It Works", "Origins & History", "Applications",
-                  "Variants & Related Concepts", "Contradictions", "Debates", "Sources"],
-    "synthesis": ["Question", "Thesis", "Evidence For", "Evidence Against",
-                  "Open Questions", "Sources"],
+                  "Variants & Related Concepts", "Contradictions / Debates",
+                  "Contradictions", "Debates", "Sources"],
+    "synthesis": ["Question / Thesis", "Question", "Thesis", "Evidence For",
+                  "Evidence Against", "Open Questions", "Sources"],
     "source":    ["Summary", "Claims", "Entities", "Concepts", "Quotes", "Context", "Sources"],
 }
 OPENER = {"entity": "Overview", "concept": "Definition"}
@@ -88,6 +96,8 @@ for p in wiki_pages():
             smells["off-template"].append((rel, f"{name}  [{ptype}]"))
         if DATED_RE.search(name):
             smells["dated"].append((rel, name))
+        if "](" in name:
+            smells["linked heading"].append((rel, name))
 
     want = OPENER.get(ptype)
     if want and _norm_heading(want) not in found:
@@ -107,7 +117,7 @@ for ptype in sorted(totals):
         print(f"  … and {onceonly} heading(s) used on exactly one page")
 
 print("\n=== smells ===")
-for smell in ("no opener", "= page title", "dated", "off-template"):
+for smell in ("no opener", "= page title", "linked heading", "dated", "off-template"):
     hits = smells[smell]
     if not hits:
         print(f"  {smell:14} none")
