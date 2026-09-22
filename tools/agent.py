@@ -1011,13 +1011,15 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
             f"content)."
         )
 
-    if len(_disk_body) >= 2000 and len(_new_body) < len(_disk_body) * 0.6 and not allow_shrink:
-        _pct = 100 - int(len(_new_body) / len(_disk_body) * 100)
-        log.warning("update_file: refused %s — body would shrink %d%% (%d -> %d chars)",
-                    path, _pct, len(_disk_body), len(_new_body))
+    _disk_cmp, _new_cmp_body = _unlinked_len(_disk_body), _unlinked_len(_new_body)
+    if _disk_cmp >= 2000 and _new_cmp_body < _disk_cmp * 0.6 and not allow_shrink:
+        _pct = 100 - int(_new_cmp_body / _disk_cmp * 100)
+        log.warning("update_file: refused %s — body would shrink %d%% (%d -> %d chars of prose)",
+                    path, _pct, _disk_cmp, _new_cmp_body)
         return (
             f"Error: update_file refused — this would cut the page body by {_pct}% "
-            f"({len(_disk_body)} chars on disk, {len(_new_body)} in what you sent). An ingest "
+            f"({_disk_cmp} chars of prose on disk, {_new_cmp_body} in what you sent; links "
+            f"are discounted). An ingest "
             f"adds a source's information to a page; it does not shorten it.\n\n"
             f"If you are folding in a new source, this is the wrong shape: work one "
             f"section at a time with read_section(path, section) then "
@@ -1063,11 +1065,11 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
         # restored from disk — but omitting it must not silently drop the field.
         if not _re.search(r"^updated:[ \t]*\S", content, _re.MULTILINE):
             content = _set_fm_field(content, "updated", f"updated: {_dt.date.today().isoformat()}")
-    if allow_shrink and len(_disk_body) >= 2000 and len(_new_body) < len(_disk_body) * 0.6:
+    if allow_shrink and _disk_cmp >= 2000 and _new_cmp_body < _disk_cmp * 0.6:
         log.warning("update_file: %s shrank %d%% (%d -> %d chars) with allow_shrink — "
                     "previous version is in wiki/.history if this was wrong",
-                    path, 100 - int(len(_new_body) / len(_disk_body) * 100),
-                    len(_disk_body), len(_new_body))
+                    path, 100 - int(_new_cmp_body / _disk_cmp * 100),
+                    _disk_cmp, _new_cmp_body)
     content = _strip_broken_wiki_links(content, p)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
@@ -1260,6 +1262,20 @@ def _match_index(body: str):
     return "".join(out), raw_at, link_at
 
 
+def _unlinked_len(text: str) -> int:
+    """Length of `text` with markdown link syntax reduced to its display words.
+
+    Size guards compare what is on the page against what the agent sent, and those two
+    are not written in the same notation: the page is autolinked, while the agent is
+    required to write plain text. At roughly 32 characters of "](../entities/slug.md)"
+    per link, a section with seventeen of them carries ~500 characters the agent's
+    version cannot have — so a faithful rewrite reads as a 17% cut, and a section with
+    enough links can trip a 40% guard without dropping a single word. Measuring both
+    sides unlinked compares the prose rather than the markup.
+    """
+    return len(_MD_LINK_RE.sub(r"\1", text))
+
+
 def _normalize_quote(s: str) -> str:
     """The same normalization applied to what the agent quoted."""
     return re.sub(r"\s+", " ", _MD_LINK_RE.sub(r"\1", s)).strip()
@@ -1431,10 +1447,11 @@ def _update_section(args: dict) -> str:
             f"below and is now marked as read. Merge your changes into it and call "
             f"update_section again.\n\n{heading}\n{old_text}"
         )
-    if len(old_text) >= 800 and len(new_text) < len(old_text) * 0.6:
-        _pct = 100 - int(len(new_text) / len(old_text) * 100)
-        log.warning("update_section: refused %s '%s' — would shrink %d%% (%d -> %d chars)",
-                    path, section, _pct, len(old_text), len(new_text))
+    _old_cmp, _new_cmp = _unlinked_len(old_text), _unlinked_len(new_text)
+    if _old_cmp >= 800 and _new_cmp < _old_cmp * 0.6:
+        _pct = 100 - int(_new_cmp / _old_cmp * 100)
+        log.warning("update_section: refused %s '%s' — would shrink %d%% (%d -> %d chars of prose)",
+                    path, section, _pct, _old_cmp, _new_cmp)
         # Two different situations, and one answer does not serve both.
         #
         # A section the model can reproduce should be merged, and the reason it failed is
@@ -1452,11 +1469,12 @@ def _update_section(args: dict) -> str:
         # output budget: a section that is a small fraction of what it can emit in one
         # response is one it can be expected to reproduce.
         _budget_chars = cfg_int("llm", "max_tokens", default=16384) * 4
-        if len(old_text) <= _budget_chars // 8:
+        if _old_cmp <= _budget_chars // 8:
             return (
                 f"Error: update_section refused — this would cut '{section}' by {_pct}% "
-                f"({len(old_text)} chars now, {len(new_text)} in what you sent). Folding in "
-                f"a new source should preserve what is already there.\n\n"
+                f"({_old_cmp} chars of prose now, {_new_cmp} in what you sent; links are "
+                f"discounted). Folding in a new source should preserve what is already "
+                f"there.\n\n"
                 f"This section is short enough to resend in full, so do that rather than "
                 f"appending: below is exactly what is on the page now. Merge your new "
                 f"material into THIS text — keep every existing claim — and call "
@@ -1464,11 +1482,11 @@ def _update_section(args: dict) -> str:
             )
         return (
             f"Error: update_section refused — this would cut '{section}' by {_pct}% "
-            f"({len(old_text)} chars now, {len(new_text)} in what you sent). Folding in a new "
-            f"source should preserve what is already there.\n\n"
+            f"({_old_cmp} chars of prose now, {_new_cmp} in what you sent; links are "
+            f"discounted). Folding in a new source should preserve what is already there.\n\n"
             f"If you can reproduce the section, resend it with your additions merged into "
             f"the existing text — that is the better result.\n\n"
-            f"If you cannot — at {len(old_text)} chars this section is long, and re-emitting "
+            f"If you cannot — at {_old_cmp} chars this section is long, and re-emitting "
             f"it in full is where that fails — then do NOT keep retrying a shortened "
             f"version: call append_section(path, section, text) with only the new material. "
             f"That adds it without touching what is already there. Retrying this call with "
@@ -1525,8 +1543,12 @@ def _update_section(args: dict) -> str:
     _ctx()._session_stale_pages.add(wiki_rel)
     _atomic_write(p, new_content)
     _autolink_now(p)
-    return (f"Rewrote '{section}' in {path} ({len(old_text)} -> {len(addition)} chars, "
-            f"page now {len(new_content)} bytes)")
+    # Prose lengths, and the size actually on disk. The old message compared the linked
+    # text on the page against the plain text sent, then quoted a page size taken before
+    # the autolink above had run — so a faithful rewrite looked like a steady shrink, and
+    # the byte count was never what the file weighed.
+    return (f"Rewrote '{section}' in {path} ({_old_cmp} -> {_unlinked_len(addition)} chars "
+            f"of prose, page now {p.stat().st_size} bytes)")
 
 
 def _append_section(args: dict) -> str:
