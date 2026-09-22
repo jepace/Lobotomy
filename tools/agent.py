@@ -285,7 +285,19 @@ def _read_file(path: str, offset: int = -1) -> "str | list":
         # usually one directory over: the page exists, under the same slug, filed as an
         # entity when it was looked for as a concept. Naming it costs a directory check
         # and saves a round.
-        return f"Error: not found: {path}.{_elsewhere_hint(p)}"
+        _hint = _elsewhere_hint(p)
+        if not _hint and p.suffix == ".md" and str(path).replace("\\", "/").startswith("wiki/"):
+            # No page here and none elsewhere, so this is a page that does not exist yet.
+            # Observed: lookup_titles put a name in its CREATE group, and the agent called
+            # read_file on it anyway before creating it — a whole round (~60s) spent
+            # learning that a page it had just been told to create was not there. The
+            # read-before-write rule is drilled hard enough that it gets applied to pages
+            # that do not exist, so say plainly that it does not apply here.
+            _hint = (" Nothing exists at that path, and nothing like it is filed elsewhere, "
+                     "so there is nothing to read. If this is a page you were told to "
+                     "CREATE, call create_file now — read_file is not a precondition for "
+                     "creating a page, only for updating one.")
+        return f"Error: not found: {path}.{_hint}"
     if not p.is_file():
         return f"Error: not a file: {path}"
     try:
@@ -3497,7 +3509,9 @@ def _lookup_titles(args: dict) -> str:
         lines += found
     if missing:
         lines += ["", f"CREATE ({len(missing)}) — these have no page. Call create_file for "
-                      f"each one:"]
+                      f"each one. Do NOT call read_file on them first: there is no file "
+                      f"there to read, and the read-before-write rule applies only to "
+                      f"pages that already exist:"]
         lines += missing
     lines += ["", "This answer is exact and covers aliases — do not call search_wiki to "
                   "double-check it."]
