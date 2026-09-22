@@ -147,7 +147,7 @@ before every `create_file` or `update_file` call.
 - Overview
 - Background
 - Key Works / Products *(people, organizations, projects)*
-- Claims & Positions *(anyone who holds positions)*
+- Positions *(anyone who states views: policy stances, public statements, advocacy)*
 - Contradictions *(if any)*
 - Sources *(auto-generated — do not write)*
 

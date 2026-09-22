@@ -3,7 +3,7 @@
 Report which section headings actually exist across the wiki, per page type.
 
 LOBOTOMY.md gives a template per page type — entity pages get Overview, Background,
-Key Works / Products, Claims & Positions, Contradictions, Sources — but nothing enforces
+Key Works / Products, Positions, Contradictions, Sources — but nothing enforces
 it except on source pages, so what the wiki really contains has only ever been guessable.
 This counts it.
 
@@ -57,7 +57,7 @@ TEMPLATE = {
     # "Timeline" is the unfolding-event template's accumulator, maintained by
     # add_timeline_entry — on-template for an entity page, not drift.
     "entity":    ["Overview", "Background", "Key Works / Products", "Key Works", "Products",
-                  "Claims & Positions", "Timeline", "Contradictions", "Sources"],
+                  "Positions", "Timeline", "Contradictions", "Sources"],
     "concept":   ["Definition", "How It Works", "Origins & History", "Applications",
                   "Variants & Related Concepts", "Contradictions / Debates",
                   "Contradictions", "Debates", "Sources"],

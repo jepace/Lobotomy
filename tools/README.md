@@ -159,6 +159,28 @@ Nothing is lost: the link target is still reachable from the prose under the hea
 `relink.py` re-links the subject there anyway. Every page changed goes through the normal
 write path, so it is revertable from that page's History view.
 
+### `rename_section.py` — collapse a cluster of synonymous headings into one name
+Section names are the wiki's vocabulary, and vocabulary drifts: one idea ends up under
+three names — "Claims & Positions" on 466 pages, "Positions" on 110, "Key Positions" on
+25 — and then neither a reader nor a tool can find all of it. `section_inventory.py` shows
+the clusters; this collapses one.
+
+```sh
+python3 tools/rename_section.py "Positions" \
+    --from "Claims & Positions" --from "Key Positions" --dry-run
+python3 tools/rename_section.py "Positions" \
+    --from "Claims & Positions" --from "Key Positions"
+```
+
+Matching ignores case, `&` vs `and`, and trailing punctuation, so "Claims and Positions:"
+is caught without being listed. Heading level is preserved.
+
+**Renaming into a name a page already has is a merge**, and merges need judgment. It
+applies the same ladder as `find_duplicate_sections.py` — one side empty, the two
+identical, or one containing the other — and lists anything else for you rather than
+guessing. Update the template in `LOBOTOMY.md` afterwards, or the next ingest writes the
+old name back.
+
 ### `promote_openers.py` — give pages the `## Overview` their template requires
 `create_file` requires an opener — `## Overview` on an entity, `## Definition` on a
 concept — and nothing adds one afterwards, so pages written before that check never

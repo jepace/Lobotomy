@@ -25,7 +25,7 @@ before adding another one.** The maintenance CLIs need no LLM and no API cost: `
 `relink.py` (the catch-up sweep that adds links to pages written before their subjects
 existed), `rename_page.py`, `unlink_headings.py`, `repair_links.py`,
 `repair_frontmatter.py`, `rebuild_sources.py`, `section_inventory.py`,
-`promote_openers.py`, `find_duplicate_pages.py`, `find_duplicate_sections.py`, and
+`promote_openers.py`, `rename_section.py`, `find_duplicate_pages.py`, `find_duplicate_sections.py`, and
 `lint.sh`.
 
 All of them go through `agent._atomic_write`, so their edits are recorded in page history

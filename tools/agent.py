@@ -1238,7 +1238,7 @@ def _norm_heading(s: str) -> str:
     case, emphasis or spacing name the same section — treating them as different is how a
     page ends up with 'Key Policies' and 'Key Policies:' side by side."""
     s = re.sub(r"[*_`]", "", s).strip().lower()
-    s = s.replace("&", " and ")     # "Claims & Positions" and "Claims and Positions"
+    s = s.replace("&", " and ")     # "Key Works & Products" and "Key Works and Products"
     s = re.sub(r"\s+", " ", s)
     return s.rstrip(" :.-–—")
 
@@ -1424,7 +1424,7 @@ def _bad_heading_error(tool: str, bad: "list[tuple]", title: str,
                 f"qualifying a standing section, so there is nothing to strip. If the "
                 f"page is about an unfolding event, this is a Timeline entry — call "
                 f"add_timeline_entry. Otherwise fold the material into the standing "
-                f"section it belongs to (Overview, Background, Claims & Positions, …) "
+                f"section it belongs to (Overview, Background, Positions, …) "
                 f"and say when it happened in the prose.")
         else:
             lines.append(
@@ -1994,7 +1994,7 @@ def _append_section(args: dict) -> str:
 
     if not path or not section or not text:
         return ("Error: append_section requires 'path', 'section' and 'text', e.g. "
-                '{"path": "wiki/entities/foo.md", "section": "Claims & Positions", '
+                '{"path": "wiki/entities/foo.md", "section": "Positions", '
                 '"text": "- New claim from this source."}')
 
     p = REPO_ROOT / path
@@ -3164,6 +3164,105 @@ def _rebuild_index(args: dict) -> str:
 
 _HEAL_SUBDIRS = ("sources", "entities", "concepts", "synthesis")
 _READER_URL_RE = re.compile(r"about:reader\?url=[^\s\"'<>)\]]+", re.IGNORECASE)
+
+
+def rename_section(old_names: "list[str]", new_name: str, dry_run: bool = False) -> dict:
+    """Rename one section heading across the whole wiki, merging synonyms into it.
+
+    The wiki's section names are its vocabulary, and the vocabulary drifts: the live wiki
+    carried "Positions" on 466 entity pages, "Positions" on 110 and "Key
+    Positions" on 25 — one idea under three names, so no reader and no tool can find all
+    of it. This collapses a cluster into the name you have chosen.
+
+    Renaming is only interesting when the target already exists on the same page. Then it
+    is a merge, and merges need judgment, so this applies exactly the ladder
+    find_duplicate_sections uses and refuses to invent more:
+
+      no collision  the heading is renamed in place
+      empty         one of the two has no body    -> keep the one with content
+      identical     they say the same thing       -> keep one
+      contained     one body contains the other   -> keep the container
+
+    Anything else is left alone and reported. Two sections with genuinely different
+    content under one idea are a real merge; choosing what survives is not mechanical, and
+    a tool that guessed would quietly lose text.
+
+    Heading level is preserved — a `### Key Positions` nested under something stays at
+    level 3. Matching is on the normalized key, so "Claims and Positions" and
+    "Positions:" are both caught.
+    """
+    wanted = {_norm_heading(n) for n in old_names if n.strip()}
+    target = _norm_heading(new_name)
+    result = {"renamed": [], "merged": [], "needs_human": [], "pages": 0}
+    if not wanted or not new_name.strip():
+        return result
+
+    for f in wiki_pages():
+        rel = f.relative_to(WIKI_DIR).as_posix()
+        if f.name == "index.md" or rel == "log.md":
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        fm_m = re.match(r"^(---\s*\n.*?\n---\s*\n)", text, re.DOTALL)
+        fm, body = (fm_m.group(1), text[fm_m.end():]) if fm_m else ("", text)
+
+        marks = list(re.finditer(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE))
+        spans = []                       # (index, level, name, body_start, body_end)
+        for i, m in enumerate(marks):
+            end = marks[i + 1].start() if i + 1 < len(marks) else len(body)
+            spans.append((i, len(m.group(1)), m.group(2).strip(), m.start(), m.end(), end))
+        hits = [sp for sp in spans if _norm_heading(sp[2]) in wanted]
+        if not hits:
+            continue
+        result["pages"] += 1
+        existing = [sp for sp in spans if _norm_heading(sp[2]) == target]
+
+        if not existing and len(hits) == 1:
+            _, lvl, name, h_start, h_end, _ = hits[0]
+            new_body = body[:h_start] + "#" * lvl + " " + new_name + body[h_end:]
+            result["renamed"].append(f"{rel}: '{name}' -> '{new_name}'")
+            if not dry_run:
+                _atomic_write(f, fm + new_body)
+            continue
+
+        # A collision (or two old names on one page): only the safe ladder.
+        keep = existing[0] if existing else hits[0]
+        others = [sp for sp in hits if sp is not keep]
+        keep_text = body[keep[4]:keep[5]].strip()       # heading_end .. section_end
+        droppable, why = [], ""
+        for sp in others:
+            other = body[sp[4]:sp[5]].strip()
+            if not other:
+                droppable.append(sp); why = "empty"
+            elif not keep_text:
+                droppable = []; break          # the survivor is the empty one — not mechanical
+            elif _norm_heading(other) == _norm_heading(keep_text) or other == keep_text:
+                droppable.append(sp); why = "identical"
+            elif other in keep_text:
+                droppable.append(sp); why = "contained"
+        if len(droppable) != len(others):
+            result["needs_human"].append(
+                f"{rel}: '{others[0][2]}' and '{keep[2]}' both have content — merge by hand, "
+                f"then rerun")
+            continue
+
+        cut = sorted([(sp[3], sp[5]) for sp in droppable], reverse=True)
+        new_body = body
+        for a, b in cut:
+            new_body = new_body[:a] + new_body[b:]
+        if not existing:
+            m2 = re.search(r"^(#{1,6})[ \t]*" + re.escape(keep[2]) + r"[ \t]*$",
+                           new_body, re.MULTILINE)
+            if m2:
+                new_body = (new_body[:m2.start()] + "#" * len(m2.group(1)) + " " + new_name
+                            + new_body[m2.end():])
+        result["merged"].append(
+            f"{rel}: folded {len(droppable)} copy/copies into '{new_name}' ({why})")
+        if not dry_run:
+            _atomic_write(f, fm + new_body)
+    return result
 
 
 def promote_lead_to_opener(dry_run: bool = False) -> dict:
@@ -4635,7 +4734,7 @@ TOOL_DEFS = [
                 "type": "object",
                 "properties": {
                     "path":    {"type": "string", "description": "e.g. wiki/entities/donald-trump.md"},
-                    "section": {"type": "string", "description": 'Heading, e.g. "Claims & Positions"'},
+                    "section": {"type": "string", "description": 'Heading, e.g. "Positions"'},
                 },
                 "required": ["path", "section"],
             },
@@ -4657,7 +4756,7 @@ TOOL_DEFS = [
                 "type": "object",
                 "properties": {
                     "path":    {"type": "string", "description": "e.g. wiki/entities/donald-trump.md"},
-                    "section": {"type": "string", "description": 'Heading to rewrite, e.g. "Claims & Positions"'},
+                    "section": {"type": "string", "description": 'Heading to rewrite, e.g. "Positions"'},
                     "content": {"type": "string",
                                 "description": "ONLY the text that goes under this one heading. Do NOT include the "
                                                "heading line itself, any other section, or ## Sources. Example: for "
@@ -4715,7 +4814,7 @@ TOOL_DEFS = [
                     "path":    {"type": "string",
                                 "description": "Page to append to, e.g. wiki/entities/donald-trump.md"},
                     "section": {"type": "string",
-                                "description": "Heading to append under, e.g. \"Claims & Positions\". Created if absent."},
+                                "description": "Heading to append under, e.g. \"Positions\". Created if absent."},
                     "text":    {"type": "string",
                                 "description": "Markdown to add — usually a paragraph or a few bullets. Plain text, no links."},
                 },
