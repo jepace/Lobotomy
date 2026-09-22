@@ -14,18 +14,27 @@ Almost everything here imports `config.py`, which reads `config.json` at the rep
 exits immediately if it is missing or malformed. Copy `config.json.example` to
 `config.json` first, even for the tools that never call an LLM.
 
-**Run the maintenance tools as the user the server runs as.** They write the same files
-the server does. Writes preserve each file's existing owner and mode, and anything newly
-created inherits its parent directory's owner, so running one as root no longer locks the
-server out — but running as the server's own user is still the safe habit, and it is the
-only thing that gets the ownership right on a wiki that has already been damaged:
+**Just run them.** No `su`, no wrapper:
 
 ```sh
-su -m www -c 'python3 tools/relink.py'         # FreeBSD jail, server running as www
+python3 tools/relink.py
+python3 tools/promote_openers.py --dry-run
 ```
 
-If a tool was run as root before this behavior existed, fix it once with
-`chown -R www:www wiki raw` (substituting the server's user).
+They write the same files the server does, and every write path keeps the tree's
+ownership: an existing file keeps its own owner and mode, a new file takes its parent
+directory's, and every directory level created along the way takes its parent's. So a tool
+run as root inside a wiki owned by `www` leaves everything owned by `www`, and the server
+can still write it. `tests/test_root_ownership.py` checks exactly this, and skips unless
+it is actually running as root.
+
+That was not always true — root-run tools used to leave root-owned files, and then
+directories after the files were fixed. If your wiki was damaged before this, repair it
+once and forget it:
+
+```sh
+chown -R www:www wiki raw      # substitute the user your server runs as
+```
 
 ---
 

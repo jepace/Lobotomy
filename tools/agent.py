@@ -778,18 +778,7 @@ def _snapshot_version(p: Path, new_content: str) -> None:
         _snapshotted.add(rel_posix)
 
         d = HISTORY_DIR / rel
-        # mkdir(parents=True) can create several levels at once, and each new one needs the
-        # tree's owner — otherwise a root-run repair leaves a root-owned history directory
-        # the server cannot add revisions to afterwards. Note which are missing first, then
-        # fix them shallowest-first so each reads an already-corrected parent.
-        _missing = []
-        _probe = d
-        while not _probe.exists() and _probe != _probe.parent:
-            _missing.append(_probe)
-            _probe = _probe.parent
-        d.mkdir(parents=True, exist_ok=True)
-        for _new in reversed(_missing):
-            _inherit_owner(_new)
+        _mkdir_inheriting(d)
         # Microsecond resolution so filenames sort chronologically as plain strings, which
         # is what both the history view and the pruning below rely on. A collision-counter
         # suffix was tried and is wrong: once pruning deletes the low numbers, the next
@@ -833,6 +822,24 @@ def _inherit_owner(p: Path) -> None:
         pass
 
 
+def _mkdir_inheriting(d: Path) -> None:
+    """mkdir -p, giving every level it creates the owner of the tree above it.
+
+    mkdir(parents=True) can create several levels at once, and a level created by root is
+    root-owned inside a tree the server has to keep writing — it then fails with EACCES on
+    a directory it will never be able to fix itself. Note which levels are missing first,
+    create them, then correct them shallowest-first so each reads an already-corrected
+    parent. No-op when not running as root, which is the normal case.
+    """
+    missing, probe = [], d
+    while not probe.exists() and probe != probe.parent:
+        missing.append(probe)
+        probe = probe.parent
+    d.mkdir(parents=True, exist_ok=True)
+    for new in reversed(missing):
+        _inherit_owner(new)
+
+
 def _atomic_write(p: Path, content: str) -> None:
     """Write content to p atomically: write to a sibling .tmp file, then rename.
 
@@ -862,7 +869,7 @@ def _atomic_write(p: Path, content: str) -> None:
         except OSError:
             pass
 
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_inheriting(p.parent)
     fd, tmp_path = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -4379,7 +4386,7 @@ def _create_file(args: dict) -> str:
         body_text = "<!-- WARNING: no sources cited — update sources: frontmatter -->\n\n" + body_text
     content = frontmatter + _strip_broken_wiki_links(body_text, p)
     content = _inject_sources_section(content, p)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_inheriting(p.parent)
     assert not p.exists(), f"create_file invariant violated: {path} must not exist before write"
     _atomic_write(p, content)
     assert p.exists(), f"create_file invariant violated: {path} must exist after write"

@@ -29,9 +29,14 @@ existed), `rename_page.py`, `unlink_headings.py`, `repair_links.py`,
 `lint.sh`.
 
 All of them go through `agent._atomic_write`, so their edits are recorded in page history
-and keep each file's owner and mode. Anything new that writes to the wiki must do the same
-— `repair_links.py` did not for a long time, and its repairs were neither revertable nor
-safe to run as root.
+and keep the tree's ownership — an existing file keeps its own owner and mode, a new file
+takes its parent's, and new directories go through `_mkdir_inheriting`. That is what makes
+them safe to run as root beside a server running as another user, with no `su` ceremony;
+**anything new that writes to the wiki must do the same.** `repair_links.py` did not for a
+long time, and its repairs were neither revertable nor safe to run as root. Never call
+`mkdir(parents=True)` directly under `wiki/`: a level created by root is root-owned inside
+a tree the server has to keep writing, and it fails silently in the history path, which
+deliberately never raises.
 
 ## Architecture
 
