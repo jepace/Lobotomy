@@ -1155,6 +1155,12 @@ def _bad_headings(body: str, title: str) -> "list[tuple]":
                              a section of itself; the material belongs under Overview or
                              whichever section actually covers it. Level 1 is exempt —
                              that is the page's own H1.
+      contains a link        "## [Atheism](../sources/atheism-wikipedia-2026.md)". Every
+                             section tool addresses a heading by its text, so link syntax
+                             inside one makes the section hard to reach — read_section
+                             and update_section are asked for "Atheism" and do not find
+                             it. The autolinker cannot cause this (it skips heading lines
+                             outright), so a heading link is always hand-written.
       names a date           "## Current Standing (May 2026)". LOBOTOMY.md Step 5 already
                              forbids these in prose and 365 pages have one anyway, which
                              is the usual sign that an instruction needs a guard behind
@@ -1172,6 +1178,8 @@ def _bad_headings(body: str, title: str) -> "list[tuple]":
         level, name = len(m.group(1)), m.group(2).strip()
         if level > 1 and want_title and _norm_heading(name) == want_title:
             bad.append((name, "repeats the page's own title"))
+        elif _MD_LINK_RE.search(name):
+            bad.append((name, "contains a link"))
         elif _DATED_HEADING_RE.search(name):
             bad.append((name, "names a date"))
     return bad
@@ -1181,7 +1189,16 @@ def _bad_heading_error(tool: str, bad: "list[tuple]", title: str) -> str:
     """The refusal text for _bad_headings, phrased so the next move is obvious."""
     lines = []
     for name, reason in bad:
-        if reason == "names a date":
+        if reason == "contains a link":
+            plain = _MD_LINK_RE.sub(r"\1", name).strip()
+            lines.append(
+                f"  '{name}' — contains a markdown link. Headings are plain text: every "
+                f"section tool finds a section by its heading text, so a link in one "
+                f"makes the section unreachable by name. Write the heading as "
+                f"'{plain}'. Links belong in the prose "
+                f"underneath, and you do not write them by hand there either — the "
+                f"autolinker adds them.")
+        elif reason == "names a date":
             lines.append(
                 f"  '{name}' — names a date. Sections are permanent and get revised in "
                 f"place; a dated one is a changelog entry that nothing will ever update. "
@@ -2671,6 +2688,52 @@ def _rebuild_index(args: dict) -> str:
 
 _HEAL_SUBDIRS = ("sources", "entities", "concepts", "synthesis")
 _READER_URL_RE = re.compile(r"about:reader\?url=[^\s\"'<>)\]]+", re.IGNORECASE)
+
+
+def unlink_headings(dry_run: bool = False) -> dict:
+    """Strip markdown link syntax out of headings, keeping the display text.
+
+    "## [Atheism](../sources/atheism-wikipedia-2026.md)" becomes "## Atheism". The link
+    makes the section unreachable by the tools that address sections by heading text, and
+    the target is not lost: the same subject is linked from the prose underneath, or will
+    be the next time relink.py runs over the page.
+
+    The write paths refuse these now. This is for the pages damaged before that, and it is
+    purely mechanical — the display text is exactly the heading the section should have
+    had, so there is nothing to decide. Goes through _atomic_write, so every page changed
+    keeps a history entry and is revertable.
+    """
+    result = {"pages": 0, "headings": 0, "detail": []}
+    head_re = re.compile(r"^(#{1,6}[ \t]*)(.*\]\(.*)$", re.MULTILINE)
+    # WIKI_DIR explicitly, not wiki_pages()'s default — the default is bound at import
+    # and the test harnesses rebind the module global to a throwaway wiki.
+    for f in wiki_pages(WIKI_DIR):
+        if f.name == "index.md" or f == WIKI_DIR / "log.md":
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        fixed = []
+
+        def _strip(m):
+            plain = _MD_LINK_RE.sub(r"\1", m.group(2)).strip()
+            if plain == m.group(2).strip():
+                return m.group(0)
+            fixed.append((m.group(2).strip(), plain))
+            return m.group(1) + plain
+
+        new = head_re.sub(_strip, text)
+        if not fixed:
+            continue
+        result["pages"] += 1
+        result["headings"] += len(fixed)
+        rel = f.relative_to(WIKI_DIR).as_posix()
+        for before, after in fixed:
+            result["detail"].append(f"{rel}: {before!r} -> {after!r}")
+        if not dry_run:
+            _atomic_write(f, new)
+    return result
 
 
 def heal_pages(dry_run: bool = False) -> dict:

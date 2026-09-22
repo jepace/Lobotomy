@@ -161,7 +161,7 @@ the wiki because the default template doesn't suit it.
 - Open Questions
 - Sources *(auto-generated — do not write)*
 
-**Three of these rules are enforced, not suggested.** Every write tool refuses a page
+**Four of these rules are enforced, not suggested.** Every write tool refuses a page
 that breaks them, so it costs a round-trip to discover them the hard way:
 
 1. **Every entity page has `## Overview`; every concept page has `## Definition`.** The
@@ -174,8 +174,14 @@ that breaks them, so it costs a round-trip to discover them the hard way:
    (May 2026)". Sections are permanent and get revised in place; a dated one is a
    changelog entry nothing will ever update, and the next ingest adds another beside it.
    Put the material in the standing section it belongs to and say *when* in the prose.
+4. **No markdown link in a heading.** `## Relation to [Christianity](../concepts/christianity.md)`.
+   Headings are plain text. `read_section`, `update_section` and `append_section` all find
+   a section by its heading text, so a link in one makes that section unreachable by name
+   — and `append_section` then builds a *second* section beside it. Write
+   `## Relation to Christianity`; the link belongs in the prose underneath, where you do
+   not write it by hand either — the autolinker adds it.
 
-The update tools apply 2 and 3 only to headings your edit introduces, so a page that
+The update tools apply 2, 3 and 4 only to headings your edit introduces, so a page that
 already carries one stays editable — including by the edit that folds it away.
 
 ---

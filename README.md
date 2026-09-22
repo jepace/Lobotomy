@@ -231,6 +231,7 @@ tools/
   relink.py             Add wiki links to bare mentions (no LLM needed)
   section_inventory.py  Report which section headings the wiki actually uses
   rename_page.py        Rename a page + its title + every link to it (no LLM needed)
+  unlink_headings.py    Strip markdown links out of section headings (no LLM needed)
   repair_links.py       Fix broken relative links + reader-mode URLs (no LLM needed)
   repair_frontmatter.py Backfill missing created:/updated: frontmatter (no LLM needed)
   lint.sh               Shell-based broken-link checker

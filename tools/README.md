@@ -133,6 +133,23 @@ python3 tools/repair_links.py --dry-run   # report what would change
 python3 tools/repair_links.py             # apply
 ```
 
+### `unlink_headings.py` — take markdown links out of headings
+`## [Atheism](../sources/atheism-wikipedia-2026.md)` → `## Atheism`. Every section tool
+finds a section by its heading text, so a heading carrying link syntax is unaddressable:
+asked for "Atheism" they do not find it, and `append_section` then creates a second
+section beside it. The autolinker never does this — it skips heading lines — so these are
+hand-written, and the write paths refuse them now. This repairs the pages damaged before
+that.
+
+```sh
+python3 tools/unlink_headings.py --dry-run
+python3 tools/unlink_headings.py
+```
+
+Nothing is lost: the link target is still reachable from the prose under the heading, and
+`relink.py` re-links the subject there anyway. Every page changed goes through the normal
+write path, so it is revertable from that page's History view.
+
 ### `repair_frontmatter.py` — backfill missing frontmatter
 Thin wrapper over `agent.heal_pages()`: fills in missing `created:`/`updated:` from the
 file's own mtime, missing `tags:`/`sources:` as `[]`, and unwraps reader-mode URLs. Pages
