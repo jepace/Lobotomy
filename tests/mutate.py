@@ -74,6 +74,19 @@ MUTATIONS = [
      '        except ValueError:\n'
      '            pass',
      '        pass', "tools/repair_links.py"),
+    ("duplicate-heading refusal names the call that works",
+     # Revert to the message that shipped: correct about the constraint, silent about
+     # where the caller's text should go. The observed model resent the same call twice
+     # and then dumped the other section's content into Overview.
+     '        _existing = {_norm_heading(n) for _lvl, n in _page_section_names(body, _fm_title(frontmatter))}\n'
+     '        _elsewhere = [d for d in _dupes if _norm_heading(d) in _existing]\n'
+     '        if _elsewhere:',
+     '        _elsewhere = []\n'
+     '        if _elsewhere:'),
+    ("replace_text refusal names the call that works",
+     '            f"replacement text; to change what is under it, call update_section on "\n'
+     '            f"{_dupes[0]!r}, or append_section to add to it."',
+     '            f"replacement text."'),
     ("timeline: loose bullet parsing",
      # Narrow the reader back to the exact shape the renderer emits. A hand-written
      # `- 2026-08: ...` then goes unrecognised, is filed as prose, and the same fact is

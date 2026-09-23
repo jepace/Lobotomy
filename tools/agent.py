@@ -1873,8 +1873,9 @@ def _replace_text(args: dict) -> str:
     if _dupes:
         return (
             f"Error: replace_text refused — this would give the page a second copy of "
-            f"{', '.join(repr(d) for d in _dupes)}. Merge into the section that is already "
-            f"there instead of introducing another heading."
+            f"{', '.join(repr(d) for d in _dupes)}. Leave the heading out of the "
+            f"replacement text; to change what is under it, call update_section on "
+            f"{_dupes[0]!r}, or append_section to add to it."
         )
 
     _title = _fm_title(frontmatter)
@@ -2064,12 +2065,35 @@ def _update_section(args: dict) -> str:
     _dupes = [d for d in _heading_dupes(new_body)
               if _norm_heading(d) not in {_norm_heading(x) for x in _heading_dupes(body)}]
     if _dupes:
+        # Naming the constraint is not enough. This refusal used to end "Send the section's
+        # body only" — which says what to delete and nothing about where the deleted
+        # material should go, so an observed ingest spent two rounds resending the same
+        # call and then complied by dropping the heading and leaving that section's text
+        # inside Overview. The material was not junk; it was a second section's content,
+        # written in the only call the model could see. Principle 4: name the move.
+        _existing = {_norm_heading(n) for _lvl, n in _page_section_names(body, _fm_title(frontmatter))}
+        _elsewhere = [d for d in _dupes if _norm_heading(d) in _existing]
+        if _elsewhere:
+            _named = ", ".join(repr(d) for d in _elsewhere)
+            _one = _elsewhere[0]
+            return (
+                f"Error: update_section refused — {_named} "
+                f"{'are already sections' if len(_elsewhere) > 1 else 'is already a section'} "
+                f"of {path}, and this call writes {section!r}, so the page would end up "
+                f"with two of them.\n\n"
+                f"The text you wrote for {_one!r} is not wasted — it needs its own call. "
+                f"update_section edits one section per call:\n"
+                f"  update_section(path={path!r}, section={_one!r}, content=<that text>)\n"
+                f"and append_section(path, section, text) adds to a section, or creates one "
+                f"that does not exist yet.\n\n"
+                f"Send only the body of {section!r} in this call — no headings."
+            )
         return (
-            f"Error: update_section refused — the content you sent would add a second "
-            f"{'copy of these headings' if len(_dupes) > 1 else 'copy of this heading'}: "
-            f"{', '.join(repr(d) for d in _dupes)}. The content is placed under the heading "
-            f"that is already there, so it must not repeat a heading the page already has. "
-            f"Send the section's body only."
+            f"Error: update_section refused — the content you sent repeats "
+            f"{'these headings' if len(_dupes) > 1 else 'this heading'}: "
+            f"{', '.join(repr(d) for d in _dupes)}. A heading can appear once on a page. "
+            f"Merge what you wrote under each into a single block, or give the second one "
+            f"a name of its own."
         )
 
     _title = _fm_title(frontmatter)

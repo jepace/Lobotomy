@@ -482,6 +482,12 @@ For each entity (person, organization, product, project) on that list:
      arrives back inside its own Overview. What you send is the new
      information *merged into* the existing prose, extending a sentence, qualifying a claim,
      adding a detail where it fits. Preserve everything the source does not contradict.
+
+     **One section per call.** If you have written text for two sections, that is two
+     calls — the second one's text does not belong in the first one's body, and putting
+     it there is worse than leaving it out. If the section you want does not exist yet,
+     `append_section(path, section, text)` creates it; do not smuggle a new heading into
+     another section's content and do not settle for dropping the material into Overview.
      Most sources change one or two sections.
 
   **On a short page, rewriting the whole thing with `update_file` is fine** — often better,
@@ -584,6 +590,12 @@ For each concept, technique, framework, or term on that list:
      arrives back inside its own Overview. What you send is the new
      information *merged into* the existing prose, extending a sentence, qualifying a claim,
      adding a detail where it fits. Preserve everything the source does not contradict.
+
+     **One section per call.** If you have written text for two sections, that is two
+     calls — the second one's text does not belong in the first one's body, and putting
+     it there is worse than leaving it out. If the section you want does not exist yet,
+     `append_section(path, section, text)` creates it; do not smuggle a new heading into
+     another section's content and do not settle for dropping the material into Overview.
      Most sources change one or two sections.
 
   **On a short page, rewriting the whole thing with `update_file` is fine** — often better,

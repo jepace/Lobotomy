@@ -128,11 +128,21 @@ Three principles, each learned expensively:
    nothing about the body. Only the checks that make the rest meaningless return early:
    no path, outside `wiki/`, bad filename, page already exists (that reply carries the
    content), missing title or type.
-4. **A refusal must name a move that works.** The recurring failure here is a guard that is
-   locally correct about its own question but answers a question the caller cannot act on —
-   `lookup_titles` right that no title matched, `create_file` right that the path existed.
-   Worst case: renaming one violation into another, so the refusal quotes a heading the
-   model never wrote.
+4. **A refusal must name a move that works — the call, not the constraint.** The
+   recurring failure here is a guard that is locally correct about its own question but
+   answers a question the caller cannot act on — `lookup_titles` right that no title
+   matched, `create_file` right that the path existed. Worst case: renaming one violation
+   into another, so the refusal quotes a heading the model never wrote.
+   The subtler version costs data rather than rounds. `update_section`'s duplicate-heading
+   refusal used to end "Send the section's body only": true, and silent about where the
+   material for that other section should go. An observed ingest resent the identical call
+   twice, then complied by deleting the heading and leaving a second section's content
+   inside `## Overview`. A guard that names no destination does not prevent the damage, it
+   redirects it somewhere quieter. That refusal now names the call — `update_section(path,
+   section='<the other one>', content=…)`, or `append_section` to create one — and says
+   the text is not wasted. Where a refusal names a call, a test should follow its
+   instructions and assert they succeed; that is the only version of the assertion that
+   proves anything.
 
 Also enforced: search limited to 2 per term per session; `done()` refused if an ingest
 wrote no entity/concept pages or never established a source page; `update_file` refused
