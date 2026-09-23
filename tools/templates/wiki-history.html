@@ -63,23 +63,24 @@
   <div class="hist-wrap">
   {% if revisions is not none %}
     <div class="hist-note">
-      Every change to this page is saved before it is overwritten. Each row is one change:
-      what caused it, how many lines it added and removed, and the size of the page as it
-      was beforehand. Newest first.
-    </div>
-
-    <div class="rev current-row">
-      <div class="when">Current version</div>
-      <div class="size">{{ current_size }} bytes</div>
-      <a href="/wiki/{{ current_path }}">View</a>
+      Each row is one version of this page: when it was written, what wrote it, how many
+      lines that added and removed, and how big the page was as a result. Newest first.
+      The oldest row is the earliest version still kept — whatever produced it has been
+      pruned, so nothing records when or why.
     </div>
 
     {% for r in revisions %}
-    <div class="rev">
-      <div class="when">{{ r.when }}</div>
+    <div class="rev{% if r.current %} current-row{% endif %}">
+      <div class="when">
+        {%- if r.current %}Current version{% if r.when %} — {{ r.when }}{% endif %}
+        {%- elif r.earliest %}Earliest kept version
+        {%- else %}{{ r.when }}{% endif -%}
+      </div>
       {% if r.why %}<div class="why">{{ r.why }}</div>{% endif %}
       <div class="delta">
-        {%- if r.added or r.removed -%}
+        {%- if r.earliest -%}
+          <span class="none">origin unknown</span>
+        {%- elif r.added or r.removed -%}
           {%- if r.added %}<span class="plus">+{{ r.added }}</span>{% endif -%}
           {%- if r.removed %} <span class="minus">−{{ r.removed }}</span>{% endif -%}
         {%- else -%}
@@ -87,7 +88,8 @@
         {%- endif -%}
       </div>
       <div class="size">{{ r.size }} bytes</div>
-      <a href="/wiki/{{ current_path }}/history/{{ r.id }}">Compare</a>
+      {% if r.current %}<a href="/wiki/{{ current_path }}">View</a>
+      {% else %}<a href="/wiki/{{ current_path }}/history/{{ r.id }}">Compare</a>{% endif %}
     </div>
     {% else %}
     <div class="empty">

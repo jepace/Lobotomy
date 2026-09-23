@@ -112,43 +112,82 @@ class WriteReasonTest(TempWikiTestCase):
 
 
 class PageHistoryTest(TempWikiTestCase):
-    """What the history view renders, computed where a test can reach it."""
+    """A row is a VERSION, labelled with what created it.
 
-    def _three_changes(self):
-        """One page, two writes. Full file contents both times — a real write always
-        carries the frontmatter, and an earlier version of this test passed bare bodies,
-        so the diff counted seven frontmatter lines being deleted and the numbers meant
-        nothing."""
-        p = self.w.page("entities/a.md", title="A Corp", type="entity",
-                        body="# A Corp\n\n## Overview\n\nOne.\n")
+    The trap this guards: revision file R_i holds the content as it was BEFORE the write
+    at T_i, so R_i's reason describes the write that DESTROYED that content, not the one
+    that made it. Attaching it to R_i's own row labels a version with the cause of its own
+    deletion, and puts the newest write's label one row below where it belongs — which is
+    exactly what shipped first and what the screenshot caught.
+    """
+
+    def _page_with_writes(self, reasons):
+        p = self.w.page("concepts/climate-change.md", title="Climate Change",
+                        type="concept",
+                        body="# Climate Change\n\n## Definition\n\n" + "line\n" * 10)
         fm = p.read_text(encoding="utf-8").split("---\n")[1]
-        head = f"---\n{fm}---\n\n# A Corp\n\n## Overview\n\n"
-        agent.begin_write_scope()
-        with agent.write_reason("ingest"):
-            agent._atomic_write(p, head + "One.\nTwo.\nThree.\n")
-        agent.begin_write_scope()
-        with agent.write_reason("user edit"):
-            agent._atomic_write(p, head + "One.\n")
+        head = f"---\n{fm}---\n\n# Climate Change\n\n## Definition\n\n"
+        for n, why in enumerate(reasons, start=11):
+            agent.begin_write_scope()
+            with agent.write_reason(why):
+                agent._atomic_write(p, head + "line\n" * n)
         return p
 
-    def test_newest_first(self):
-        p = self._three_changes()
-        h = agent.page_history(p)
-        self.assertEqual([r["why"] for r in h], ["user-edit", "ingest"])
+    def test_the_newest_reason_lands_on_the_current_version(self):
+        p = self._page_with_writes(["user edit", "ingest"])
+        rows = agent.page_history(p)
+        self.assertTrue(rows[0]["current"])
+        self.assertEqual(rows[0]["why"], "ingest",
+                         "the last write's label is not on the page it produced")
 
-    def test_the_stats_describe_the_change_that_row_records(self):
-        # Revision 1 (the "ingest" row) held the one-line body and was replaced by the
-        # three-line one: +2. Revision 2 (the "user edit" row) held three lines and was
-        # replaced by the current one: -2.
-        p = self._three_changes()
-        h = agent.page_history(p)
-        self.assertEqual((h[1]["added"], h[1]["removed"]), (2, 0), h)
-        self.assertEqual((h[0]["added"], h[0]["removed"]), (0, 2), h)
+    def test_a_version_is_not_labelled_with_its_own_deletion(self):
+        p = self._page_with_writes(["user edit", "ingest"])
+        rows = agent.page_history(p)
+        # The version below current was produced by the "user edit"; the "ingest" is what
+        # replaced it, and must not appear here.
+        # Stored sanitized — serve.py maps "user-edit" to "your edit" for display.
+        self.assertEqual(rows[1]["why"], "user-edit")
 
-    def test_a_page_with_no_history_returns_nothing(self):
+    def test_each_row_reports_its_own_size(self):
+        p = self._page_with_writes(["a", "b"])
+        rows = agent.page_history(p)
+        self.assertEqual(rows[0]["size"], len(p.read_text(encoding="utf-8").encode("utf-8")),
+                         "the current row did not report the current page's size")
+        sizes = [r["size"] for r in rows]
+        self.assertEqual(sizes, sorted(sizes, reverse=True),
+                         f"versions should grow toward the current one: {sizes}")
+
+    def test_the_delta_is_what_produced_that_version(self):
+        # Each write adds exactly one line to the body.
+        p = self._page_with_writes(["a", "b", "c"])
+        rows = agent.page_history(p)
+        for r in rows[:-1]:
+            self.assertEqual((r["added"], r["removed"]), (1, 0), rows)
+
+    def test_the_oldest_row_claims_nothing_it_cannot_know(self):
+        p = self._page_with_writes(["a", "b"])
+        oldest = agent.page_history(p)[-1]
+        self.assertTrue(oldest["earliest"])
+        self.assertEqual(oldest["when"], "", "a creation time was invented for it")
+        self.assertEqual(oldest["why"], "")
+        self.assertEqual((oldest["added"], oldest["removed"]), (0, 0))
+
+    def test_every_stored_revision_is_still_reachable(self):
+        p = self._page_with_writes(["a", "b", "c"])
+        rows = agent.page_history(p)
+        ids = [r["id"] for r in rows if r["id"]]
+        stored = sorted(f.stem for f in
+                        (agent.HISTORY_DIR / "concepts" / "climate-change.md").glob("*.md"))
+        self.assertEqual(sorted(ids), stored, "a revision dropped out of the list")
+        self.assertIsNone(rows[0]["id"], "the current page is not a stored revision")
+
+    def test_a_page_with_no_history_shows_only_the_current_version(self):
         p = self.w.page("entities/new.md", title="New Corp", type="entity",
                         body="# New Corp\n\n## Overview\n\nX.\n")
-        self.assertEqual(agent.page_history(p), [])
+        rows = agent.page_history(p)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["current"])
+        self.assertEqual(rows[0]["when"], "")
 
     def test_unstamped_revisions_still_appear(self):
         # Every revision written before reasons existed has no suffix.
@@ -156,14 +195,16 @@ class PageHistoryTest(TempWikiTestCase):
                         body="# A Corp\n\n## Overview\n\nOne.\n")
         agent.set_write_reason("")
         agent._atomic_write(p, "# A Corp\n\n## Overview\n\nTwo.\n")
-        h = agent.page_history(p)
-        self.assertEqual(len(h), 1)
-        self.assertEqual(h[0]["why"], "")
+        rows = agent.page_history(p)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["why"], "")
 
     def test_a_stray_file_in_the_history_dir_is_ignored(self):
-        p = self._three_changes()
-        (agent.HISTORY_DIR / "entities" / "a.md" / "notes.md").write_text("hand-written")
-        self.assertEqual(len(agent.page_history(p)), 2, "a non-revision file was listed")
+        p = self._page_with_writes(["a", "b"])
+        (agent.HISTORY_DIR / "concepts" / "climate-change.md" / "notes.md").write_text("x")
+        rows = agent.page_history(p)
+        self.assertEqual(len([r for r in rows if r["id"]]), 2,
+                         "a non-revision file was listed as a version")
 
 
 if __name__ == "__main__":

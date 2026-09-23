@@ -200,11 +200,18 @@ every ingest and a leaked reason would mislabel every write after it. `init_sess
 clears it, so a reason cannot survive into the next job. Revisions written before this
 have no suffix and render without a label.
 
-`page_history(p)` builds what the view shows — id, when, why, +added/−removed, size — and
-lives in `agent.py` rather than `serve.py` so it is reachable without flask. A revision
-holds the content as it was BEFORE a write, so the change made at time T is that revision
-against **whatever replaced it**: the next revision, or the current page for the newest.
-Pairing them the other way round reports every change one row off.
+`page_history(p)` builds what the view shows and lives in `agent.py` rather than
+`serve.py` so it is reachable without flask. **A row is a version, not a change** — which
+is what the Compare button already assumes, since it diffs that version's content against
+the current page. The storage makes this easy to get backwards: revision file `R_i` holds
+the content as it was BEFORE the write at `T_i`, so `R_i`'s stamped reason describes the
+write that **destroyed** that content, and `R_i`'s content is what the write at `T_{i-1}`
+produced. Attaching `R_i`'s reason to `R_i`'s own row labels a version with the cause of
+its own deletion and puts the newest write's label one row too low. Every version
+therefore takes its timestamp and reason from the revision **below** it, and the newest
+write's reason lands on the current page. The oldest row is the earliest content still
+kept; whatever produced it has been pruned, so it carries no timestamp, reason or counts
+rather than a guessed one.
 
 Served by `/wiki/<path>/history` (list), `/wiki/<path>/history/<rev>` (unified diff via
 stdlib `difflib`), and `/api/wiki/<path>/revert/<rev>`. Revert goes through `_atomic_write`,

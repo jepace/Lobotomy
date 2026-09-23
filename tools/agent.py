@@ -733,36 +733,46 @@ _REASON_RE = re.compile(r"[^a-z0-9-]+")
 
 
 def page_history(p: Path) -> "list[dict]":
-    """Every saved revision of a page, newest first, with what each change did.
+    """Every version of a page, newest first, each labelled with what created it.
 
-    A revision holds the content as it was BEFORE a write, stamped with that write's time.
-    So the change made at time T is this revision against whatever replaced it — the next
-    revision, or the page as it stands now for the most recent one. Pairing them the other
-    way round would report each change one row off.
+    A row is a VERSION, not a change — which is what the Compare button already assumes,
+    since it diffs that version's content against the page as it stands now. Getting this
+    backwards is a real trap, because of how the snapshots are stored: revision file R_i
+    holds the content as it was BEFORE the write at time T_i. So R_i's content is not
+    something that happened at T_i; it is what the write at T_{i-1} PRODUCED, and the
+    reason stamped on R_i describes the write that destroyed it.
 
-    Returns id, when, why (the stamped reason, "" for revisions written before reasons
-    were recorded), added, removed, size.
+        R_i.stem   →  when the content of R_i was replaced, and why
+        R_i bytes  →  the version the PREVIOUS write produced
+
+    Attaching R_i's reason to R_i's content therefore labels a version with the cause of
+    its own deletion. Shifting by one is the whole of this function: each version takes
+    its timestamp and reason from the revision BELOW it, and the newest write's reason
+    lands on the current page, which is what it actually produced.
+
+    Returns, newest first: current (bool), id (None for the current page), when, why,
+    added, removed, size. The oldest row is the earliest content still kept, and nothing
+    records when or why it was created — whatever made it has been pruned — so it carries
+    no timestamp and no counts rather than a guessed one.
 
     Lives here rather than in serve.py so it is reachable without flask, which is the only
-    reason the rest of the history view has never had a test.
+    reason the history view has any test at all.
     """
     import difflib as _difflib
     d = HISTORY_DIR / p.resolve().relative_to(WIKI_DIR.resolve())
-    parsed = []
+    revs = []
     for f in sorted(d.glob("*.md")) if d.is_dir() else []:
         stem, _, why = f.stem.partition("__")
         try:
             when = datetime.datetime.strptime(stem, "%Y%m%dT%H%M%S%f")
         except ValueError:
             continue            # not one of ours; leave it alone rather than guess
-        parsed.append((f, f.stem, when, why))
+        revs.append({"path": f, "id": f.stem, "when": when, "why": why,
+                     "text": f.read_text(encoding="utf-8", errors="replace")})
 
-    current = p.read_text(encoding="utf-8", errors="replace")
-    out = []
-    for i, (f, rid, when, why) in enumerate(parsed):
-        before = f.read_text(encoding="utf-8", errors="replace")
-        after = (parsed[i + 1][0].read_text(encoding="utf-8", errors="replace")
-                 if i + 1 < len(parsed) else current)
+    current_text = p.read_text(encoding="utf-8", errors="replace")
+
+    def _delta(before: str, after: str) -> "tuple[int, int]":
         added = removed = 0
         for line in _difflib.unified_diff(before.splitlines(), after.splitlines(),
                                           n=0, lineterm=""):
@@ -770,11 +780,32 @@ def page_history(p: Path) -> "list[dict]":
                 added += 1
             elif line.startswith("-") and not line.startswith("---"):
                 removed += 1
-        out.append({"id": rid, "when": when.strftime("%Y-%m-%d %H:%M:%S"),
-                    "why": why, "added": added, "removed": removed,
-                    "size": f.stat().st_size})
-    out.reverse()
-    return out
+        return added, removed
+
+    # The current page, created by the most recent recorded write.
+    rows = []
+    if revs:
+        a, r = _delta(revs[-1]["text"], current_text)
+        rows.append({"current": True, "id": None,
+                     "when": revs[-1]["when"].strftime("%Y-%m-%d %H:%M:%S"),
+                     "why": revs[-1]["why"], "added": a, "removed": r,
+                     "size": len(current_text.encode("utf-8"))})
+    else:
+        rows.append({"current": True, "id": None, "when": "", "why": "",
+                     "added": 0, "removed": 0,
+                     "size": len(current_text.encode("utf-8"))})
+
+    # Each stored version, labelled by the write that produced it — the revision below it.
+    for i in range(len(revs) - 1, -1, -1):
+        maker = revs[i - 1] if i > 0 else None
+        a, r = _delta(maker["text"], revs[i]["text"]) if maker else (0, 0)
+        rows.append({"current": False, "id": revs[i]["id"],
+                     "when": maker["when"].strftime("%Y-%m-%d %H:%M:%S") if maker else "",
+                     "why": maker["why"] if maker else "",
+                     "added": a, "removed": r,
+                     "size": revs[i]["path"].stat().st_size,
+                     "earliest": maker is None})
+    return rows
 
 
 def set_write_reason(reason: str) -> None:

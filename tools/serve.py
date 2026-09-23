@@ -1647,8 +1647,7 @@ def wiki_history(page_path):
                            title=page_display_title(
                                p.read_text(encoding="utf-8", errors="replace"), p.stem),
                            current_path=str(p.relative_to(WIKI_DIR)),
-                           revisions=revs,
-                           current_size=p.stat().st_size)
+                           revisions=revs)
 
 
 @app.route("/wiki/<path:page_path>/history/<rev>")

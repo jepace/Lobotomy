@@ -97,10 +97,16 @@ MUTATIONS = [
     ("history records why each change happened",
      '        _suffix = f"__{_why}" if _why else ""',
      '        _suffix = ""'),
-    ("history stats pair a revision with what replaced it",
-     '        after = (parsed[i + 1][0].read_text(encoding="utf-8", errors="replace")\n'
-     '                 if i + 1 < len(parsed) else current)',
-     '        after = before'),
+    ("a version is labelled by what created it, not what replaced it",
+     '        maker = revs[i - 1] if i > 0 else None',
+     '        maker = revs[i]'),
+    ("the newest write's label lands on the current page",
+     '        rows.append({"current": True, "id": None,\n'
+     '                     "when": revs[-1]["when"].strftime("%Y-%m-%d %H:%M:%S"),\n'
+     '                     "why": revs[-1]["why"], "added": a, "removed": r,',
+     '        rows.append({"current": True, "id": None,\n'
+     '                     "when": "", \n'
+     '                     "why": "", "added": a, "removed": r,'),
     ("create_file reports every problem, not the first",
      '    if _problems:\n        if len(_problems) == 1:',
      '    if _problems:\n        _problems = _problems[:1]\n        if len(_problems) == 1:'),
