@@ -54,15 +54,26 @@ MUTATIONS = [
      '        stripped = _TRAILING_DATE_RE.sub("", name).strip(" -–—:,")',
      '        stripped = name'),
     ("dangling links are unwrapped",
-     '            if display.strip() and _is_dangling(_page, link_path, known_names):',
+     '            if display.strip() and _is_dangling(_page, link_path, index):',
      '            if False:', "tools/repair_links.py"),
     ("dangling: repointing beats unwrapping",
      # Unwrap first and a link that merely took the wrong route to a page that still
      # exists is destroyed instead of repaired.
-     '            fixed     = _repair_path(_page, link_path, wiki_dir, raw_dir)\n'
+     '            fixed     = _repair_path(_page, link_path, index)\n'
      '            if fixed:',
      '            fixed     = None\n'
      '            if fixed:', "tools/repair_links.py"),
+    ("dangling: .history is not a link target",
+     # rglob matches directories, and a deleted page leaves
+     # wiki/.history/entities/united.md/ behind — a directory with the page's name. Let
+     # it into the index and every dead link is "repaired" to point inside the history
+     # store.
+     '        try:\n'
+     '            p.relative_to(history_dir)\n'
+     '            continue          # a stored revision is a record, never a link target\n'
+     '        except ValueError:\n'
+     '            pass',
+     '        pass', "tools/repair_links.py"),
     ("timeline: loose bullet parsing",
      # Narrow the reader back to the exact shape the renderer emits. A hand-written
      # `- 2026-08: ...` then goes unrecognised, is filed as prose, and the same fact is

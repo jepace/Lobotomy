@@ -242,6 +242,17 @@ write's reason lands on the current page. The oldest row is the earliest content
 kept; whatever produced it has been pruned, so it carries no timestamp, reason or counts
 rather than a guessed one.
 
+**`wiki/.history/` is inside `wiki/`, and every tool that walks the tree must exclude it.**
+A revision is a record, never a link target, a page, or a search hit. Two ways this bites,
+both found in `repair_links.py`: `rglob` matches **directories**, and a page deleted from
+the wiki leaves `wiki/.history/entities/united.md/` behind — a directory carrying the
+page's name — so a filename search "found" the deleted page and repaired every dead link
+to point inside the history store. And at ~9,000 pages × 50 revisions the store holds a
+few hundred thousand files, so a per-item walk over it turns a pass into a hang: a dry run
+that takes 1.7s with `.history` excluded ran over two minutes without, on a tree a quarter
+the size. `_wiki_pages()` in that file is the pattern — filter on `relative_to(HISTORY_DIR)`,
+and match files, not paths.
+
 Served by `/wiki/<path>/history` (list), `/wiki/<path>/history/<rev>` (unified diff via
 stdlib `difflib`), and `/api/wiki/<path>/revert/<rev>`. Revert goes through `_atomic_write`,
 so it snapshots the current content first and is itself undoable.

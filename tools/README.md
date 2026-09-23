@@ -143,6 +143,9 @@ python3 tools/repair_links.py             # apply
 python3 tools/relink.py                   # re-link the prose that names a real page
 ```
 
+Progress goes to stderr (`indexing…`, then every 1000 pages), so a long run is visibly
+alive; the report itself is on stdout and still pipes cleanly.
+
 That last pass is the one to reach for after deleting or renaming a page by hand: one
 deleted page leaves a dead link on every page that mentioned it, and `/wiki/lint` will
 list all of them. `[United](../entities/united.md)` becomes plain `United`. It is

@@ -89,10 +89,42 @@ def _repair_nested(m):
 _LINK_RE = re.compile(r'\[([^\]]*)\]\(([^)]+)\)')
 
 
-def _repair_path(page: Path, link_path: str, wiki_dir: Path, raw_dir: Path) -> "str | None":
+def _file_index(wiki_dir: Path, raw_dir: Path, history_dir: Path) -> dict:
+    """filename -> every real file with that name, built once per run.
+
+    Replaces an rglob per broken link, and fixes two bugs that walk had:
+
+      * It included `wiki/.history/`. A page deleted from the wiki leaves its history
+        behind at `wiki/.history/entities/united.md/`, and rglob matches DIRECTORIES —
+        so that leftover directory was the single "match" for every dead link to the
+        page, and each one got helpfully repaired to `../.history/entities/united.md`.
+        Measured on a synthetic tree: all of them, silently.
+      * At ~9,000 pages `.history` holds up to 50 revisions each, so each of those walks
+        crossed a few hundred thousand entries. One deleted page means one broken link
+        per page that mentioned it, so the cost is quadratic in exactly the case that
+        made this pass necessary — which is why a dry run sat silent for minutes.
+    """
+    index: dict = {}
+    for p in wiki_dir.rglob("*"):
+        if not p.is_file():
+            continue
+        try:
+            p.relative_to(history_dir)
+            continue          # a stored revision is a record, never a link target
+        except ValueError:
+            pass
+        index.setdefault(p.name, []).append(p)
+    if raw_dir.is_dir():
+        for p in raw_dir.glob("*"):
+            if p.is_file():
+                index.setdefault(p.name, []).append(p)
+    return index
+
+
+def _repair_path(page: Path, link_path: str, index: dict) -> "str | None":
     """
     Given a link path that doesn't resolve from `page`, try to find the
-    correct relative path by locating the filename anywhere in wiki/.
+    correct relative path by locating the filename in the file index.
     Returns corrected path string, or None if target can't be found.
     """
     if link_path.startswith("http") or link_path.startswith("#") or link_path.startswith("mailto"):
@@ -105,15 +137,15 @@ def _repair_path(page: Path, link_path: str, wiki_dir: Path, raw_dir: Path) -> "
         fragment = "#" + fragment
 
     target = (page.parent / link_path).resolve()
-    if target.exists():
+    if target.exists() and target.is_file():
         return None  # already valid
 
-    # Extract just the filename and search wiki/ and raw/ for it
+    # Extract just the filename and look it up
     filename = Path(link_path).name
     if not filename.endswith(".md") and not filename.endswith(".txt"):
         return None
 
-    matches = list(wiki_dir.rglob(filename)) + list(raw_dir.glob(filename))
+    matches = index.get(filename, [])
     if len(matches) == 1:
         correct_rel = Path(os.path.relpath(matches[0], page.parent))
         return str(correct_rel) + fragment
@@ -129,20 +161,7 @@ def _repair_path(page: Path, link_path: str, wiki_dir: Path, raw_dir: Path) -> "
 
 # --- Fix 4: unwrap links to a page that no longer exists --------------------------------
 
-def _known_filenames(wiki_dir: Path, raw_dir: Path) -> set:
-    """Every filename that exists anywhere in wiki/ or raw/, built once per run.
-
-    _repair_path rglobs per broken link, which is fine when there are a handful. A page
-    deleted out from under the wiki produces one broken link per page that mentioned it —
-    hundreds — and at ~9,000 pages that is hundreds of full tree walks.
-    """
-    names = {p.name for p in wiki_dir.rglob("*") if p.is_file()}
-    if raw_dir.is_dir():
-        names |= {p.name for p in raw_dir.glob("*") if p.is_file()}
-    return names
-
-
-def _is_dangling(page: Path, link_path: str, known: set) -> bool:
+def _is_dangling(page: Path, link_path: str, index: dict) -> bool:
     """True when this link points at a wiki page that exists nowhere — not at the path
     given, and not under any other path either.
 
@@ -157,10 +176,13 @@ def _is_dangling(page: Path, link_path: str, known: set) -> bool:
     link_path = link_path.split("#", 1)[0]
     if not link_path or not link_path.endswith((".md", ".txt")):
         return False
-    if (page.parent / link_path).resolve().exists():
+    _target = (page.parent / link_path).resolve()
+    # is_file(), not exists(): the leftover `wiki/.history/entities/united.md/` is a
+    # directory with a page's name, and a link resolving to one points at nothing.
+    if _target.is_file():
         return False
     # Existing anywhere else in the tree makes it _repair_path's job, not this one.
-    return Path(link_path).name not in known
+    return Path(link_path).name not in index
 
 
 # --- Fix 3: unwrap Firefox Reader View URLs --------------------------------------------
@@ -188,7 +210,7 @@ def _wiki_pages(wiki_dir: Path, history_dir: Path):
             yield f
 
 
-def repair_links(dry_run: bool = False) -> dict:
+def repair_links(dry_run: bool = False, progress=None) -> dict:
     """Run all four repair passes over the wiki (and raw/ for the reader-URL unwrap).
 
     Reads agent.WIKI_DIR / agent.RAW_DIR / agent.HISTORY_DIR at call time rather than
@@ -202,13 +224,20 @@ def repair_links(dry_run: bool = False) -> dict:
     wiki_dir = agent.WIKI_DIR
     raw_dir = agent.RAW_DIR
     history_dir = agent.HISTORY_DIR
-    known_names = _known_filenames(wiki_dir, raw_dir)
+    if progress:
+        progress("indexing wiki/ and raw/…")
+    index = _file_index(wiki_dir, raw_dir, history_dir)
+    pages = list(_wiki_pages(wiki_dir, history_dir))
+    if progress:
+        progress(f"{len(index)} filenames indexed; scanning {len(pages)} pages")
 
     fixed_files = 0
     fixed_links = 0
     detail = []
 
-    for f in _wiki_pages(wiki_dir, history_dir):
+    for _i, f in enumerate(pages, start=1):
+        if progress and _i % 1000 == 0:
+            progress(f"  {_i}/{len(pages)} pages, {fixed_links} fixes so far")
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -225,11 +254,11 @@ def repair_links(dry_run: bool = False) -> dict:
         def _path_replacer(m, _page=f, _count=count, _gone=gone):
             display   = m.group(1)
             link_path = m.group(2)
-            fixed     = _repair_path(_page, link_path, wiki_dir, raw_dir)
+            fixed     = _repair_path(_page, link_path, index)
             if fixed:
                 _count[0] += 1
                 return f"[{display}]({fixed})"
-            if display.strip() and _is_dangling(_page, link_path, known_names):
+            if display.strip() and _is_dangling(_page, link_path, index):
                 # The target exists nowhere, so there is nothing to point at. Unwrap to
                 # the display text rather than leaving a link that 404s: the text is
                 # ordinary prose and reads correctly on its own. Same reasoning as
@@ -281,8 +310,14 @@ if __name__ == "__main__":
     DRY_RUN = "--dry-run" in sys.argv
     # Scoped at the entry point rather than inside repair_links(), so it restores even if
     # the pass raises — and so a caller that wants its own label is not overridden.
+    # A silent multi-minute run is indistinguishable from a hung one — which is exactly
+    # how the .history walk above was found. stderr, so piping stdout still gives a clean
+    # report.
+    def _progress(msg):
+        print(msg, file=sys.stderr, flush=True)
+
     with write_reason("repair-links"):
-        result = repair_links(dry_run=DRY_RUN)
+        result = repair_links(dry_run=DRY_RUN, progress=_progress)
     for line in result["detail"]:
         print(f"  {'[dry-run] ' if DRY_RUN else ''}{line}")
     print(f"\n{'[dry-run] ' if DRY_RUN else ''}Repaired {result['fixed_links']} links "

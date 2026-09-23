@@ -118,6 +118,40 @@ class DanglingLinkTest(TempWikiTestCase):
         self.assertIn("[United](../entities/united.md)",
                       revs[0].read_text(encoding="utf-8"))
 
+    def test_the_pages_leftover_history_is_not_mistaken_for_the_page(self):
+        """The bug that made this pass a no-op on the real wiki.
+
+        Deleting wiki/entities/united.md leaves wiki/.history/entities/united.md/ behind —
+        a DIRECTORY with the page's name. The path pass looked for the filename with
+        rglob over all of wiki/, rglob matches directories, and that leftover was the
+        single match. So every dead link was "repaired" to ../.history/entities/united.md,
+        which is not a page, is not servable, and buries the evidence that the page is
+        gone. Silently, on all 135.
+        """
+        hist = agent.HISTORY_DIR / "entities" / "united.md"
+        hist.mkdir(parents=True)
+        (hist / "20260101T000000__ingest.md").write_text("the deleted page", encoding="utf-8")
+        self._page("concepts/fao.md",
+                   "# Fao\n\n## Definition\n\nAn agency of the "
+                   "[United](../entities/united.md) Nations.\n")
+        repair_links.repair_links()
+        out = self.w.disk("concepts/fao.md")
+        self.assertNotIn(".history", out, "a link was repointed into the history store")
+        self.assertIn("An agency of the United Nations.", out)
+
+    def test_a_stored_revision_is_never_a_repair_target(self):
+        # Same root cause, one level down: the revision FILES are also named *.md and
+        # would be offered as the destination for a link to a page of that name.
+        hist = agent.HISTORY_DIR / "entities" / "acme.md"
+        hist.mkdir(parents=True)
+        (hist / "gone.md").write_text("not a page", encoding="utf-8")
+        self._page("concepts/x.md",
+                   "# X\n\n## Definition\n\nSee [Gone](../entities/gone.md).\n")
+        repair_links.repair_links()
+        out = self.w.disk("concepts/x.md")
+        self.assertNotIn(".history", out)
+        self.assertIn("See Gone.", out)
+
     def test_a_history_file_is_never_rewritten(self):
         self._page("concepts/fao.md",
                    "# Fao\n\n## Definition\n\nThe [United](../entities/united.md) Nations.\n")
