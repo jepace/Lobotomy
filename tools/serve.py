@@ -154,6 +154,7 @@ from config import (cfg_get, cfg_bool, cfg_int, validate_config,
                     cfg_active_provider, cfg_provider, cfg_available_models,
                     cfg_all_providers, cfg_write_llm)
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title, _H1_RE,
+                   write_reason, page_history,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, run_agent_turn, system_prompt,
                    _fix_wiki_links, _rebuild_index, _validate_ingest,
@@ -1584,7 +1585,8 @@ def wiki_save(page_path):
     # retitle through this editor that bypassed it would leave the cache pointing at the
     # old title until something unrelated happened to invalidate it, or the server restarted.
     begin_write_scope()   # this edit gets its own history revision, even on a reused thread
-    _atomic_write(p, content)
+    with write_reason("user edit"):
+        _atomic_write(p, content)
     # Autolink the result. The autolinker otherwise only ever runs over pages an ingest
     # touched, so prose written by hand here would keep its mentions as plain text
     # indefinitely — until some later ingest happened to touch this page for its own
@@ -1615,21 +1617,32 @@ def _history_dir_for(p: Path) -> Path:
     return HISTORY_DIR / p.resolve().relative_to(WIKI_DIR.resolve())
 
 
+# What the stamped reasons mean in the history view. Anything unrecognised falls back to
+# the raw token with hyphens spaced out, so a new reason shows up readably without needing
+# to be registered here first.
+_REASON_LABELS = {
+    "ingest": "ingest",
+    "user edit": "your edit",
+    "user-edit": "your edit",
+    "revert": "revert",
+    "relink": "relink sweep",
+    "heal": "startup repair",
+    "merge": "page merge",
+    "rename-section": "section rename",
+    "promote-opener": "opener added",
+    "unlink-headings": "heading cleanup",
+    "chat": "chat request",
+}
+
+
 @app.route("/wiki/<path:page_path>/history")
 @require_login
 def wiki_history(page_path):
     """List saved revisions of a page, newest first."""
     p = _resolve_wiki_page_or_404(page_path)
-    d = _history_dir_for(p)
-    revs = []
-    for f in sorted(d.glob("*.md"), reverse=True) if d.is_dir() else []:
-        try:
-            when = datetime.datetime.strptime(f.stem, "%Y%m%dT%H%M%S%f")
-        except ValueError:
-            continue
-        revs.append({"id": f.stem,
-                     "when": when.strftime("%Y-%m-%d %H:%M:%S"),
-                     "size": f.stat().st_size})
+    revs = [dict(r, why=_REASON_LABELS.get(r["why"],
+                                           r["why"].replace("-", " ") if r["why"] else ""))
+            for r in page_history(p)]
     return render_template("wiki-history.html",
                            title=page_display_title(
                                p.read_text(encoding="utf-8", errors="replace"), p.stem),
@@ -1674,7 +1687,8 @@ def wiki_revert(page_path, rev):
         return {"error": "Invalid revision"}, 400
     if not f.exists():
         return {"error": "Revision not found"}, 404
-    _atomic_write(p, f.read_text(encoding="utf-8", errors="replace"))
+    with write_reason("revert"):
+        _atomic_write(p, f.read_text(encoding="utf-8", errors="replace"))
     log.info("Reverted %s to revision %s", p.relative_to(WIKI_DIR), rev)
     return {"ok": True}
 

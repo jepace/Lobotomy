@@ -94,6 +94,13 @@ MUTATIONS = [
     ("deprecated pages leave the title map",
      '            if title and not deprecated:',
      '            if title:'),
+    ("history records why each change happened",
+     '        _suffix = f"__{_why}" if _why else ""',
+     '        _suffix = ""'),
+    ("history stats pair a revision with what replaced it",
+     '        after = (parsed[i + 1][0].read_text(encoding="utf-8", errors="replace")\n'
+     '                 if i + 1 < len(parsed) else current)',
+     '        after = before'),
     ("read-before-write on update_file",
      '_WIKI_READ_LIMIT = 20_000',
      '_WIKI_READ_LIMIT = 20_000_000'),

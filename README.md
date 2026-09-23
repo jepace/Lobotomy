@@ -199,6 +199,10 @@ a repair pass — the current content is saved to `wiki/.history/`. Open a page 
 **History** to list past versions, compare any of them against the page as it stands now,
 and revert. A revert is itself recorded, so it can be undone too.
 
+Each row says what caused the change — *ingest*, *your edit*, *relink sweep*, *revert*,
+*startup repair* — and how many lines it added and removed, so you can find the one edit
+that matters without opening every diff.
+
 No git or other tooling required: versions are plain markdown files, and the last 50
 revisions per page are kept.
 

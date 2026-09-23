@@ -17,6 +17,17 @@
   }
   .rev .when { flex: 1; font-size: 14px; }
   .rev .size { font-size: 12px; color: var(--text2); }
+  .rev .why {
+    font-size: 11px; padding: 2px 7px; border-radius: 10px;
+    background: var(--bg3); color: var(--text2); white-space: nowrap;
+  }
+  /* Monospace so the columns line up down the list and the eye can scan for the big
+     changes without reading every number. */
+  .rev .delta { font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                white-space: nowrap; }
+  .rev .delta .plus { color: var(--ok, #2ea043); }
+  .rev .delta .minus { color: var(--danger, #d1242f); }
+  .rev .delta .none { color: var(--text2); }
   .rev a, .rev button {
     font-size: 13px; padding: 5px 11px; border-radius: 8px; text-decoration: none;
     border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer;
@@ -52,8 +63,9 @@
   <div class="hist-wrap">
   {% if revisions is not none %}
     <div class="hist-note">
-      Every change to this page is saved before it is overwritten — by an ingest, by the
-      editor, or by a repair pass. Newest first.
+      Every change to this page is saved before it is overwritten. Each row is one change:
+      what caused it, how many lines it added and removed, and the size of the page as it
+      was beforehand. Newest first.
     </div>
 
     <div class="rev current-row">
@@ -65,6 +77,15 @@
     {% for r in revisions %}
     <div class="rev">
       <div class="when">{{ r.when }}</div>
+      {% if r.why %}<div class="why">{{ r.why }}</div>{% endif %}
+      <div class="delta">
+        {%- if r.added or r.removed -%}
+          {%- if r.added %}<span class="plus">+{{ r.added }}</span>{% endif -%}
+          {%- if r.removed %} <span class="minus">−{{ r.removed }}</span>{% endif -%}
+        {%- else -%}
+          <span class="none">no line changes</span>
+        {%- endif -%}
+      </div>
       <div class="size">{{ r.size }} bytes</div>
       <a href="/wiki/{{ current_path }}/history/{{ r.id }}">Compare</a>
     </div>

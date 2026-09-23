@@ -183,6 +183,21 @@ the history view and the pruning depend on that. An earlier collision-counter sc
 wrong: after pruning removed the low numbers, the next write refilled the gap and a new
 revision sorted as old.
 
+Each revision is stamped with **why** it was written: `<ts>__ingest.md`, `__user-edit`,
+`__relink`, `__revert`, `__heal`, `__merge`. The reason goes after the fixed-width
+timestamp so lexical order stays chronological, which the history view and the pruning
+both depend on. `write_reason("…")` scopes it to a block and restores the previous value —
+never `set_write_reason` bare inside a pass, because `heal_pages` runs at startup and after
+every ingest and a leaked reason would mislabel every write after it. `init_session()`
+clears it, so a reason cannot survive into the next job. Revisions written before this
+have no suffix and render without a label.
+
+`page_history(p)` builds what the view shows — id, when, why, +added/−removed, size — and
+lives in `agent.py` rather than `serve.py` so it is reachable without flask. A revision
+holds the content as it was BEFORE a write, so the change made at time T is that revision
+against **whatever replaced it**: the next revision, or the current page for the newest.
+Pairing them the other way round reports every change one row off.
+
 Served by `/wiki/<path>/history` (list), `/wiki/<path>/history/<rev>` (unified diff via
 stdlib `difflib`), and `/api/wiki/<path>/revert/<rev>`. Revert goes through `_atomic_write`,
 so it snapshots the current content first and is itself undoable.

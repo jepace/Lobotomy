@@ -49,7 +49,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent
-from agent import _atomic_write
+from agent import _atomic_write, write_reason
 
 # --- Fix 1: nested/double-linked patterns -----------------------------------
 
@@ -213,7 +213,10 @@ def repair_links(dry_run: bool = False) -> dict:
 
 if __name__ == "__main__":
     DRY_RUN = "--dry-run" in sys.argv
-    result = repair_links(dry_run=DRY_RUN)
+    # Scoped at the entry point rather than inside repair_links(), so it restores even if
+    # the pass raises — and so a caller that wants its own label is not overridden.
+    with write_reason("repair-links"):
+        result = repair_links(dry_run=DRY_RUN)
     for line in result["detail"]:
         print(f"  {'[dry-run] ' if DRY_RUN else ''}{line}")
     print(f"\n{'[dry-run] ' if DRY_RUN else ''}Repaired {result['fixed_links']} links "

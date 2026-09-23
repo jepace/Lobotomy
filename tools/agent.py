@@ -2,6 +2,7 @@
 """Shared LLM agent logic used by both the CLI (wiki.py) and web server (serve.py)."""
 
 import collections
+import contextlib
 import datetime
 import json
 import logging
@@ -728,6 +729,85 @@ def wiki_pages(root: "Path | None" = None):
             yield f
 
 
+_REASON_RE = re.compile(r"[^a-z0-9-]+")
+
+
+def page_history(p: Path) -> "list[dict]":
+    """Every saved revision of a page, newest first, with what each change did.
+
+    A revision holds the content as it was BEFORE a write, stamped with that write's time.
+    So the change made at time T is this revision against whatever replaced it — the next
+    revision, or the page as it stands now for the most recent one. Pairing them the other
+    way round would report each change one row off.
+
+    Returns id, when, why (the stamped reason, "" for revisions written before reasons
+    were recorded), added, removed, size.
+
+    Lives here rather than in serve.py so it is reachable without flask, which is the only
+    reason the rest of the history view has never had a test.
+    """
+    import difflib as _difflib
+    d = HISTORY_DIR / p.resolve().relative_to(WIKI_DIR.resolve())
+    parsed = []
+    for f in sorted(d.glob("*.md")) if d.is_dir() else []:
+        stem, _, why = f.stem.partition("__")
+        try:
+            when = datetime.datetime.strptime(stem, "%Y%m%dT%H%M%S%f")
+        except ValueError:
+            continue            # not one of ours; leave it alone rather than guess
+        parsed.append((f, f.stem, when, why))
+
+    current = p.read_text(encoding="utf-8", errors="replace")
+    out = []
+    for i, (f, rid, when, why) in enumerate(parsed):
+        before = f.read_text(encoding="utf-8", errors="replace")
+        after = (parsed[i + 1][0].read_text(encoding="utf-8", errors="replace")
+                 if i + 1 < len(parsed) else current)
+        added = removed = 0
+        for line in _difflib.unified_diff(before.splitlines(), after.splitlines(),
+                                          n=0, lineterm=""):
+            if line.startswith("+") and not line.startswith("+++"):
+                added += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                removed += 1
+        out.append({"id": rid, "when": when.strftime("%Y-%m-%d %H:%M:%S"),
+                    "why": why, "added": added, "removed": removed,
+                    "size": f.stat().st_size})
+    out.reverse()
+    return out
+
+
+def set_write_reason(reason: str) -> None:
+    """Record what is causing the writes that follow, for the page history view.
+
+    A revision file holds the content as it was BEFORE a write, stamped with the time of
+    that write — so "what changed the page at 14:03" is knowable, and until now the answer
+    was never recorded. An ingest, a hand edit, a relink sweep and a revert all produced
+    identical-looking entries.
+
+    Set on the thread doing the writing, so it covers everything a request or a job does
+    without every call site passing it down. Stored on the same thread-local as the
+    session context, and cleared by init_session() along with everything else — a stale
+    reason mislabels the next job's history, which is worse than no label.
+    """
+    _tl._write_reason = _REASON_RE.sub("-", (reason or "").strip().lower())[:24].strip("-")
+
+
+def get_write_reason() -> str:
+    return getattr(_tl, "_write_reason", "")
+
+
+@contextlib.contextmanager
+def write_reason(reason: str):
+    """Scope a reason to one block, restoring whatever was set before."""
+    prev = get_write_reason()
+    set_write_reason(reason)
+    try:
+        yield
+    finally:
+        set_write_reason(prev)
+
+
 def _snapshot_version(p: Path, new_content: str) -> None:
     """Save the CURRENT on-disk content of a wiki page before it is overwritten.
 
@@ -785,11 +865,15 @@ def _snapshot_version(p: Path, new_content: str) -> None:
         # write refills the gap and a brand-new revision gets an old-sorting name.
         # Stepping the timestamp forward on collision keeps every name uniform, unique,
         # and monotonic.
+        # The reason goes AFTER the fixed-width timestamp, so lexical order is still
+        # chronological — which the history view and the pruning below both depend on.
         now = datetime.datetime.now()
-        dest = d / f"{now.strftime('%Y%m%dT%H%M%S%f')}.md"
+        _why = get_write_reason()
+        _suffix = f"__{_why}" if _why else ""
+        dest = d / f"{now.strftime('%Y%m%dT%H%M%S%f')}{_suffix}.md"
         while dest.exists():
             now += datetime.timedelta(microseconds=1)
-            dest = d / f"{now.strftime('%Y%m%dT%H%M%S%f')}.md"
+            dest = d / f"{now.strftime('%Y%m%dT%H%M%S%f')}{_suffix}.md"
         dest.write_text(old, encoding="utf-8")
         _inherit_owner(dest)
 
@@ -2348,6 +2432,8 @@ def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
     t = _tl
     t._current_inbox_path = inbox_path
     t._current_inbox_url = inbox_url
+    # A reason left over from the previous job would mislabel this one's history.
+    t._write_reason = "ingest" if inbox_path else ""
     t._current_source_page = ""
     t._session_entity_pages = []
     t._session_updated_pages = []
@@ -3184,6 +3270,13 @@ _READER_URL_RE = re.compile(r"about:reader\?url=[^\s\"'<>)\]]+", re.IGNORECASE)
 
 def merge_page(loser_rel: str, survivor_rel: str, extra_aliases=(),
                force: bool = False, dry_run: bool = False) -> dict:
+    """Fold one page into another. See _merge_page_impl for the detail."""
+    with write_reason("merge"):
+        return _merge_page_impl(loser_rel, survivor_rel, extra_aliases, force, dry_run)
+
+
+def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
+               force: bool = False, dry_run: bool = False) -> dict:
     """Fold one page into another: repoint every link, carry the names and sources over,
     then delete the loser.
 
@@ -3336,6 +3429,12 @@ def _title_map_cache_reset() -> None:
 
 
 def rename_section(old_names: "list[str]", new_name: str, dry_run: bool = False) -> dict:
+    """Rename a heading across the wiki. See _rename_section_impl for the detail."""
+    with write_reason("rename-section"):
+        return _rename_section_impl(old_names, new_name, dry_run)
+
+
+def _rename_section_impl(old_names: "list[str]", new_name: str, dry_run: bool = False) -> dict:
     """Rename one section heading across the whole wiki, merging synonyms into it.
 
     The wiki's section names are its vocabulary, and the vocabulary drifts: the live wiki
@@ -3435,6 +3534,12 @@ def rename_section(old_names: "list[str]", new_name: str, dry_run: bool = False)
 
 
 def promote_lead_to_opener(dry_run: bool = False) -> dict:
+    """Give pages their template opener. See _promote_lead_to_opener_impl."""
+    with write_reason("promote-opener"):
+        return _promote_lead_to_opener_impl(dry_run)
+
+
+def _promote_lead_to_opener_impl(dry_run: bool = False) -> dict:
     """Give an entity/concept page the opener its template requires, where the text for it
     is already on the page.
 
@@ -3511,6 +3616,12 @@ def promote_lead_to_opener(dry_run: bool = False) -> dict:
 
 
 def unlink_headings(dry_run: bool = False) -> dict:
+    """Strip links out of headings. See _unlink_headings_impl."""
+    with write_reason("unlink-headings"):
+        return _unlink_headings_impl(dry_run)
+
+
+def _unlink_headings_impl(dry_run: bool = False) -> dict:
     """Strip markdown link syntax out of headings, keeping the display text.
 
     "## [Atheism](../sources/atheism-wikipedia-2026.md)" becomes "## Atheism". The link
@@ -3555,6 +3666,12 @@ def unlink_headings(dry_run: bool = False) -> dict:
 
 
 def heal_pages(dry_run: bool = False) -> dict:
+    """Repair frontmatter across the wiki. See _heal_pages_impl."""
+    with write_reason("heal"):
+        return _heal_pages_impl(dry_run)
+
+
+def _heal_pages_impl(dry_run: bool = False) -> dict:
     """Repair mechanically-fixable page defects across the whole wiki.
 
     Runs in the post-ingest chain next to _fix_wiki_links (which already auto-repairs bad
@@ -4157,6 +4274,12 @@ def begin_write_scope() -> None:
 
 
 def relink_all(progress=None, should_stop=None, pages=None, dry_run=False) -> dict:
+    """Autolink every page. See _relink_all_impl."""
+    with write_reason("relink"):
+        return _relink_all_impl(progress, should_stop, pages, dry_run)
+
+
+def _relink_all_impl(progress=None, should_stop=None, pages=None, dry_run=False) -> dict:
     """Re-run the autolinker over every wiki page.
 
     A page is normally autolinked only while an ingest is touching it, against the titles
@@ -5706,6 +5829,11 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
     )
     log.info("stream_agent_turn: model=%s messages=%d request=%s",
              resolved_model, len(messages), last_user[:120].replace("\n", " "))
+    # Label this turn's writes for the page history. An ingest overwrites this the moment
+    # read_file touches the raw file (init_session sets "ingest" there), so a request that
+    # turns out to be an ingest is labelled as one; anything else stays "chat".
+    if not get_write_reason():
+        set_write_reason("chat")
     payload_base = {
         "model":      resolved_model,
         "tools":      TOOL_DEFS,
