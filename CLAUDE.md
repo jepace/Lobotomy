@@ -146,6 +146,20 @@ paged chunk. That distinction is load-bearing — the Regenerate Workflow rewrit
 page with `update_file`, which requires full read coverage, which requires paging to be
 reachable.
 
+### Reorganizing a page
+
+`update_section` refuses a rewrite that cuts a section by more than 40% (`_old_cmp >= 800
+and _new_cmp < _old_cmp * 0.6`), because that is what an ingest looks like when it runs
+out of output budget and silently condenses a page instead of failing. But consolidating a
+page *is* shrinkage — moving a duplicated point out of one section makes it smaller — so
+`allow_shrink=true` is the deliberate opt-out, and both refusals name it. It exempts that
+one check and nothing else: read-before-write and the heading rules still apply.
+
+Without it there was no route at all on a large page: the section tools could not shrink,
+and `update_file` is steered away above half the output budget. `LOBOTOMY.md` section 6b
+is the workflow — read every section involved, plan the whole move, **write the
+destination first and confirm it**, then shrink the source.
+
 ### Unfolding events and timelines
 
 An event that arrives across several sources (an outbreak, an election, a trial) gets its

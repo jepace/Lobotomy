@@ -1859,7 +1859,17 @@ def _update_section(args: dict) -> str:
             f"update_section again.\n\n{heading}\n{old_text}"
         )
     _old_cmp, _new_cmp = _unlinked_len(old_text), _unlinked_len(new_text)
-    if _old_cmp >= 800 and _new_cmp < _old_cmp * 0.6:
+    # allow_shrink is how a deliberate reduction gets through. Consolidating a page IS
+    # shrinkage — moving a duplicated point out of one section and into another makes the
+    # first one smaller — so without an opt-out the section tools cannot clean a page up
+    # at all, and the whole-page tool is steered away above half the output budget. The
+    # flag is off by default because the guard's real job is catching an ingest that
+    # silently condensed a page it was supposed to add to, and that is never deliberate.
+    _allow_shrink = str(args.get("allow_shrink", "")).strip().lower() in ("true", "1", "yes")
+    if _allow_shrink and _old_cmp >= 800 and _new_cmp < _old_cmp * 0.6:
+        log.info("update_section: %s '%s' shrinking %d -> %d chars of prose (allow_shrink)",
+                 path, section, _old_cmp, _new_cmp)
+    if not _allow_shrink and _old_cmp >= 800 and _new_cmp < _old_cmp * 0.6:
         _pct = 100 - int(_new_cmp / _old_cmp * 100)
         log.warning("update_section: refused %s '%s' — would shrink %d%% (%d -> %d chars of prose)",
                     path, section, _pct, _old_cmp, _new_cmp)
@@ -1889,7 +1899,10 @@ def _update_section(args: dict) -> str:
                 f"This section is short enough to resend in full, so do that rather than "
                 f"appending: below is exactly what is on the page now. Merge your new "
                 f"material into THIS text — keep every existing claim — and call "
-                f"update_section again.\n\n{heading}\n{old_text}"
+                f"update_section again.\n\n"
+                f"If you are deliberately reorganizing this page and this text is moving "
+                f"to another section, pass allow_shrink=true — but write it to its new "
+                f"home FIRST, or it is gone.\n\n{heading}\n{old_text}"
             )
         return (
             f"Error: update_section refused — this would cut '{section}' by {_pct}% "
@@ -1901,7 +1914,10 @@ def _update_section(args: dict) -> str:
             f"it in full is where that fails — then do NOT keep retrying a shortened "
             f"version: call append_section(path, section, text) with only the new material. "
             f"That adds it without touching what is already there. Retrying this call with "
-            f"another condensed rewrite will be refused again."
+            f"another condensed rewrite will be refused again.\n\n"
+            f"If you are deliberately reorganizing this page — moving this material to "
+            f"another section rather than losing it — pass allow_shrink=true. Write it to "
+            f"its new home FIRST and confirm that call succeeded, then shrink this one."
         )
 
     # The content is placed UNDER the existing heading, so a copy of that heading at the
@@ -4763,6 +4779,12 @@ TOOL_DEFS = [
                                                'section "Overview", send just the Overview paragraphs — not '
                                                '"## Overview", and not the sections that follow it. '
                                                "Plain text, no links."},
+                    "allow_shrink": {"type": "boolean",
+                                "description": "Only for a deliberate reorganization. Normally a rewrite that "
+                                               "cuts a section by more than 40% is refused, because that is what "
+                                               "an accidental condensation looks like. Set true when you are "
+                                               "MOVING text to another section — and write it to its new home "
+                                               "first, or it is lost."},
                 },
                 "required": ["path", "section", "content"],
             },
@@ -5037,6 +5059,7 @@ def system_prompt() -> str:
         "| create_file | **Preferred** for new wiki pages — auto-fills frontmatter dates. |\n"
         "| search_wiki | Check if an entity/concept page exists before creating one. Supports scope tokens: 'in:sources', 'in:entities', 'in:concepts'. Supports tag filter: 'tag:<tagname>' (e.g. 'tag:trump-administration'). |\n"
         "| search_raw | Search raw source files by keyword — use when retroactively reviewing old articles for a newly prominent entity. |\n"
+        "| update_section | Rewrite one section, merging new material into what is there. Pass allow_shrink=true ONLY when deliberately moving text to another section — write the destination first. |\n"
         "| add_timeline_entry | Add one dated entry to an event page's ## Timeline. Inserted in chronological position, so out-of-order ingests still come out right. Use this instead of a section named after a date. |\n"
         "| list_dir | List directory contents. |\n"
         "| fetch_url | Fetch a web page for inbox processing. |\n"

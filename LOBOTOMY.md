@@ -697,6 +697,47 @@ Call `done()`.
 
 ---
 
+## 6b. Reorganize Workflow
+
+**When the user asks you to clean up, reorganize, deduplicate or restructure a page** —
+"this page has a lot of duplicated points", "put everything into the proper sections", "I
+added new sections, use them". This is not an ingest and not a regenerate: no new source
+is involved, and nothing is rebuilt from `sources:`. You are moving text that is already
+on the page into better shape, and the page's existing content is the only thing you have.
+**Nothing may be lost.**
+
+1. **`read_file` the page.** Over 20,000 chars you get an outline — every section, its
+   size, its opening. That is your map, not your material.
+2. **`read_section` every section you intend to touch**, including the ones you will move
+   text *into*. You cannot move what you have not read, and the guards will refuse a
+   rewrite of a section you have not read this session.
+3. **Plan the whole move before writing anything.** Which duplicated points survive,
+   which section each one belongs to, what gets dropped as redundant. A half-finished
+   reorganization is worse than none.
+4. **Write the destination first.** `update_section` on the section text is moving *to*,
+   with that text merged into what is already there.
+5. **Only then shrink the source**, with `update_section(..., allow_shrink=true)`.
+   Without that flag a rewrite that cuts a section by more than 40% is refused — the guard
+   cannot tell a deliberate move from an ingest that silently condensed a page. The flag
+   is you taking responsibility for the order: **destination first, confirmed, then
+   source.** Reverse it and the text is gone.
+6. Repeat per section. Do not batch a page-wide rewrite through `update_file` on a large
+   page — it is steered away above half the output budget for good reason.
+7. `done()` when the page reads as one synthesis rather than a pile.
+
+Sections the user says they added are instructions, not suggestions: use them, and put the
+material that belongs there into them even if the page never had such a section before.
+
+If two points say the same thing with different detail, keep the fuller one and fold in
+anything the shorter one adds. If they genuinely conflict, that is a `## Contradictions`
+entry, not something to resolve by deleting one.
+
+Every page you touch keeps a version history entry, so a reorganization that goes wrong is
+revertable from the page's History view. That is not licence to be careless — losing text
+the user cannot tell you lost is the failure mode here.
+
+---
+
 ## 7. Handling Contradictions
 
 When a new source contradicts an existing document:
