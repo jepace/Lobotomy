@@ -120,7 +120,15 @@ Three principles, each learned expensively:
    *introduces* are refused. An earlier duplicate-heading guard checked the whole resulting
    page and deadlocked 176 real pages: the only edits that could have fixed them were the
    ones it refused.
-3. **A refusal must name a move that works.** The recurring failure here is a guard that is
+3. **A refusal names every problem, not the first one found.** `create_file` collects
+   them and returns one numbered list. A call can be wrong in several independent ways at
+   once, and each refusal costs a full round: an observed ingest spent three refusals and
+   three minutes on one page, told about its missing `## Overview`, then — after fixing
+   that — told it needed a source page first, which had been true from the start and said
+   nothing about the body. Only the checks that make the rest meaningless return early:
+   no path, outside `wiki/`, bad filename, page already exists (that reply carries the
+   content), missing title or type.
+4. **A refusal must name a move that works.** The recurring failure here is a guard that is
    locally correct about its own question but answers a question the caller cannot act on —
    `lookup_titles` right that no title matched, `create_file` right that the path existed.
    Worst case: renaming one violation into another, so the refusal quotes a heading the

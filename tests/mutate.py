@@ -101,6 +101,9 @@ MUTATIONS = [
      '        after = (parsed[i + 1][0].read_text(encoding="utf-8", errors="replace")\n'
      '                 if i + 1 < len(parsed) else current)',
      '        after = before'),
+    ("create_file reports every problem, not the first",
+     '    if _problems:\n        if len(_problems) == 1:',
+     '    if _problems:\n        _problems = _problems[:1]\n        if len(_problems) == 1:'),
     ("read-before-write on update_file",
      '_WIKI_READ_LIMIT = 20_000',
      '_WIKI_READ_LIMIT = 20_000_000'),

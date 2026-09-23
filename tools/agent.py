@@ -1472,7 +1472,7 @@ def _absorb_date_qualifiers(new_body: str, old_body: str = "", title: str = "") 
 
 
 def _bad_heading_error(tool: str, bad: "list[tuple]", title: str,
-                       collided: "list[tuple] | None" = None) -> str:
+                       collided: "list[tuple] | None" = None, bare: bool = False) -> str:
     """The refusal text for _bad_headings, phrased so the next move is obvious."""
     lines = []
     _merge_into = {name: existing for name, existing in (collided or [])}
@@ -1516,9 +1516,11 @@ def _bad_heading_error(tool: str, bad: "list[tuple]", title: str,
                 f"that subject, so it cannot also be one section of itself. Drop this "
                 f"heading and put its text under Overview, or give the section a name "
                 f"describing what it actually covers.")
-    return (f"Error: {tool} refused — "
-            f"{'these headings are' if len(bad) > 1 else 'this heading is'} not a valid "
-            f"section:\n" + "\n".join(lines) + "\n\nFix and resend.")
+    body = (f"{'These headings are' if len(bad) > 1 else 'This heading is'} not a valid "
+            f"section:\n" + "\n".join(lines))
+    if bare:
+        return body          # for a caller collecting several problems into one refusal
+    return f"Error: {tool} refused — {body[0].lower()}{body[1:]}\n\nFix and resend."
 
 
 # Exactly one '#', then required whitespace. Without the (?!#) and the + this matches
@@ -4728,13 +4730,20 @@ def _create_file(args: dict) -> str:
     pg_type = _type_m.group(0).lower() if _type_m else ""
     # Same structural rule as every other write path: a page never has one heading twice.
     # Cheaper to refuse here than to let a page be born needing a manual merge.
+    # From here the checks COLLECT rather than return. A create_file call can be wrong in
+    # several independent ways at once, and returning the first one found costs a round
+    # per problem: an observed ingest spent three refusals and three minutes on one page,
+    # told about its missing Overview, then — after fixing that — told it needed a source
+    # page first, which had been true the whole time. Each round is a full model call.
+    _problems: list = []
+
     _dupes = _heading_dupes(body)
     if _dupes:
-        return (
-            f"Error: create_file refused — the body repeats "
+        _problems.append(
+            f"The body repeats "
             f"{'these headings' if len(_dupes) > 1 else 'this heading'}: "
             f"{', '.join(repr(d) for d in _dupes)}. Merge everything belonging under each "
-            f"one into a single section and resend."
+            f"one into a single section."
         )
 
     # A new page is the one place with no pre-existing damage to work around, so both
@@ -4745,7 +4754,7 @@ def _create_file(args: dict) -> str:
                  path, _before, _after)
     _bad = _bad_headings(body, title)
     if _bad:
-        return _bad_heading_error("create_file", _bad, title, _collided)
+        _problems.append(_bad_heading_error("create_file", _bad, title, _collided, bare=True))
 
     if pg_type not in _VALID_PAGE_TYPES:
         return (f"Error: type must be one of {', '.join(sorted(_VALID_PAGE_TYPES))}. "
@@ -4760,11 +4769,11 @@ def _create_file(args: dict) -> str:
     # Only single-word-or-more alphabetic titles are checked; titles the LLM cannot get
     # meaningfully wrong (pure numbers, etc.) are left alone.
     if title and title == title.lower() and any(c.isalpha() for c in title):
-        return (
-            f"Error: create_file refused — title {title!r} is all lowercase. Page titles are "
-            f"Title Case (e.g. \"European Union\", not \"european union\"). Resend create_file "
-            f"with the title properly capitalized. Do not just call .title() blindly — keep "
-            f"acronyms like \"EU\" or \"NASA\" and proper nouns capitalized correctly."
+        _problems.append(
+            f"The title {title!r} is all lowercase. Page titles are Title Case "
+            f"(e.g. \"European Union\", not \"european union\"). Do not just call .title() "
+            f"blindly — keep acronyms like \"EU\" or \"NASA\" and proper nouns capitalized "
+            f"correctly."
         )
 
 
@@ -4779,14 +4788,12 @@ def _create_file(args: dict) -> str:
         _missing = [s for s in _required
                     if not re.search(r"^#{1,6}\s*" + s + r"\s*$", body, re.MULTILINE)]
         if _missing:
-            return (
-                f"Error: create_file refused — the source page is missing required "
-                f"section(s): {', '.join(_missing)}.\n\n"
+            _problems.append(
+                f"The source page is missing required section(s): {', '.join(_missing)}. "
                 f"A source page cannot be edited after it is written, and Steps 5 and 6 "
                 f"read its '## Entities' and '## Concepts' lists to decide which pages to "
                 f"create or update — without them this ingest cannot do its job. Add the "
-                f"missing section(s) as '## <Name>' headings and resend create_file with "
-                f"the complete body."
+                f"missing section(s) as '## <Name>' headings."
             )
 
     # The one heading the template says every page of these types keeps. Checking it here
@@ -4820,26 +4827,39 @@ def _create_file(args: dict) -> str:
                      path, "an" if pg_type[0] in "aeiou" else "a", pg_type, _wrong, _opener)
 
         if not any(_norm_heading(h) == _norm_heading(_opener) for h in _heads):
-            return (
-                f"Error: create_file refused — {'an' if pg_type[0] in 'aeiou' else 'a'} "
-                f"{pg_type} page must have a "
+            _problems.append(
+                f"{'An' if pg_type[0] in 'aeiou' else 'A'} {pg_type} page must have a "
                 f"'## {_opener}' section, and this one has "
                 + (f"only: {', '.join(repr(h) for h in _heads)}." if _heads
                    else "no sections at all.") +
-                f"\n\nEvery {pg_type} page opens with {_opener}: two or three sentences "
+                f" Every {pg_type} page opens with {_opener}: two or three sentences "
                 f"saying what the subject is, before anything more specific. Add it as the "
-                f"first '## ' heading and resend create_file with the complete body."
+                f"first '## ' heading."
             )
 
 
     # Only one source page per ingest session.
     if _subdir == "sources" and _ctx()._current_source_page:
-        return (f"Error: create_file refused — a source page ({_ctx()._current_source_page}) was already "
-                f"created this session. Each ingest produces exactly one source page.")
+        _problems.append(
+            f"A source page ({_ctx()._current_source_page}) was already created this "
+            f"session. Each ingest produces exactly one source page.")
     # Entity/concept pages must be created after the source page so sources: is populated.
+    # This says nothing about the body, so it is true the moment the call arrives — which
+    # is exactly why reporting it alongside the body problems matters rather than after
+    # them.
     if _subdir in ("entities", "concepts") and _ctx()._current_inbox_path and not _ctx()._current_source_page:
-        return (f"Error: create_file refused — create the source page (wiki/sources/...) first, "
-                f"then create entity/concept pages. This ensures sources: frontmatter is populated correctly.")
+        _problems.append(
+            "Create the source page (wiki/sources/...) first, then create entity/concept "
+            "pages. This ensures sources: frontmatter is populated correctly.")
+
+    if _problems:
+        if len(_problems) == 1:
+            return f"Error: create_file refused — {_problems[0][0].lower()}{_problems[0][1:]}"
+        return ("Error: create_file refused — "
+                f"{len(_problems)} things need fixing, all of them in one resend:\n\n"
+                + "\n\n".join(f"  {i}. {t}" for i, t in enumerate(_problems, 1))
+                + "\n\nFix all of them and call create_file once more.")
+
     if _subdir in ("entities", "concepts", "synthesis"):
         # Always derive sources from the current session source page; ignore LLM-supplied value.
         sources = [_ctx()._current_source_page] if _ctx()._current_source_page else []
