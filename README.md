@@ -234,6 +234,7 @@ tools/
   unlink_headings.py    Strip markdown links out of section headings (no LLM needed)
   promote_openers.py    Add the ## Overview / ## Definition a page's template needs
   rename_section.py     Merge synonymous section headings into one name
+  merge_page.py         Fold a duplicate page into another and delete it
   repair_links.py       Fix broken relative links + reader-mode URLs (no LLM needed)
   repair_frontmatter.py Backfill missing created:/updated: frontmatter (no LLM needed)
   lint.sh               Shell-based broken-link checker

@@ -131,7 +131,7 @@ before every `create_file` or `update_file` call.
 | `raw_source` | string (quoted) | Repo-relative path to the raw inbox file. Source documents only. **System-managed — never supply or modify.** |
 | `aliases` | list of strings | Extra names the autolinker should match and link to this page (e.g. common abbreviations or alternate spellings). Human-set only — do not supply during ingest. Example: `aliases: ["FBI", "bureau"]` |
 | `no_autolink` | boolean | If `true`, this page's title and aliases are excluded from the autolinker — bare occurrences of the title in other pages will not be linked here. Use for concept titles that are also common nouns. Human-set only — do not supply during ingest. |
-| `deprecated` | boolean | If `true`, the page is retired. Do not delete — set this flag. |
+| `deprecated` | boolean | If `true`, the page is retired: it leaves the autolinker's title map and `lookup_titles` reports it as RETIRED rather than as a page to update. Human-set only. A true duplicate of another page is merged and deleted instead (`tools/merge_page.py`) — retiring one leaves its path occupied, so nothing can take the name. |
 
 ### Standard heading structures per document type
 

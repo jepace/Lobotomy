@@ -3182,6 +3182,159 @@ _HEAL_SUBDIRS = ("sources", "entities", "concepts", "synthesis")
 _READER_URL_RE = re.compile(r"about:reader\?url=[^\s\"'<>)\]]+", re.IGNORECASE)
 
 
+def merge_page(loser_rel: str, survivor_rel: str, extra_aliases=(),
+               force: bool = False, dry_run: bool = False) -> dict:
+    """Fold one page into another: repoint every link, carry the names and sources over,
+    then delete the loser.
+
+    find_duplicate_pages.py finds these — one subject under two slugs, "GDP" and "Gross
+    Domestic Product" — and is report-only because deciding they are the same thing needs
+    judgment. Once you have decided, everything that follows is mechanical, and doing it by
+    hand means finding every link by grep and getting the relative paths right from each
+    referring directory.
+
+    **The body is not merged here.** Combining two pages' prose is the judgment half, and a
+    tool that concatenated them would produce exactly the duplication the wiki is trying to
+    avoid. So this refuses while the loser still says anything the survivor does not, and
+    prints those lines: move them yourself (the page's Edit button, or ask the agent to,
+    now that section 6b exists), then run this again. --force skips the check for when you
+    have deliberately decided the remainder is redundant.
+
+    What it does carry over, because losing it would be silent damage:
+      - every link that pointed at the loser, repointed and re-relativized per page
+      - the loser's sources:, unioned into the survivor's — provenance outlives the page
+      - the loser's title and aliases, added as aliases of the survivor, so prose that
+        said "GDP" still resolves after the page called GDP is gone
+
+    The loser's version history under wiki/.history/ is deliberately left in place: it is
+    the only remaining copy of what the page said, and nothing else references it.
+    """
+    result = {"repointed": [], "aliases": [], "sources_added": [], "outstanding": [],
+              "deleted": None, "error": None}
+    loser = (WIKI_DIR / loser_rel) if not str(loser_rel).startswith("wiki/") else REPO_ROOT / loser_rel
+    surv = (WIKI_DIR / survivor_rel) if not str(survivor_rel).startswith("wiki/") else REPO_ROOT / survivor_rel
+
+    for p_, label in ((loser, "page to merge"), (surv, "surviving page")):
+        try:
+            p_.resolve().relative_to(WIKI_DIR.resolve())
+        except ValueError:
+            result["error"] = f"{label} is not inside wiki/: {p_}"
+            return result
+        if not p_.exists():
+            result["error"] = f"{label} does not exist: {p_}"
+            return result
+        if p_.name == "index.md" or p_.resolve() == (WIKI_DIR / "log.md").resolve():
+            result["error"] = f"{p_.name} is managed automatically and cannot be merged"
+            return result
+    if loser.resolve() == surv.resolve():
+        result["error"] = "a page cannot be merged into itself"
+        return result
+    if loser.parent.name == "sources" or surv.parent.name == "sources":
+        result["error"] = ("wiki/sources/ pages are immutable — they record one source "
+                           "each and are never merged")
+        return result
+
+    l_text, s_text = (x.read_text(encoding="utf-8", errors="replace") for x in (loser, surv))
+    l_title = _fm_title(l_text) or loser.stem
+    s_title = _fm_title(s_text) or surv.stem
+
+    # What does the loser still say that the survivor does not? Compared line by line with
+    # links flattened and whitespace normalized, ignoring headings and the generated
+    # Sources section — the same shape of test find_duplicate_sections uses to decide when
+    # a merge needs no judgment.
+    def _claims(text):
+        body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
+        body = re.split(r"^#{1,6}[ \t]*Sources[ \t]*$", body, flags=re.MULTILINE)[0]
+        out = []
+        for line in body.splitlines():
+            line = _MD_LINK_RE.sub(r"\1", line).strip().lstrip("-*• ").strip()
+            if len(line) > 25 and not line.startswith("#"):
+                out.append(" ".join(line.split()).lower())
+        return out
+
+    s_claims = _claims(s_text)
+    result["outstanding"] = [c for c in _claims(l_text)
+                             if not any(c in sc or sc in c for sc in s_claims)]
+    if result["outstanding"] and not force:
+        result["error"] = (
+            f"{loser_rel} still says {len(result['outstanding'])} thing(s) "
+            f"{survivor_rel} does not. Move them first — merging bodies is the part that "
+            f"needs judgment, and concatenating them would just recreate the duplication. "
+            f"Use --force once you have decided the remainder is redundant.")
+        return result
+
+    # --- carry the names over -----------------------------------------------------
+    _t, s_aliases, _na, _dep = _parse_title_fields(s_text)
+    _t2, l_aliases, _na2, _dep2 = _parse_title_fields(l_text)
+    have = {a.lower() for a in s_aliases} | {s_title.lower()}
+    add = [a for a in ([l_title] + list(l_aliases) + list(extra_aliases))
+           if a and a.lower() not in have and not have.add(a.lower())]
+    new_s = s_text
+    if add:
+        result["aliases"] = add
+        merged = list(s_aliases) + add
+        import json as _json
+        line = "aliases: " + _json.dumps(merged, ensure_ascii=False)
+        new_s = (_set_fm_field(new_s, "aliases", line) if re.search(
+            r"^aliases:", new_s, re.MULTILINE) else
+            re.sub(r"^(title:[^\n]*\n)", r"\1" + line + "\n", new_s, count=1, flags=re.MULTILINE))
+
+    # --- carry provenance over ----------------------------------------------------
+    def _sources_of(text):
+        m = re.search(r"^sources:\s*\[(.*?)\]", text, re.MULTILINE | re.DOTALL)
+        return [x for x in re.findall(r'"([^"]+)"', m.group(1) if m else "") if x.strip()]
+    s_src, l_src = _sources_of(new_s), _sources_of(l_text)
+    extra_src = [x for x in l_src if x not in s_src]
+    if extra_src:
+        result["sources_added"] = extra_src
+        joined = ", ".join(f'"{x}"' for x in s_src + extra_src)
+        new_s = _set_fm_field(new_s, "sources", f"sources: [{joined}]")
+
+    if not dry_run and new_s != s_text:
+        _atomic_write(surv, new_s)
+
+    # --- repoint every link that pointed at the loser -----------------------------
+    import os as _os
+    for f in wiki_pages():
+        if f.resolve() == loser.resolve():
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        def _fix(m, _page=f):
+            target = m.group(2).split("#", 1)[0]
+            if not target or target.startswith(("http", "#", "mailto")):
+                return m.group(0)
+            try:
+                if (_page.parent / target).resolve() != loser.resolve():
+                    return m.group(0)
+            except OSError:
+                return m.group(0)
+            rel = _os.path.relpath(surv, _page.parent)
+            return f"[{m.group(1)}]({rel})"
+
+        fixed = _MD_LINK_RE.sub(_fix, text)
+        if fixed != text:
+            result["repointed"].append(f.relative_to(WIKI_DIR).as_posix())
+            if not dry_run:
+                _atomic_write(f, fixed)
+
+    result["deleted"] = loser.relative_to(WIKI_DIR).as_posix()
+    if not dry_run:
+        loser.unlink()
+        _title_map_cache_reset()
+    return result
+
+
+def _title_map_cache_reset() -> None:
+    """Drop the title map after a page is deleted. _atomic_write invalidates on writes;
+    an unlink is the one mutation it never sees."""
+    global _title_map_cache
+    _title_map_cache = None
+
+
 def rename_section(old_names: "list[str]", new_name: str, dry_run: bool = False) -> dict:
     """Rename one section heading across the whole wiki, merging synonyms into it.
 
@@ -3551,8 +3704,8 @@ def _title_alts(title: str) -> str:
     return "(?:" + "|".join(alts) + ")"
 
 
-def _parse_title_fields(text: str) -> "tuple[str | None, list[str], bool]":
-    """Extract (title, aliases, no_autolink) from a wiki page's frontmatter.
+def _parse_title_fields(text: str) -> "tuple[str | None, list[str], bool, bool]":
+    """Extract (title, aliases, no_autolink, deprecated) from a page's frontmatter.
 
     Shared by _build_title_map and _atomic_write's cache-invalidation check, so the two
     never disagree about which fields the title map actually depends on.
@@ -3560,11 +3713,12 @@ def _parse_title_fields(text: str) -> "tuple[str | None, list[str], bool]":
     import re
     m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
     if not m:
-        return None, [], False
+        return None, [], False, False
     fm_lines = m.group(1).splitlines()
     title = None
     aliases: list[str] = []
     no_autolink = False
+    deprecated = False
     i = 0
     while i < len(fm_lines):
         line = fm_lines[i]
@@ -3573,6 +3727,8 @@ def _parse_title_fields(text: str) -> "tuple[str | None, list[str], bool]":
         elif line.startswith("no_autolink:"):
             val = line.split(":", 1)[1].strip().lower()
             no_autolink = val in ("true", "yes", "1")
+        elif line.startswith("deprecated:"):
+            deprecated = line.split(":", 1)[1].strip().lower() in ("true", "yes", "1")
         elif line.startswith("aliases:"):
             rest = line.split(":", 1)[1].strip()
             if rest.startswith("["):
@@ -3587,7 +3743,7 @@ def _parse_title_fields(text: str) -> "tuple[str | None, list[str], bool]":
                     aliases.append(fm_lines[j][2:].strip().strip('"'))
                     j += 1
         i += 1
-    return title, aliases, no_autolink
+    return title, aliases, no_autolink, deprecated
 
 
 def _build_title_map() -> list[tuple[str, str]]:
@@ -3655,8 +3811,12 @@ def _build_title_map() -> list[tuple[str, str]]:
             if f.name == "index.md":
                 continue
             text = f.read_text(encoding="utf-8", errors="replace")
-            title, aliases, no_autolink = _parse_title_fields(text)
-            if title:
+            title, aliases, no_autolink, deprecated = _parse_title_fields(text)
+            # deprecated: true is documented as how a page is retired, and was honoured
+            # nowhere — a retired page stayed in the map, so the autolinker kept linking
+            # to it and lookup_titles kept telling the agent to update it. Leaving it out
+            # is the whole of what the flag was supposed to mean.
+            if title and not deprecated:
                 wiki_rel = str(f.relative_to(WIKI_DIR))
                 key = title.lower()
                 if key not in seen:
@@ -3710,6 +3870,17 @@ def _norm_name_key(name: str) -> str:
     s = re.sub(r"[^a-z0-9]+", " ", s).strip()
     s = re.sub(r"\b(?:[a-z] )+[a-z]\b", lambda m: m.group(0).replace(" ", ""), s)
     return re.sub(r"\s+", " ", s)
+
+
+def _is_deprecated(wiki_rel: str) -> bool:
+    """Is this page retired? Read from disk rather than the title map, because a retired
+    page is deliberately absent from the map — and _resolve_page still has to find it, or
+    lookup_titles says NO PAGE right before create_file says the path is taken."""
+    try:
+        return _parse_title_fields(
+            (WIKI_DIR / wiki_rel).read_text(encoding="utf-8", errors="replace"))[3]
+    except OSError:
+        return False
 
 
 def _resolve_page(name: str, by_key: dict) -> str:
@@ -3795,9 +3966,14 @@ def _lookup_titles(args: dict) -> str:
     for t, rel in title_map:
         by_norm.setdefault(_norm_title_key(t), []).append((t, rel))
 
-    found, missing, near = [], [], False
+    found, missing, near, retired = [], [], False, []
     for n in names:
         rel = _resolve_page(n, by_key)
+        if rel and _is_deprecated(rel):
+            # Neither group fits: "update it" is wrong because the page is retired, and
+            # "create it" is wrong because create_file refuses on a path that exists.
+            retired.append(f"  - {n} → wiki/{rel}")
+            continue
         if rel:
             note = ""
             if not by_key.get(n.lower()):
@@ -3836,6 +4012,11 @@ def _lookup_titles(args: dict) -> str:
                       f"there to read, and the read-before-write rule applies only to "
                       f"pages that already exist:"]
         lines += missing
+    if retired:
+        lines += ["", f"RETIRED ({len(retired)}) — these pages are marked deprecated. Do "
+                      f"NOT update them and do NOT create a replacement: the path is "
+                      f"taken, so create_file would refuse. Leave them alone and carry on:"]
+        lines += retired
     lines += ["", "This answer is exact and covers aliases — do not call search_wiki to "
                   "double-check it."]
     if near:

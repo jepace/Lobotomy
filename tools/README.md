@@ -159,6 +159,34 @@ Nothing is lost: the link target is still reachable from the prose under the hea
 `relink.py` re-links the subject there anyway. Every page changed goes through the normal
 write path, so it is revertable from that page's History view.
 
+### `merge_page.py` — fold one page into another and delete it
+`find_duplicate_pages.py` finds one subject under two slugs — `gdp.md` and
+`gross-domestic-product.md` — and is report-only, because deciding they are the same thing
+needs judgment. Once you have decided, the rest is mechanical.
+
+```sh
+python3 tools/merge_page.py wiki/concepts/gdp.md \
+    --into wiki/concepts/gross-domestic-product.md --dry-run
+python3 tools/merge_page.py wiki/concepts/gdp.md \
+    --into wiki/concepts/gross-domestic-product.md
+python3 tools/relink.py      # re-link bare prose under the survivor's new aliases
+```
+
+Carries over what would otherwise be lost silently: **every link** to the old page,
+repointed and re-relativized per referring directory; **`sources:`**, unioned into the
+survivor, because provenance outlives the page; and **the old title plus its aliases**,
+added as aliases of the survivor, so prose that said "GDP" still resolves after the page
+called GDP is gone. `--alias NAME` adds more.
+
+**Bodies are not merged for you.** That is the judgment half, and a tool that concatenated
+them would recreate the duplication the wiki exists to avoid — so it refuses while the old
+page still says anything the survivor does not, and prints those lines. Move them first,
+then run it again. `--force` skips the check once you have decided the remainder is
+redundant.
+
+The old page's history under `wiki/.history/` is left in place: it is the only remaining
+copy of what that page said.
+
 ### `rename_section.py` — collapse a cluster of synonymous headings into one name
 Section names are the wiki's vocabulary, and vocabulary drifts: one idea ends up under
 three names — "Claims & Positions" on 466 pages, "Positions" on 110, "Key Positions" on
