@@ -3302,7 +3302,17 @@ def _rebuild_index(args: dict) -> str:
                 continue
             s = line.strip()
             if s and not s.startswith("#"):
-                return s[:120]
+                # Flatten links to their text, then truncate. The line is lifted verbatim
+                # from a page's prose, where the autolinker wrote every link relative to
+                # THAT page's directory — `../entities/cnn.md` from wiki/entities/. Copied
+                # into wiki/index.md those resolve outside the wiki entirely, and there
+                # were 5,900 of them on the real wiki, regenerated on every ingest, so no
+                # repair pass could ever win. Truncating first made it worse: 120
+                # characters routinely lands inside a URL and leaves `[White House](../ent`
+                # on the page as literal text.
+                # Nothing is lost — the entry already links to the page itself, and a
+                # one-line blurb is not where cross-references belong.
+                return _MD_LINK_RE.sub(r"\1", s)[:120]
         return ""
 
     sections = [("Sources", "sources"), ("Entities", "entities"),

@@ -87,6 +87,17 @@ MUTATIONS = [
      '            f"replacement text; to change what is under it, call update_section on "\n'
      '            f"{_dupes[0]!r}, or append_section to add to it."',
      '            f"replacement text."'),
+    ("index blurbs carry no borrowed links",
+     # The blurb is another page's prose, so its links are relative to THAT page. Copied
+     # into wiki/index.md they resolve outside the wiki: 5,900 of them, regenerated on
+     # every ingest, so no repair pass could ever win.
+     '                return _MD_LINK_RE.sub(r"\\1", s)[:120]',
+     '                return s[:120]'),
+    ("repair passes leave generated files alone",
+     # index.md is rewritten by _rebuild_index and log.md is append-only, and
+     # _snapshot_version skips both by name — so a write to either cannot be reverted.
+     '        if f.name in _GENERATED:\n            continue\n',
+     '', "tools/repair_links.py"),
     ("timeline: loose bullet parsing",
      # Narrow the reader back to the exact shape the renderer emits. A hand-written
      # `- 2026-08: ...` then goes unrecognised, is filed as prose, and the same fact is

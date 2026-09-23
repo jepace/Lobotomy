@@ -158,6 +158,26 @@ still exists under some other path is *repaired* by pass 2, never unwrapped.
 `rename_page.py` already does all of this for a rename, including the title and the
 history — prefer it over deleting and repairing.
 
+### `undo_pass.py` — put back everything one pass wrote
+Every write stamps its reason into the revision filename, which makes a whole pass
+addressable after the fact. Reverting one page from its History view answers one bad
+repair; this answers "that pass touched 900 pages and I want them back".
+
+```sh
+python3 tools/undo_pass.py repair-links --dry-run   # what it changed
+python3 tools/undo_pass.py repair-links --diff      # the full diff per page
+python3 tools/undo_pass.py repair-links             # put it back
+```
+
+The reason is the one in the filename: `ingest`, `user-edit`, `relink`, `repair-links`,
+`heal`, `merge`, `promote-opener`, `revert`.
+
+A page is only reverted when that pass's write was the **last** thing to touch it —
+otherwise reverting would discard the ingest that came after, so the page is listed under
+"Left alone" instead. Several writes by the same pass are undone as a unit, back to the
+state before the pass started. `index.md` and `log.md` keep no history and cannot be
+restored from here; it says so. The revert is itself recorded, so it can be undone too.
+
 ### `unlink_headings.py` — take markdown links out of headings
 `## [Atheism](../sources/atheism-wikipedia-2026.md)` → `## Atheism`. Every section tool
 finds a section by its heading text, so a heading carrying link syntax is unaddressable:
