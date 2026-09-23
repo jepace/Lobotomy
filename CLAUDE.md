@@ -86,7 +86,34 @@ removes what it writes anyway. It runs in three places: `_autolink_now(p)` after
 write tool, `_post_process_session()` over every touched page at `done()`, and
 `relink.py`/`relink_all()` as the whole-wiki catch-up sweep.
 
-Uses a combined regex where group 1 protects existing links and group 2 matches titles bare or with a sub-span already linked (via `_title_alts()`). **All** bare occurrences of each title (and any `aliases:`) are linked (not just the first). When a partial match is found (e.g. `CASA of [Monterey County](url)`), the inner link is stripped and the whole phrase is replaced with the longer-title link.
+Uses a combined regex where group 1 protects existing links and group 2 matches titles bare or with a sub-span already linked (via `_title_alts()`). When a partial match is found (e.g. `CASA of [Monterey County](url)`), the inner link is stripped and the whole phrase is replaced with the longer-title link.
+
+**A title links once per section's prose, and on every list or table row.** This is
+Wikipedia's MOS:REPEATLINK, which links once per article but relinks in infoboxes, tables,
+captions, footnotes and lists — a reader arrives at those out of order. Two departures from
+the letter of it, both forced by the shape of these pages:
+
+- **Per section, not per page.** `donald-trump.md` is 136KB across twenty-odd sections; one
+  link at the top leaves the rest with no navigation. A section here is about what an
+  article is there. `_seen` resets on every heading line.
+- **A list row never spends the section's prose mention** (`is_listish`). A source page's
+  `## Entities` / `## Concepts` and a `## Timeline` are lookup tables, and a row whose link
+  was spent in a paragraph above it is a dead row.
+
+The half that is easy to miss: the rule must also **unlink** repeats already on disk, or it
+applies only to newly written text while ~9,000 pages keep every repeat. Unlinking is
+scoped to links the autolinker itself would have written — same target page *and* display
+text whose `\w+` tokens are exactly the title's — so a hand-written
+`[the disease](../concepts/measles.md)` alias and every external link survive.
+
+Two consequences worth holding on to. **Substitutions now remove link syntax as well as
+adding it**, which breaks the old invariant that nothing could expose text for a later
+title to match; the result stays deterministic only because `_build_title_map()` is sorted,
+so that ordering is now load-bearing for output, not just for convergence. And **group 1
+matches every existing link on the line for every candidate title**, so anything expensive
+in that branch runs a million times on a large page: parsing the link with a regex there
+cost 19× (1.1s → 20.9s on a 63KB page with 1,200 links) until a plain `basename not in`
+substring test was put in front of it.
 
 The critical invariant: **never match inside existing markdown links**. Group 1 of the combined regex takes priority at each position, consuming existing links before group 2 can fire. Heading lines are skipped entirely (`is_heading`), so a link inside a heading was written by hand, not by this.
 

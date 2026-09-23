@@ -98,6 +98,31 @@ MUTATIONS = [
      # _snapshot_version skips both by name — so a write to either cannot be reverted.
      '        if f.name in _GENERATED:\n            continue\n',
      '', "tools/repair_links.py"),
+    ("repeat links: section resets the first mention",
+     # Without the reset a title links once per PAGE. On a 136KB page that leaves
+     # everything below the first section with no navigation at all.
+     '            if is_heading[i]:\n'
+     '                _seen[0] = False                # a new section gets its own first mention',
+     '            if is_heading[i]:\n'
+     '                pass'),
+    ("repeat links: lists always link",
+     # A source page's ## Entities and a Timeline are lookup tables read out of order.
+     '    is_listish = [bool(re.match(r"^\\s*(?:[-*+]\\s|\\d+[.)]\\s|\\|)", ln)) for ln in lines]',
+     '    is_listish = [False for ln in lines]'),
+    ("repeat links: existing repeats are unlinked",
+     # Without this the rule applies only to newly written text, and the ~9,000 pages
+     # written under the old rule keep every repeat forever.
+     '                if _seen[0]:\n'
+     '                    return inner.group(1)       # a repeat in prose — unlink it',
+     '                if False:\n'
+     '                    return inner.group(1)'),
+    ("repeat links: only unlink what the autolinker wrote",
+     # Drop the display-text check and a hand-written alias link,
+     # "[the disease](../concepts/measles.md)", gets stripped to plain text.
+     '                if frozenset(_WORD_RE.findall(inner.group(1).lower())) != _title_toks:\n'
+     '                    return m.group(1)',
+     '                if False:\n'
+     '                    return m.group(1)'),
     ("timeline: loose bullet parsing",
      # Narrow the reader back to the exact shape the renderer emits. A hand-written
      # `- 2026-08: ...` then goes unrecognised, is filed as prose, and the same fact is

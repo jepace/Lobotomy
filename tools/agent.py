@@ -1724,6 +1724,10 @@ def _read_section(args: dict) -> str:
 
 
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
+# Compiled once: the autolinker calls these per regex match, which on a large page
+# means hundreds of thousands of times per run.
+_INNER_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
+_WORD_RE = re.compile(r"\w+")
 
 
 def _match_index(body: str):
@@ -4374,6 +4378,13 @@ def _autolink(args: dict) -> str:
     # 6,866 regexes, nearly all of which could not match anything.
     lines = body.split("\n")
     is_heading = [bool(re.match(r"^#{1,6}\s", ln)) for ln in lines]
+    # A list row or table row always links, however many times the title has appeared
+    # already. This is Wikipedia's own carve-out from "link once" (MOS:REPEATLINK relinks
+    # in infoboxes, tables, captions, footnotes and lists) and it is load-bearing here: a
+    # source page's ## Entities and ## Concepts are bullet lists of names, and a Timeline
+    # is a list of dated entries. Those are lookup tables, read out of order, and a row
+    # whose link was spent higher up the page is a dead row.
+    is_listish = [bool(re.match(r"^\s*(?:[-*+]\s|\d+[.)]\s|\|)", ln)) for ln in lines]
 
     # Which titles could possibly appear here at all. A title matches only if every one of
     # its words appears literally in the body — bare, or as the display text of a linked
@@ -4382,12 +4393,24 @@ def _autolink(args: dict) -> str:
     # Comparing \w+ tokens rather than the raw words keeps this conservative: "PG&E"
     # contributes {pg, e}, which over-includes on odd punctuation and never under-includes.
     #
-    # Computed once from the body as it starts. Substitutions only ever add link syntax,
-    # and a complete [text](url) is consumed by group 1 before group 2 can look inside it,
-    # so no substitution can expose text that makes a previously-impossible title match.
+    # Computed once from the body as it starts, and deliberately never refreshed.
+    # Substitutions now REMOVE link syntax as well as adding it — a repeat mention in
+    # prose gets unwrapped — so this set can go stale. It stays correct anyway, in the one
+    # direction that matters: unwrapping drops the URL's words and keeps the display
+    # text's, so the set only ever over-includes, and over-including costs a wasted regex
+    # while under-including would silently skip a title that should have linked.
+    #
+    # Unwrapping can expose text that group 1 used to shield from group 2, so a later
+    # title in the map may match where it previously could not. That is a better result,
+    # not a worse one, and it stays deterministic because _build_title_map() is sorted —
+    # but it does mean this loop is order-dependent, so the map's order is load-bearing.
     body_tokens = set(re.findall(r"\w+", body.lower()))
 
     linked = 0
+    # Scoped to this call, not to the process: a long-running server autolinks thousands
+    # of pages and the key carries each page's own ../ prefix, so a module-level cache
+    # would grow without bound for no reuse.
+    _resolve_memo: dict = {}
     for title, link_path in title_map:
         needed = _title_tokens_cache.get(title)
         if needed is None:
@@ -4410,18 +4433,84 @@ def _autolink(args: dict) -> str:
                 re.IGNORECASE,
             )
             _title_regex_cache[title] = combined
-        def _replacer(m, _lp=link_path):
-            if m.group(1):           # existing complete link — keep as-is
+        # Link the FIRST mention in each section's prose, and every mention in a list or
+        # table row. Later prose mentions are left bare — and an existing link on one is
+        # removed, or the rule would only ever apply to newly written text while the
+        # ~9,000 pages written before it kept every repeat.
+        #
+        # Scoped per section rather than per page because these pages are not
+        # Wikipedia-shaped: donald-trump.md is 136KB across twenty-odd sections, and one
+        # link at the very top leaves the rest of it with no navigation at all. A section
+        # here is about what an article is there.
+        _title_toks = needed
+        _seen = [False]        # linked already in the section being walked
+
+        def _points_here(url: str) -> bool:
+            """Does this link target the page this title lives on? Compared resolved, so
+            a link written with a different number of ../ still counts.
+
+            The fast path is the one that fires: a link this autolinker wrote carries
+            exactly the string it is about to write. resolve() touches the filesystem, and
+            a 136KB page carrying hundreds of links would otherwise pay for it on every
+            match of every title.
+            """
+            u = url.split("#", 1)[0]
+            if u == link_path:
+                return True
+            if not u or "://" in u or u.startswith("mailto:"):
+                return False
+            hit = _resolve_memo.get((u, link_path))
+            if hit is None:
+                try:
+                    hit = ((target_p.parent / u).resolve()
+                           == (target_p.parent / link_path).resolve())
+                except (OSError, ValueError):
+                    hit = False
+                _resolve_memo[(u, link_path)] = hit
+            return hit
+
+        # Any link pointing at this title's page must contain that page's filename, so a
+        # plain substring test rejects the overwhelming majority without parsing
+        # anything. Skipping this cost 19x: group 1 matches EVERY existing link on the
+        # line, for every candidate title, so a 63KB page with 1,200 links ran the parse
+        # and the token comparison the better part of a million times — 1.1s became 20.9s.
+        _basename = link_path.rsplit("/", 1)[-1]
+
+        def _replacer(m, _lp=link_path, _always=False):
+            if m.group(1):                      # an existing complete link
+                if _basename not in m.group(1):
+                    return m.group(1)           # cannot be ours; nothing to parse
+                inner = _INNER_LINK_RE.match(m.group(1))
+                if not inner or not _points_here(inner.group(2)):
+                    return m.group(1)           # someone else's link, or external
+                # Only ever unwrap a link this autolinker would itself have written:
+                # same page AND the display text is the title. A hand-written
+                # "[the outbreak](../entities/pa-outbreak.md)" is not ours to strip.
+                if frozenset(_WORD_RE.findall(inner.group(1).lower())) != _title_toks:
+                    return m.group(1)
+                if _always:
+                    return m.group(1)           # a list row always keeps its link
+                if _seen[0]:
+                    return inner.group(1)       # a repeat in prose — unlink it
+                _seen[0] = True
                 return m.group(1)
-            # Strip any inner link syntax (e.g. [Monterey County](url) → Monterey County)
             display = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", m.group(2))
+            if not _always and _seen[0]:
+                return display                  # already linked in this section
+            if not _always:
+                _seen[0] = True
             return f"[{display}]({_lp})"
 
         changed = False
         for i, line in enumerate(lines):
-            if is_heading[i] or not line:
+            if is_heading[i]:
+                _seen[0] = False                # a new section gets its own first mention
                 continue
-            new_line = combined.sub(_replacer, line)
+            if not line:
+                continue
+            _always = is_listish[i]
+            new_line = combined.sub(
+                lambda m, _a=_always: _replacer(m, _always=_a), line)
             if new_line != line:
                 lines[i] = new_line
                 changed = True
