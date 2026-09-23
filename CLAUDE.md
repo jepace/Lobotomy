@@ -242,6 +242,11 @@ the logs showed as unfixed was simply not deployed yet.
 changed, and `mutate.py` must never sit beside a running server. It does not run them
 either: deploy copies files and nothing else. Run the suite yourself before deploying.
 
+`tests/test_template_js.py` parses every inline `<script>` in `tools/templates/` with
+`node --check`, skipping when node is absent. The templates carry real logic the Python
+suite cannot reach, and a syntax error there kills the whole block silently — the search
+popup's keyboard navigation would just stop working with nothing in any log.
+
 `docs/test-plan.md` is the spec the suite was built from; read it before adding a module.
 
 ## Config Structure

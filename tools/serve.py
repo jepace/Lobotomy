@@ -1405,6 +1405,12 @@ def chat_queue_drain():
     return {"ok": True, "dropped": dropped, "running": job_queue.status()["running"]}
 
 
+# Enough that a normal search is complete in one go, capped so a one-letter query cannot
+# serialize the whole wiki into a dropdown.
+_SEARCH_RESULT_LIMIT = 50
+_SEARCH_RESULT_MAX = 200
+
+
 @app.route("/wiki/search")
 @require_login
 def wiki_search():
@@ -1413,12 +1419,20 @@ def wiki_search():
         return {"results": []}
     res = search_wiki_core(q, WIKI_DIR)
     if res["error"]:
-        return {"results": []}
+        return {"results": [], "total": 0}
+    # The cap used to be a bare [:12] with nothing saying so, which reads as "the wiki
+    # has 12 matches" rather than "you are seeing 12 of them". Return the real total so
+    # the UI can say which it is, and raise the cap: the popup scrolls, and the arrow
+    # keys make a longer list cheap to walk.
+    hits = res["results"]
+    limit = max(1, min(int(request.args.get("limit", _SEARCH_RESULT_LIMIT) or _SEARCH_RESULT_LIMIT),
+                       _SEARCH_RESULT_MAX))
     return {
+        "total": len(hits),
         "results": [
             {"path": str(r["path"].relative_to(WIKI_DIR)), "title": r["title"], "excerpt": r["snippet"]}
-            for r in res["results"][:12]
-        ]
+            for r in hits[:limit]
+        ],
     }
 
 
