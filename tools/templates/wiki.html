@@ -14,13 +14,35 @@
     gap: 10px;
     z-index: 100;
   }
-  .wiki-topbar h1 {
+  /* The toolbar's copy of the name. Not the page's title — the title is the <h1> at the
+     top of the article. This is the "where am I" label for when that has scrolled away,
+     so it fades out while the real one is on screen. Visible by default: if the script
+     below never runs, the name is shown twice, which is better than not at all. */
+  .wiki-topbar .topbar-title {
     font-size: 17px;
     font-weight: 600;
     flex: 1;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    transition: opacity .18s ease;
+  }
+  .wiki-topbar .topbar-title.hidden { opacity: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    .wiki-topbar .topbar-title { transition: none; }
+  }
+  /* base.html's `.wiki-content h1` has always styled this; until now nothing used it,
+     because render_md strips the page's own H1 and no template printed one. Qualified
+     with .wiki-content here because that selector is more specific than a bare class and
+     silently won the font-size. */
+  .wiki-content h1.wiki-page-title {
+    /* Larger than the 24px .wiki-content h1 default: at 24px it sat only four pixels
+       above an `##` section heading and read as the first section rather than the title. */
+    font-size: 29px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -.02em;
+    margin: 2px 0 18px;
   }
   .wiki-sections {
     display: flex;
@@ -101,7 +123,7 @@
 <div class="page">
   <div class="wiki-topbar">
     <a href="/wiki/" style="color:var(--accent); text-decoration:none; font-size:22px; line-height:1;">‹</a>
-    <h1>{{ title }}</h1>
+    <span class="topbar-title" id="topbar-title">{{ title }}</span>
     <a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;" href="/wiki/{{ current_path }}/edit">Edit</a>
     {% if current_path %}
     <a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;"
@@ -131,11 +153,32 @@
   </div>
 
   <div class="wiki-content">
+    <h1 class="wiki-page-title" id="page-title">{{ title }}</h1>
     {{ content | safe }}
   </div>
 </div>
 
 <script>
+// The page name now reads as a title at the top of the article. The toolbar keeps a copy
+// for when that has scrolled out of sight, but showing both at once is just the name
+// twice — so fade the toolbar one out while the real title is on screen.
+//
+// The toolbar is sticky, so "on screen" means "below the toolbar", not "in the viewport":
+// without the rootMargin the title stays technically visible while sitting underneath the
+// bar that is trying to duplicate it. IntersectionObserver is not assumed — where it is
+// missing the toolbar label simply stays put, which is what it did before.
+(function () {
+  const title = document.getElementById('page-title');
+  const label = document.getElementById('topbar-title');
+  if (!title || !label || !('IntersectionObserver' in window)) return;
+  const bar = document.querySelector('.wiki-topbar');
+  const top = bar ? Math.round(bar.getBoundingClientRect().height) : 0;
+  const io = new IntersectionObserver(
+    (entries) => label.classList.toggle('hidden', entries[0].isIntersecting),
+    {rootMargin: `-${top}px 0px 0px 0px`, threshold: 0});
+  io.observe(title);
+})();
+
 function setChatPrompt(text) {
   sessionStorage.setItem('chatPrompt', text);
 }
