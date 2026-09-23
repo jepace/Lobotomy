@@ -2,7 +2,7 @@
 """
 Repair broken internal markdown links in the wiki.
 
-Fixes two classes of problems:
+Fixes four classes of problems:
 
 1. Nested/double-linked patterns (old autolink bug):
        [Text](../entities/[text](../entities/text.md))
@@ -30,6 +30,22 @@ Fixes two classes of problems:
    working link to the real article rather than a deleted one.
 
    Scans raw/ as well as wiki/, since the raw file carries the same bad url:.
+
+4. Links to a page that no longer exists anywhere:
+       [United](../entities/united.md)   with entities/united.md gone
+   →   United
+   Fix 2 only answers "is this the wrong route to a page that still exists?" — when
+   the page is simply gone it gives up, so one deleted page leaves a dead link on
+   every page that ever mentioned it. That was 135 of them for a single entities/
+   united.md, which the autolinker had been matching inside "United Nations" and
+   "united in opposition" across the whole wiki.
+
+   The link is unwrapped to its display text, not repointed: there is no target to
+   point at, and guessing one would be worse than the dead link — those 135 span the
+   airline, the UN, and the ordinary English word. The text is prose and reads
+   correctly on its own. Same reasoning as rename_page.py, which strips links whose
+   display text was the old title. Run relink.py afterwards and whatever genuinely
+   names a real page is linked again.
 
 Writes go through agent._atomic_write, like every other maintenance tool here: each page
 changed gets a version-history entry first, so a bad repair is revertable from that page's
@@ -111,6 +127,42 @@ def _repair_path(page: Path, link_path: str, wiki_dir: Path, raw_dir: Path) -> "
     return None
 
 
+# --- Fix 4: unwrap links to a page that no longer exists --------------------------------
+
+def _known_filenames(wiki_dir: Path, raw_dir: Path) -> set:
+    """Every filename that exists anywhere in wiki/ or raw/, built once per run.
+
+    _repair_path rglobs per broken link, which is fine when there are a handful. A page
+    deleted out from under the wiki produces one broken link per page that mentioned it —
+    hundreds — and at ~9,000 pages that is hundreds of full tree walks.
+    """
+    names = {p.name for p in wiki_dir.rglob("*") if p.is_file()}
+    if raw_dir.is_dir():
+        names |= {p.name for p in raw_dir.glob("*") if p.is_file()}
+    return names
+
+
+def _is_dangling(page: Path, link_path: str, known: set) -> bool:
+    """True when this link points at a wiki page that exists nowhere — not at the path
+    given, and not under any other path either.
+
+    _repair_path answers a narrower question: "is this the wrong route to a page that
+    exists?" When the page is simply gone it returns None and the link is left as it was,
+    so a deleted or renamed-around page leaves a dead link on every page that mentioned
+    it — 135 of them, in the case this was written for, all pointing at an entities/united.md
+    that no longer existed.
+    """
+    if re.match(r"^(https?:|mailto:|#|/)", link_path, re.IGNORECASE):
+        return False
+    link_path = link_path.split("#", 1)[0]
+    if not link_path or not link_path.endswith((".md", ".txt")):
+        return False
+    if (page.parent / link_path).resolve().exists():
+        return False
+    # Existing anywhere else in the tree makes it _repair_path's job, not this one.
+    return Path(link_path).name not in known
+
+
 # --- Fix 3: unwrap Firefox Reader View URLs --------------------------------------------
 # Mirrors agent.py:_normalize_capture_url rather than importing it — the function there is
 # entangled with capture-time concerns this pass does not want. (The module is imported
@@ -137,7 +189,7 @@ def _wiki_pages(wiki_dir: Path, history_dir: Path):
 
 
 def repair_links(dry_run: bool = False) -> dict:
-    """Run all three repair passes over the wiki (and raw/ for the reader-URL unwrap).
+    """Run all four repair passes over the wiki (and raw/ for the reader-URL unwrap).
 
     Reads agent.WIKI_DIR / agent.RAW_DIR / agent.HISTORY_DIR at call time rather than
     capturing them as defaults — the same "resolve at call time, not at import" rule
@@ -150,6 +202,7 @@ def repair_links(dry_run: bool = False) -> dict:
     wiki_dir = agent.WIKI_DIR
     raw_dir = agent.RAW_DIR
     history_dir = agent.HISTORY_DIR
+    known_names = _known_filenames(wiki_dir, raw_dir)
 
     fixed_files = 0
     fixed_links = 0
@@ -164,32 +217,45 @@ def repair_links(dry_run: bool = False) -> dict:
         # Pass 1: nested links
         new_text, n1 = _NESTED_RE.subn(_repair_nested, text)
 
-        # Pass 2: wrong relative paths
-        count = [0]
+        # Pass 2: wrong relative paths, and pass 4: links to a page that is simply gone.
+        # One walk over the links, so the precedence is explicit — repointing a link to a
+        # page that still exists always beats unwrapping it.
+        count, gone = [0], [0]
 
-        def _path_replacer(m, _page=f, _count=count):
+        def _path_replacer(m, _page=f, _count=count, _gone=gone):
             display   = m.group(1)
             link_path = m.group(2)
             fixed     = _repair_path(_page, link_path, wiki_dir, raw_dir)
             if fixed:
                 _count[0] += 1
                 return f"[{display}]({fixed})"
+            if display.strip() and _is_dangling(_page, link_path, known_names):
+                # The target exists nowhere, so there is nothing to point at. Unwrap to
+                # the display text rather than leaving a link that 404s: the text is
+                # ordinary prose and reads correctly on its own. Same reasoning as
+                # rename_page.py, which strips links whose text was the old title — and
+                # for the same reason it is right here, since a deleted page's name was
+                # usually a word the autolinker had no business matching. Running
+                # relink.py afterwards re-links whatever genuinely names a real page.
+                _gone[0] += 1
+                return display
             return m.group(0)
 
         new_text = _LINK_RE.sub(_path_replacer, new_text)
-        n2 = count[0]
+        n2, n4 = count[0], gone[0]
 
         # Pass 3: unwrap about:reader?url= anywhere in the file (frontmatter url: and the
         # rendered ## Sources link alike). subn()'s count is safe here: _READER_RE only
         # matches actual wrappers, unlike _LINK_RE which matches every link.
         new_text, n3 = _READER_RE.subn(_unwrap_reader, new_text)
 
-        total = n1 + n2 + n3
+        total = n1 + n2 + n3 + n4
         if total:
             fixed_links += total
             fixed_files += 1
             rel = f.relative_to(wiki_dir)
-            detail.append(f"{rel}: fixed {total} ({n1} nested, {n2} bad-path, {n3} reader-url)")
+            detail.append(f"{rel}: fixed {total} ({n1} nested, {n2} bad-path, "
+                          f"{n3} reader-url, {n4} dangling)")
             if not dry_run:
                 _atomic_write(f, new_text)
 

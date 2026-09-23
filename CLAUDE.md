@@ -288,8 +288,10 @@ autolinker caches, and asserts its own isolation. Nothing there touches the repo
 **`mutate.py` is the one that proves the suite works.** A green run says nothing on its
 own: this disables one guard at a time and requires a test to go red for each. Every
 mutation must report CAUGHT. Add one whenever you add a guard — if you cannot write a
-mutation the suite catches, the guard is untested. It edits `agent.py` in place and
-restores it, so do not run it anywhere near a live server.
+mutation the suite catches, the guard is untested. It edits the file in place and restores
+it, so do not run it anywhere near a live server. A mutation targets `agent.py` by default;
+a fourth tuple element names another file (`"tools/repair_links.py"`), because the
+maintenance tools carry guards too.
 
 **`deploy.sh` stamps `.version` into the jail** (`git log -1`, written after the rsync)
 and `serve.py` logs it at startup — `Lobotomy starting — version: <sha> <date> <subject>`.

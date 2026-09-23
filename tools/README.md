@@ -132,15 +132,28 @@ and leaves prose that never meant it alone.
 
 ### `repair_links.py` — fix broken internal links
 Repairs links that already exist — it never creates one. (For turning bare text into links,
-that's `relink.py` above.) Three passes: un-nest double-linked text left by an old
-autolinker bug, correct relative paths with the wrong number of `../`, and unwrap
-`about:reader?url=...` capture URLs into the real article URL. Scans `raw/` as well as
-`wiki/`.
+that's `relink.py` above.) Four passes: un-nest double-linked text left by an old
+autolinker bug, correct relative paths with the wrong number of `../`, unwrap
+`about:reader?url=...` capture URLs into the real article URL, and unwrap links to a page
+that no longer exists anywhere. Scans `raw/` as well as `wiki/`.
 
 ```sh
 python3 tools/repair_links.py --dry-run   # report what would change
 python3 tools/repair_links.py             # apply
+python3 tools/relink.py                   # re-link the prose that names a real page
 ```
+
+That last pass is the one to reach for after deleting or renaming a page by hand: one
+deleted page leaves a dead link on every page that mentioned it, and `/wiki/lint` will
+list all of them. `[United](../entities/united.md)` becomes plain `United`. It is
+unwrapped rather than repointed because there is nothing to point at, and guessing would
+be worse than the dead link — the 135 links this was written for spanned an airline, the
+UN, and the ordinary English word. Run `relink.py` afterwards and whatever genuinely names
+a real page is linked again; whatever never meant it stays plain. A link whose target
+still exists under some other path is *repaired* by pass 2, never unwrapped.
+
+`rename_page.py` already does all of this for a rename, including the title and the
+history — prefer it over deleting and repairing.
 
 ### `unlink_headings.py` — take markdown links out of headings
 `## [Atheism](../sources/atheism-wikipedia-2026.md)` → `## Atheism`. Every section tool

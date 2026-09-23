@@ -28,9 +28,12 @@ REPO = Path(__file__).resolve().parent.parent
 AGENT = REPO / "tools" / "agent.py"
 RUNNER = REPO / "tests" / "run_all.py"
 
-# (name, find, replace) — `find` must appear exactly once in agent.py, or the mutation is
-# reported as STALE rather than silently skipped: an anchor that stopped matching means
-# the code moved and the mutation is no longer testing what it claims.
+# (name, find, replace) or (name, find, replace, "tools/other.py") — the guard being
+# broken usually lives in agent.py, so that is the default; a fourth element names another
+# file, because the maintenance tools carry guards too and a guard nothing tests is a guard
+# nothing tests wherever it lives. `find` must appear exactly once in the target file, or
+# the mutation is reported as STALE rather than silently skipped: an anchor that stopped
+# matching means the code moved and the mutation is no longer testing what it claims.
 MUTATIONS = [
     ("heading-rule: date",
      '        elif _DATED_HEADING_RE.search(name):\n            bad.append((name, "names a date"))',
@@ -50,6 +53,16 @@ MUTATIONS = [
     ("date qualifier absorption",
      '        stripped = _TRAILING_DATE_RE.sub("", name).strip(" -–—:,")',
      '        stripped = name'),
+    ("dangling links are unwrapped",
+     '            if display.strip() and _is_dangling(_page, link_path, known_names):',
+     '            if False:', "tools/repair_links.py"),
+    ("dangling: repointing beats unwrapping",
+     # Unwrap first and a link that merely took the wrong route to a page that still
+     # exists is destroyed instead of repaired.
+     '            fixed     = _repair_path(_page, link_path, wiki_dir, raw_dir)\n'
+     '            if fixed:',
+     '            fixed     = None\n'
+     '            if fixed:', "tools/repair_links.py"),
     ("timeline: loose bullet parsing",
      # Narrow the reader back to the exact shape the renderer emits. A hand-written
      # `- 2026-08: ...` then goes unrecognised, is filed as prose, and the same fact is
@@ -143,19 +156,28 @@ def main() -> int:
     pattern = sys.argv[1].lower() if len(sys.argv) > 1 else ""
     original = AGENT.read_text(encoding="utf-8")
     seeded = original.replace(*PRELUDE)          # only used by the wiki_pages mutation
+    # Every file any mutation touches, so the finally block restores all of them. Read
+    # once, before anything is written, and never re-read: restoring from a file this
+    # script has already mutated would make the damage permanent.
+    originals = {AGENT: original}
 
     caught = missed = stale = 0
     try:
-        for name, find, replace in MUTATIONS:
+        for name, find, replace, *rest in MUTATIONS:
             if pattern and pattern not in name.lower():
                 continue
-            base = seeded if "_WIKI_DIR_AT_IMPORT" in replace else original
+            target = REPO / rest[0] if rest else AGENT
+            if target not in originals:
+                originals[target] = target.read_text(encoding="utf-8")
+            base = originals[target]
+            if target == AGENT and "_WIKI_DIR_AT_IMPORT" in replace:
+                base = seeded
             if base.count(find) != 1:
                 print(f"  STALE   {name}  (anchor matched {base.count(find)}x — "
                       f"the code moved; fix this mutation)")
                 stale += 1
                 continue
-            AGENT.write_text(base.replace(find, replace), encoding="utf-8")
+            target.write_text(base.replace(find, replace), encoding="utf-8")
             r = subprocess.run([sys.executable, str(RUNNER)],
                                capture_output=True, text=True, cwd=REPO)
             summary = next((l.strip() for l in reversed(r.stdout.splitlines())
@@ -167,8 +189,10 @@ def main() -> int:
                 missed += 1
                 print(f"  MISSED  {name}  ** no test objected **")
     finally:
-        AGENT.write_text(original, encoding="utf-8")
-        assert AGENT.read_text(encoding="utf-8") == original, "agent.py was not restored!"
+        for target, text in originals.items():
+            target.write_text(text, encoding="utf-8")
+            assert target.read_text(encoding="utf-8") == text, \
+                f"{target.name} was not restored!"
 
     print(f"\n{caught} caught, {missed} missed, {stale} stale.")
     if missed or stale:
