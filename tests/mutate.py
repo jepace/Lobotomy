@@ -50,6 +50,26 @@ MUTATIONS = [
     ("date qualifier absorption",
      '        stripped = _TRAILING_DATE_RE.sub("", name).strip(" -–—:,")',
      '        stripped = name'),
+    ("timeline: loose bullet parsing",
+     # Narrow the reader back to the exact shape the renderer emits. A hand-written
+     # `- 2026-08: ...` then goes unrecognised, is filed as prose, and the same fact is
+     # written again beneath it.
+     r'    r"^[-*][ \t]*(?:\*\*|__)?[ \t]*(\d{4}(?:-\d{2}){0,2})(?![-\d])[ \t]*(?:\*\*|__)?[ \t]*"',
+     r'    r"^[-*][ \t]*\*\*(\d{4}(?:-\d{2}){0,2})\*\*[ \t]*"'),
+    ("timeline: date consumed whole",
+     # Without the guard the engine backtracks 2026-09-12 to 2026-09 and reads "-12" as
+     # the separator.
+     '(\\d{4}(?:-\\d{2}){0,2})(?![-\\d])',
+     '(\\d{4}(?:-\\d{2}){0,2})'),
+    ("timeline: restatements are folded",
+     '    rendered = _render_timeline(_tl_dedupe(entries))',
+     '    rendered = _render_timeline(entries)'),
+    ("timeline: every write path normalizes",
+     '    content = normalize_timeline(content)\n    content = _inject_sources_section(content, p)\n    _mkdir_inheriting(p.parent)',
+     '    content = _inject_sources_section(content, p)\n    _mkdir_inheriting(p.parent)'),
+    ("timeline: a fuller wording replaces the restatement it absorbs",
+     '    if [(d, t) for d, t, _ in _merged] == [(d, t) for d, t, _ in _kept]:',
+     '    if len(_merged) == len(_kept):'),
     ("timeline sorts rather than appends",
      '    return "\\n".join(f"- **{d}** — {t}" for d, t, _ in\n'
      '                      sorted(entries, key=lambda e: (_tl_sort_key(e[0]), e[2])))',

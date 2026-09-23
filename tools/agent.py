@@ -1342,6 +1342,7 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
         _t = _fm_title(content)
         if _t:
             content = _fm_m.group(1) + ensure_h1(content[_fm_m.end():], _t)
+    content = normalize_timeline(content)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
     _autolink_now(p)
@@ -1893,6 +1894,7 @@ def _replace_text(args: dict) -> str:
     new_content = _set_fm_field(new_content, "updated", f"updated: {_dt.date.today().isoformat()}")
     if p.parent.name in ("entities", "concepts", "synthesis"):
         new_content = _merge_sources_field(new_content, p)
+    new_content = normalize_timeline(new_content)
     new_content = _inject_sources_section(new_content, p)
 
     wiki_rel = str(p.relative_to(WIKI_DIR))
@@ -2087,6 +2089,7 @@ def _update_section(args: dict) -> str:
     new_content = _set_fm_field(new_content, "updated", f"updated: {_dt.date.today().isoformat()}")
     if p.parent.name in ("entities", "concepts", "synthesis"):
         new_content = _merge_sources_field(new_content, p)
+    new_content = normalize_timeline(new_content)
     new_content = _inject_sources_section(new_content, p)
 
     if wiki_rel not in _ctx()._session_entity_pages and wiki_rel not in _ctx()._session_updated_pages:
@@ -2203,6 +2206,7 @@ def _append_section(args: dict) -> str:
     new_content = _set_fm_field(new_content, "updated", f"updated: {_dt.date.today().isoformat()}")
     if p.parent.name in ("entities", "concepts", "synthesis"):
         new_content = _merge_sources_field(new_content, p)
+    new_content = normalize_timeline(new_content)
     new_content = _inject_sources_section(new_content, p)
 
     wiki_rel = str(p.relative_to(WIKI_DIR))
@@ -2222,8 +2226,23 @@ _TIMELINE_HEADING = "Timeline"
 # A timeline bullet: "- **2026-03-14** — the Pennsylvania Department of Health confirms…"
 # The em dash separator is what the writer produces; the parser accepts a hyphen too,
 # because that is what a model reaching for the format from memory tends to type.
-_TL_BULLET_RE = re.compile(r"^[-*][ 	]*\*\*(\d{4}(?:-\d{2}){0,2})\*\*[ 	]*[—-][ 	]*(.*)$")
+# Recognising a timeline bullet and writing one are deliberately different jobs. Writing
+# has exactly one shape; reading accepts every shape a hand-written timeline comes in —
+# bold date or bare, em dash, en dash, hyphen or colon. A bullet this does not match is
+# filed as prose and kept, which is why it must be generous: an unrecognised entry did not
+# merely go unsorted, it went undeduplicated, and the same fact was written again beneath
+# it. The date is matched greedily so the hyphens inside 2026-09-12 cannot be read as the
+# separator, and a bullet with a date and no text stays prose.
+_TL_BULLET_RE = re.compile(
+    r"^[-*][ \t]*(?:\*\*|__)?[ \t]*(\d{4}(?:-\d{2}){0,2})(?![-\d])[ \t]*(?:\*\*|__)?[ \t]*"
+    r"[:—–-][ \t]*(\S.*)$")
 _TL_DATE_RE = re.compile(r"^\d{4}(?:-\d{2}){0,2}$")
+
+# Words that carry no fact. Only used to compare two entries for the same date, never to
+# alter what is stored.
+_TL_STOP = frozenset(
+    "a an the of to in on at for from by with and or as is are was were be been being "
+    "that this these those it its their his her they he she s".split())
 
 
 def _tl_sort_key(date: str) -> str:
@@ -2245,6 +2264,92 @@ def _render_timeline(entries: "list[tuple]") -> str:
     """
     return "\n".join(f"- **{d}** — {t}" for d, t, _ in
                       sorted(entries, key=lambda e: (_tl_sort_key(e[0]), e[2])))
+
+
+def _parse_timeline(section_text: str):
+    """A Timeline section's text -> (prose lines, entries as (date, text, seq)).
+
+    Anything that is not a dated bullet — an introductory sentence, a stray note — is
+    prose, kept above the bullets in the order found. The tool has no business discarding
+    text it did not write.
+    """
+    entries, prose = [], []
+    for line in section_text.split("\n"):
+        m = _TL_BULLET_RE.match(line.strip())
+        if m:
+            entries.append((m.group(1), m.group(2).strip(), len(entries)))
+        elif line.strip():
+            prose.append(line.rstrip())
+    return prose, entries
+
+
+def _tl_tokens(text: str) -> frozenset:
+    """The meaningful words of an entry, with links flattened to their text — the
+    autolinker will have rewritten whatever is already on the page."""
+    t = _MD_LINK_RE.sub(r"\1", text).lower()
+    return frozenset(w for w in re.sub(r"[^a-z0-9]+", " ", t).split()
+                     if w and w not in _TL_STOP)
+
+
+def _tl_dedupe(entries: "list[tuple]") -> "list[tuple]":
+    """Drop entries that say nothing the page does not already say on the same date.
+
+    Two sources reporting one event word it differently, and a page whose timeline was
+    written by hand before add_timeline_entry ever saw it states the same facts again in
+    the tool's own format. Comparing exact text catches neither, which is how one page
+    ended up carrying a death on 2026-09-12 three times over.
+
+    The rule is deliberately narrow: same date, and every meaningful word of one entry
+    already present in the other. That entry adds no fact, so the longer one is kept — it
+    is the one carrying the extra detail — in the shorter one's position, since position
+    is what keeps rendering stable. Two entries that each contribute a word the other
+    lacks are two events on one day, and both stay.
+    """
+    kept: list = []
+    for d, t, seq in entries:
+        tk = _tl_tokens(t)
+        for i, (kd, kt, kseq) in enumerate(kept):
+            if kd != d:
+                continue
+            ktk = _tl_tokens(kt)
+            if tk and tk <= ktk:
+                break
+            if ktk and ktk <= tk:
+                kept[i] = (d, t, kseq)
+                break
+        else:
+            kept.append((d, t, seq))
+    return kept
+
+
+def normalize_timeline(content: str) -> str:
+    """Canonicalize a page's ## Timeline: one format, chronological, no restatements.
+
+    `add_timeline_entry` owns the Timeline, and LOBOTOMY.md says so — but `create_file`
+    writes a whole page in one call, so a page about an unfolding event is born with a
+    hand-written timeline before the tool has anything to add to. Those bullets came in a
+    different shape, the tool did not recognise them, filed them as prose, kept them above
+    its own list, and then wrote every one of the same facts a second time underneath.
+
+    A rule the model has no way to obey at create_file time is not worth a refusal, so the
+    hand-written form is absorbed here instead, on every write path. Returns the content
+    unchanged when there is no Timeline or nothing to fix, so it is safe to call always.
+    """
+    fm_m = re.match(r"^(---\s*\n.*?\n---\s*\n)", content, re.DOTALL)
+    frontmatter, body = (fm_m.group(1), content[fm_m.end():]) if fm_m else ("", content)
+    found = _find_section(body, _TIMELINE_HEADING)
+    if not found:
+        return content
+    _head, start, end = found
+    prose, entries = _parse_timeline(body[start:end])
+    if not entries:
+        return content
+    rendered = _render_timeline(_tl_dedupe(entries))
+    tail = body[end:].lstrip("\n")
+    section = ("\n\n" + ("\n".join(prose) + "\n\n" if prose else "") + rendered
+               + ("\n\n" if tail else "\n"))
+    new_body = body[:start] + section + tail
+    return frontmatter + new_body if new_body != body else content
 
 
 def _add_timeline_entry(args: dict) -> str:
@@ -2292,8 +2397,11 @@ def _add_timeline_entry(args: dict) -> str:
     text = re.sub(r"^[-*][ \t]*", "", text)
     # A model handed a "- **date** — text" format tends to send the whole bullet as the
     # text. Take the text half rather than refusing, and never render the date twice.
+    # Only when the echoed date is the one we were handed. The bullet parser is loose on
+    # purpose, and an entry that legitimately opens with a year and a dash — "1999 - 2001
+    # saw a decline" — must not be silently beheaded.
     _echo = _TL_BULLET_RE.match("- " + text)
-    if _echo:
+    if _echo and _echo.group(1) == date:
         text = _echo.group(2).strip()
     if not text:
         return "Error: add_timeline_entry refused — the entry has no text, only a date."
@@ -2338,28 +2446,23 @@ def _add_timeline_entry(args: dict) -> str:
     else:
         section_text = ""
 
-    entries, prose = [], []
-    for line in section_text.split("\n"):
-        bm = _TL_BULLET_RE.match(line.strip())
-        if bm:
-            entries.append((bm.group(1), bm.group(2).strip(), len(entries)))
-        elif line.strip():
-            # Anything in the section that is not a dated bullet — an introductory
-            # sentence, a stray note. Kept, above the bullets, in the order found. The
-            # tool has no business discarding text it did not write.
-            prose.append(line.rstrip())
+    prose, entries = _parse_timeline(section_text)
 
     # Re-ingesting the same story, or two sources reporting one event, must not double
-    # the entry. Compared on the date plus the text with links stripped, since the
-    # autolinker will have rewritten what is already on the page.
-    _key = (date, _MD_LINK_RE.sub(r"\1", text).strip().lower())
-    for d, t, _ in entries:
-        if (d, _MD_LINK_RE.sub(r"\1", t).strip().lower()) == _key:
-            return (f"Timeline entry for {date} is already on {path} — nothing to add. "
-                    f"If this source adds detail to it, use update_section or "
-                    f"replace_text to revise that entry rather than repeating it.")
+    # the entry. _tl_dedupe decides, so the tool and the whole-page normalizer cannot
+    # disagree about what counts as a restatement: if the new entry survives alongside
+    # the existing ones it is a new fact, and if it does not it was already there.
+    _kept = _tl_dedupe(entries)
+    _merged = _tl_dedupe(_kept + [(date, text, len(_kept))])
+    # Counting entries is not enough: a fuller wording REPLACES the restatement it
+    # absorbs, so the list is the same length and the page still changed. Compare what
+    # the section will say.
+    if [(d, t) for d, t, _ in _merged] == [(d, t) for d, t, _ in _kept]:
+        return (f"Timeline entry for {date} is already on {path} — nothing to add. "
+                f"If this source adds detail to it, use update_section or "
+                f"replace_text to revise that entry rather than repeating it.")
+    entries = _merged
 
-    entries.append((date, text, len(entries)))
     rendered = _render_timeline(entries)
     new_section = "\n\n" + ("\n".join(prose) + "\n\n" if prose else "") + rendered + "\n\n"
 
@@ -2380,6 +2483,7 @@ def _add_timeline_entry(args: dict) -> str:
     new_content = _set_fm_field(new_content, "updated", f"updated: {_dt.date.today().isoformat()}")
     if p.parent.name in ("entities", "concepts", "synthesis"):
         new_content = _merge_sources_field(new_content, p)
+    new_content = normalize_timeline(new_content)
     new_content = _inject_sources_section(new_content, p)
 
     wiki_rel = str(p.relative_to(WIKI_DIR))
@@ -2389,8 +2493,11 @@ def _add_timeline_entry(args: dict) -> str:
     _atomic_write(p, new_content)
     _autolink_now(p)
 
+    # The new entry is not necessarily last: if it absorbed a shorter restatement it took
+    # that one's position. Locate it by what it says, not by where it was appended.
+    _new_i = max(i for i, e in enumerate(entries) if (e[0], e[1]) == (date, text))
     _pos = sorted(range(len(entries)),
-                  key=lambda i: (_tl_sort_key(entries[i][0]), entries[i][2])).index(len(entries) - 1)
+                  key=lambda i: (_tl_sort_key(entries[i][0]), entries[i][2])).index(_new_i)
     return (f"{where} in {path}: {date} placed at position {_pos + 1} of {len(entries)} "
             f"(page now {len(new_content)} bytes)")
 
@@ -3786,6 +3893,17 @@ def _heal_pages_impl(dry_run: bool = False) -> dict:
                             new = new[:_fm_end.end()] + _healed
                             n_fm += 1
 
+                # A Timeline written by hand at create_file time, in a shape the tool did
+                # not recognise, with the tool's own restatement of the same facts sitting
+                # underneath it. Mechanically fixable — one format, sorted, restatements
+                # folded — so it is fixed here rather than reported, and every page
+                # written before the loose parser existed heals on the next startup.
+                _tl = normalize_timeline(new)
+                if _tl != new:
+                    log.info("heal_pages: %s had a mixed or duplicated Timeline — normalized", rel)
+                    new = _tl
+                    n_fm += 1
+
                 mtime = _dt.date.fromtimestamp(f.stat().st_mtime).isoformat()
                 for field, value in (("created", mtime), ("updated", mtime),
                                      ("tags", "[]"), ("sources", "[]")):
@@ -4925,6 +5043,7 @@ def _create_file(args: dict) -> str:
         body_text = ("<!-- WARNING: no sources cited — update sources: frontmatter -->\n\n"
                      + body_text)
     content = frontmatter + _strip_broken_wiki_links(body_text, p)
+    content = normalize_timeline(content)
     content = _inject_sources_section(content, p)
     _mkdir_inheriting(p.parent)
     assert not p.exists(), f"create_file invariant violated: {path} must not exist before write"

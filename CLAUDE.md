@@ -178,6 +178,35 @@ order events happened. It accepts partial dates (`2026-03`, `2026`), refuses fut
 and duplicates, and re-sorts the whole section on every insert, so a timeline that is
 already out of order heals on the next write.
 
+**Reading a timeline bullet and writing one are different jobs.** `_render_timeline`
+emits exactly one shape; `_TL_BULLET_RE` accepts every shape a hand-written timeline
+arrives in — bold date or bare, em dash, en dash, hyphen or colon — because anything it
+does not match is filed as prose, and an unrecognised entry goes not merely unsorted but
+*undeduplicated*. That is what produced a page carrying eight bullets for four events:
+`create_file` writes a whole page in one call, so a page about an unfolding event is born
+with a hand-written timeline before the tool has anything to add to; the tool did not
+recognise those bullets, kept them above its own list, and wrote every one of the same
+facts again underneath. `LOBOTOMY.md` does say the Timeline is never maintained by hand,
+but a rule the model has no way to obey at `create_file` time is not worth a refusal —
+principle 1 — so `normalize_timeline()` absorbs the hand-written form on every write path
+and in `heal_pages`. The date is matched with `(?![-\d])` so the engine cannot backtrack
+`2026-09-12` to `2026-09` and read `-12` as the separator.
+
+Duplicates are decided by `_tl_dedupe`, shared by the tool and the normalizer so they
+cannot disagree about what counts as a restatement. Exact-text comparison was not enough:
+two sources wording one event differently produced two entries, and one page carried the
+same death three times. The rule is deliberately narrow — same date, and every meaningful
+word of one entry already present in the other — and the *longer* wording wins, in the
+shorter one's position. Two entries that each contribute a word the other lacks are two
+events on one day and both stay. Because a fuller wording *replaces* what it absorbs, the
+list can stay the same length while the page changes, so "already there" is decided by
+comparing what the section will say, never by counting entries.
+
+`normalize_timeline` must be idempotent: `heal_pages` runs at startup and after every
+ingest, and a normalizer that rewrote on every pass would fill page history with empty
+revisions forever. A Timeline that is the page's last section is the case that breaks
+this — watch the trailing blank line.
+
 ### Page version history
 
 `_snapshot_version()` runs inside `_atomic_write` — the single chokepoint every wiki write
