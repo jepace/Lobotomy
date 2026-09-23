@@ -98,6 +98,17 @@ MUTATIONS = [
      # _snapshot_version skips both by name — so a write to either cannot be reverted.
      '        if f.name in _GENERATED:\n            continue\n',
      '', "tools/repair_links.py"),
+    ("urls: group 1 consumes bare URLs",
+     # Without this a title appearing in a URL path gets linked inside the URL, breaking
+     # the URL and linking a page the sentence was not about.
+     'r"(\\[[^\\]]*\\]\\([^)]*\\)|" + _BARE_URL + r")"',
+     'r"(\\[[^\\]]*\\]\\([^)]*\\))"'),
+    ("urls: mangled ones are healed",
+     # Prevention alone leaves every page that already carries one broken forever, since
+     # group 1 protects the damage.
+     '    body, _healed = _MANGLED_URL_RE.subn(\n'
+     '        lambda m: _MD_LINK_RE.sub(r"\\1", m.group(0)), body)',
+     '    _healed = 0'),
     ("repeat links: section resets the first mention",
      # Without the reset a title links once per PAGE. On a 136KB page that leaves
      # everything below the first section with no navigation at all.

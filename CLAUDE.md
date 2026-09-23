@@ -115,7 +115,20 @@ in that branch runs a million times on a large page: parsing the link with a reg
 cost 19× (1.1s → 20.9s on a 63KB page with 1,200 links) until a plain `basename not in`
 substring test was put in front of it.
 
-The critical invariant: **never match inside existing markdown links**. Group 1 of the combined regex takes priority at each position, consuming existing links before group 2 can fire. Heading lines are skipped entirely (`is_heading`), so a link inside a heading was written by hand, not by this.
+The critical invariant: **never match inside existing markdown links — or inside a bare
+URL**. Group 1 of the combined regex takes priority at each position, consuming both before
+group 2 can fire. Heading lines are skipped entirely (`is_heading`), so a link inside a
+heading was written by hand, not by this.
+
+Bare URLs (`_BARE_URL`) were missing from group 1 for a long time, and the golden baseline
+had the result recorded as correct: `https://example.com/meta/page` became
+`https://example.com/[meta](../entities/meta.md)/page`. Two failures at once — the URL no
+longer resolves, and the link points at a page the sentence was not about, because "meta"
+there is a path segment. Prevention alone was not enough to fix it: group 1 protects
+complete links, so a link already inside a URL is shielded by the very mechanism meant to
+stop it. `_MANGLED_URL_RE` therefore unwraps them at the top of `_autolink`, before
+anything else reads the text, and the wiki heals on the next write or relink with no
+separate pass.
 
 Performance: the title+alias map and the per-title compiled regexes are cached in memory (`_title_map_cache`, `_title_regex_cache`). `_atomic_write` invalidates them only when a write actually changes `title`/`aliases`/`no_autolink`; an mtime-scan backstop in `_build_title_map()` catches writes that bypass `_atomic_write` (other processes, manual edits), with per-file vetted mtimes so the backstop doesn't false-fire on the autolinker's own body-only writes. This invalidation logic has been a repeat bug source — change it with care and test all of: safe write keeps cache, title change invalidates, bypass write is detected, safe write doesn't mask a concurrent bypass.
 

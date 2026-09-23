@@ -1729,6 +1729,21 @@ _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
 _INNER_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
 _WORD_RE = re.compile(r"\w+")
 
+# A bare URL sitting in prose. The autolinker has to consume these the same way it
+# consumes existing markdown links, or a title that happens to appear in a path gets
+# linked INSIDE the URL: "https://example.com/meta/page" became
+# "https://example.com/[meta](../entities/meta.md)/page", which is a broken URL and a
+# link to a page the sentence was not talking about. Parens stop the match, so a
+# Wikipedia-style "..._(disambiguation)" tail is left out rather than risking a runaway.
+_BARE_URL = r"(?:https?|ftp)://[^\s<>()\[\]]+"
+# The same thing after the damage is done: a URL with markdown links embedded in it.
+# Healed rather than merely prevented, because the pages already carry them and the
+# autolinker's own group 1 would otherwise protect the damage forever.
+_MANGLED_URL_RE = re.compile(
+    r"(?:https?|ftp)://(?:\[[^\]]*\]\([^)]*\)|[^\s<>()\[\]])*"
+    r"\[[^\]]*\]\([^)]*\)"
+    r"(?:\[[^\]]*\]\([^)]*\)|[^\s<>()\[\]])*")
+
 
 def _match_index(body: str):
     """Normalized view of `body` plus a map back to raw offsets.
@@ -4376,6 +4391,17 @@ def _autolink(args: dict) -> str:
     # Split the body into lines ONCE. This loop used to re-split and re-join the entire
     # body for every title in the map — 6,866 splits and joins of the whole page to apply
     # 6,866 regexes, nearly all of which could not match anything.
+    # Heal URLs an earlier run mangled, before anything else looks at the text. Group 1
+    # protects complete links, so once a link is sitting inside a URL nothing in the loop
+    # below will ever take it out again — prevention alone leaves every page that already
+    # has one broken forever. Runs on every autolink and every relink, so the wiki heals
+    # itself without a separate pass.
+    body, _healed = _MANGLED_URL_RE.subn(
+        lambda m: _MD_LINK_RE.sub(r"\1", m.group(0)), body)
+    if _healed:
+        log.info("autolink: %s — unwrapped %d link(s) written inside a URL",
+                 target_str, _healed)
+
     lines = body.split("\n")
     is_heading = [bool(re.match(r"^#{1,6}\s", ln)) for ln in lines]
     # A list row or table row always links, however many times the title has appeared
@@ -4428,7 +4454,7 @@ def _autolink(args: dict) -> str:
         combined = _title_regex_cache.get(title)
         if combined is None:
             combined = re.compile(
-                r"(\[[^\]]*\]\([^)]*\))"
+                r"(\[[^\]]*\]\([^)]*\)|" + _BARE_URL + r")"
                 r"|(?<!\w)(" + _title_alts(title) + r")(?!\w)",
                 re.IGNORECASE,
             )

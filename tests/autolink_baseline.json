@@ -69,7 +69,7 @@
   },
   "title_in_url": {
     "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
-    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nSee https://example.com/[meta](../entities/meta.md)/page and Meta here.\n"
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nSee https://example.com/meta/page and [Meta](../entities/meta.md) here.\n"
   },
   "title_inside_link_text": {
     "message": "Autolink: no changes in alwiki/entities/target-page.md.",
