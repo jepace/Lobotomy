@@ -232,6 +232,18 @@ until the session has read the page's full content, and `update_section` until i
 that section; all-lowercase titles refused; `wiki/log.md` and `wiki/index.md` refused;
 `wiki/sources/` pages immutable after creation.
 
+**`done()` derives `ingested` rather than asking for it.** `serve.py`'s `on_done` marks
+the reading-list article wikified only on `__ingested__:1`, and that flag used to be an
+optional boolean the model had to remember twenty-odd rounds after the work — with nothing
+in the reply to say it was forgotten, and the only consequence on a page the model never
+sees. A 23-round ingest that updated fourteen pages and created its source page reported
+`__AGENT_DONE__:0` and left the article unwikified; every round of it was served by the
+fallback model, which is the variation that turns "usually remembers" into "did not".
+`done()` already knows — there is an inbox path and a source page, and the refusals above
+guarantee both — so it derives, keeps the argument as a backstop, and an explicit `true`
+still wins. A raw file with `fetch_failed` still reports `0`, because no source page was
+created for it and there is nothing to derive from. Same shape as `ensure_h1`.
+
 **Four refusals hand the needed content back in the same response** — `update_section`
 (unread section), `update_file` (unread page, and stale page), `create_file` (page
 exists) — and handing it back is only half the job. Each must also say

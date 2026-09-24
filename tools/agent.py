@@ -3279,7 +3279,27 @@ def _done(args: dict) -> str:
                         ", ".join([n for n, _ in _to_update[:5]] + _to_create[:5]))
             ctx._session_incomplete = [n for n, _ in _to_update] + list(_to_create)
 
-    ingested = "1" if args.get("ingested") else "0"
+    # Whether the raw file got ingested is not something to ask the model for. It is an
+    # optional boolean twenty-odd rounds after the work happened, nothing in the reply
+    # tells the model it was forgotten, and the only visible consequence is on a web page
+    # it never sees: serve.py's on_done looks for __ingested__:1 and otherwise leaves the
+    # article sitting unwikified in the reading list. Observed exactly that, on a run
+    # where every round was served by the fallback model.
+    #
+    # done() already knows. The session is processing an inbox file and has a source page
+    # for it — and the refusals above guarantee both, since an ingest that wrote pages
+    # without establishing a source page never gets here. That is the schema's own rule
+    # for the flag ("true only if a wiki source page was created in this session"), so
+    # derive it and keep the argument as a backstop, exactly as ensure_h1 fills in an H1
+    # rather than demanding one.
+    #
+    # A raw file with fetch_failed or no article content still reports 0: the model
+    # correctly creates no source page for it, so there is nothing to derive from.
+    _derived = bool(ctx._current_inbox_path and ctx._current_source_page)
+    if _derived and not args.get("ingested"):
+        log.info("done(): ingested not set by the model, derived from the source page "
+                 "%s for %s", ctx._current_source_page, ctx._current_inbox_path)
+    ingested = "1" if (args.get("ingested") or _derived) else "0"
     return _DONE_SENTINEL + ingested + "|" + args.get("summary", "")
 
 
@@ -5697,7 +5717,7 @@ TOOL_DEFS = [
                     },
                     "ingested": {
                         "type":        "boolean",
-                        "description": "True only if a new wiki source page was created in this session. Must be false if the raw file had fetch_failed:true or contained no article content.",
+                        "description": "Optional. True if a wiki source page was created for the raw file this session. Derived automatically when you omit it, so forgetting it costs nothing; set it false only to assert the opposite, e.g. the raw file had fetch_failed:true or contained no article content.",
                     },
                 },
                 "required": ["summary"],

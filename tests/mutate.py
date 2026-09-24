@@ -98,6 +98,12 @@ MUTATIONS = [
      # _snapshot_version skips both by name — so a write to either cannot be reverted.
      '        if f.name in _GENERATED:\n            continue\n',
      '', "tools/repair_links.py"),
+    ("done(): the ingested flag is derived, not asked for",
+     # An optional boolean twenty rounds after the work, with no feedback when it
+     # is forgotten and the only consequence on a page the model never sees: the
+     # article sits unwikified in the reading list.
+     '    ingested = "1" if (args.get("ingested") or _derived) else "0"',
+     '    ingested = "1" if args.get("ingested") else "0"'),
     ("merge: generated pages are not repointed",
      # Patching index.md is undone by the rebuild seconds later; patching log.md
      # rewrites what the log says happened, and neither can be reverted.
