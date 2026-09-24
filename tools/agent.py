@@ -4221,6 +4221,67 @@ def _is_deprecated(wiki_rel: str) -> bool:
         return False
 
 
+def _initialism_tokens(name: str) -> list:
+    """Words of a name, with runs of single letters glued into one token.
+
+    "U.N. Security Council" tokenizes to [u, n, security, council], and a pair of
+    one-letter tokens can never be an initialism of anything — the rule needs a run of at
+    least two words. Gluing them gives [un, security, council], which is what the writer
+    meant by the dots.
+    """
+    glued: list = []
+    run: list = []
+    for w in re.findall(r"[A-Za-z0-9]+", name.lower()) + [""]:
+        if len(w) == 1:
+            run.append(w)
+            continue
+        if run:
+            glued.append("".join(run))
+            run = []
+        if w:
+            glued.append(w)
+    return glued
+
+
+def _initialism_match(a: str, b: str) -> bool:
+    """True when two names differ only by spelling out an initialism.
+
+    "NYU Langone Health" and "New York University Langone Health"; "UN Security Council"
+    and "United Nations Security Council". Every other word has to match exactly and both
+    names have to be consumed completely, so this declares a match rather than suggesting
+    one — unlike _norm_title_key, which drops legal suffixes and so cannot tell a holding
+    company from its subsidiary.
+
+    The initials must be a run of at least two consecutive words, which keeps it off
+    ordinary abbreviation: "MS Word" does NOT match "Microsoft Word", because M,S are not
+    the initials of "Microsoft", "Word".
+    """
+    A, B = _initialism_tokens(a), _initialism_tokens(b)
+    if not A or not B or A == B:
+        return False
+
+    def walk(i: int, j: int, expanded: bool) -> bool:
+        if i == len(A) and j == len(B):
+            return expanded          # an exact match is not this function's business
+        if i >= len(A) or j >= len(B):
+            return False
+        if A[i] == B[j] and walk(i + 1, j + 1, expanded):
+            return True
+        tok = A[i]
+        if len(tok) >= 2 and j + len(tok) <= len(B) \
+                and all(B[j + n][0] == tok[n] for n in range(len(tok))) \
+                and walk(i + 1, j + len(tok), True):
+            return True
+        tok = B[j]
+        if len(tok) >= 2 and i + len(tok) <= len(A) \
+                and all(A[i + n][0] == tok[n] for n in range(len(tok))) \
+                and walk(i + len(tok), j + 1, True):
+            return True
+        return False
+
+    return walk(0, 0, False)
+
+
 def _resolve_page(name: str, by_key: dict) -> str:
     """wiki-relative path of the page for `name`, or "" if there is none.
 
@@ -4247,6 +4308,21 @@ def _resolve_page(name: str, by_key: dict) -> str:
         for title, rel in by_key.items():
             if _norm_name_key(title) == want:
                 return rel
+    # And one name spelled out where the other is initialised. An ingest listed "New York
+    # University Langone Health" in Step 3, created the page as "NYU Langone Health", and
+    # every check above then said NO PAGE — so done() demanded it, lookup_titles confirmed
+    # the demand ("this answer is exact... do not double-check it"), and the model created
+    # a second page for the same hospital. Nothing in the loop was wrong on its own; they
+    # were all wrong the same way, which is what made the duplicate inevitable.
+    # Whether the first words are the same word or one is the other's initialism, they
+    # start with the same letter — so this rejects ~96% of the map without calling the
+    # matcher, and keeps a miss at the cost it had before this pass existed.
+    _first = next((c for c in name.lower() if c.isalnum()), "")
+    for title, rel in by_key.items():
+        if _first and title[:1].isalnum() and title[:1] != _first:
+            continue
+        if _initialism_match(name, title):
+            return rel
     return ""
 
 

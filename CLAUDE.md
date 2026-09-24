@@ -155,6 +155,20 @@ present in the page — at ~9,000 titles this is what keeps a single autolink un
 tiebreak) and the resulting map order changed the output, so `relink` never converged: two
 consecutive whole-wiki runs both reported hundreds of changes.
 
+**`_resolve_page()` is the one place that decides create-vs-update**, and `lookup_titles`,
+`done()`'s listed-name check and the duplicate guards all share it. That sharing is a
+feature — they cannot contradict each other — and it is also why a gap in it produces a
+duplicate page rather than a stray round: every caller is wrong the same way at once.
+Observed: an ingest listed "New York University Langone Health", created the page as
+"NYU Langone Health", and then `done()` demanded the page, `lookup_titles` confirmed the
+demand ("this answer is exact… do not double-check it"), and the model wrote a second page
+for the same hospital. `_initialism_match()` closes that: it **declares** a match, unlike
+`_norm_title_key()` which only suggests one, because every word outside the initialism has
+to match exactly and both names must be consumed completely. A run of at least two
+consecutive words is required, which keeps it off ordinary abbreviation — "MS Word" does
+not match "Microsoft Word". A first-letter prefilter keeps the extra scan free: whether the
+first words are the same word or one initialises the other, they share a first letter.
+
 Pages can carry an `aliases:` frontmatter list (e.g. `aliases: ["gonzales", "uc davis"]`) for common short names that the autolinker should also match. The LLM is not instructed to set this field — it's a manual human override for when the formal page title differs from how the subject is typically referenced in prose. `no_autolink: true` excludes a page from *linking* but deliberately keeps it in the title map, because hiding it from `lookup_titles` made the agent create duplicate pages.
 
 ### Write-path guards

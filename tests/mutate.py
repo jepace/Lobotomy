@@ -98,6 +98,11 @@ MUTATIONS = [
      # _snapshot_version skips both by name — so a write to either cannot be reverted.
      '        if f.name in _GENERATED:\n            continue\n',
      '', "tools/repair_links.py"),
+    ("resolver: a spelled-out name finds its initialised page",
+     # Without it, done() demands a page that exists under an initialised title,
+     # lookup_titles confirms the demand, and the model makes a duplicate.
+     '    _first = next((c for c in name.lower() if c.isalnum()), "")\n    for title, rel in by_key.items():\n        if _first and title[:1].isalnum() and title[:1] != _first:\n            continue\n        if _initialism_match(name, title):\n            return rel\n    return ""',
+     '    return ""'),
     ("handback: the refusal forbids the re-read",
      # Handing the content back is half the job. Without this clause an observed
      # ingest called read_section for the text it had just been given — a whole
