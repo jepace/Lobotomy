@@ -343,6 +343,11 @@ every ingest and a leaked reason would mislabel every write after it. `init_sess
 clears it, so a reason cannot survive into the next job. Revisions written before this
 have no suffix and render without a label.
 
+**The +/- counts are words, not lines.** Pages are written with unwrapped lines, so one
+paragraph is one line: a whole paragraph rewritten reported `+1 −1`, and a regenerate was
+indistinguishable from a typo fix. `_delta` diffs word lists with `SequenceMatcher`, which
+is also why the numbers on existing rows changed when this shipped.
+
 `page_history(p)` builds what the view shows and lives in `agent.py` rather than
 `serve.py` so it is reachable without flask. **A row is a version, not a change** — which
 is what the Compare button already assumes, since it diffs that version's content against
@@ -366,6 +371,33 @@ few hundred thousand files, so a per-item walk over it turns a pass into a hang:
 that takes 1.7s with `.history` excluded ran over two minutes without, on a tree a quarter
 the size. `_wiki_pages()` in that file is the pattern — filter on `relative_to(HISTORY_DIR)`,
 and match files, not paths.
+
+**Each row also says what the write touched**, which is what the empty middle of the row
+was for. Two halves, gathered in deliberately opposite ways:
+
+- **Which sections changed** is *derived* from the same unified diff that produces the
+  +/- counts, by mapping each changed line back to the heading above it. Derived rather
+  than stored precisely so it works on the revisions already on disk — a stored field
+  would only ever have described writes made after it shipped. Frontmatter is excluded:
+  `updated:` moves on every write and would put the same useless word on every row, and
+  the H1 is not a section, so a title fix reports nothing rather than the page's own name.
+- **Which tool wrote it** is stored too, as a fourth part. "ingest" says a source was
+  folded in; it does not say whether that was a whole-page regenerate (`update_file`,
+  labelled **rewrite** and highlighted) or a one-line fix, and those are very different
+  things to find in fifty rows. `_call_tool()` scopes it around the whole dispatch — both
+  agent loops go through that one helper, because when each had its own copy only one of
+  them was wrapped, and which loop served the request decided whether the row could say
+  anything at all.
+- **Which source an ingest folded in** cannot be derived, so it is *stored*, as a third
+  `__` part of the revision filename. `_current_source_page` is already on the session
+  context at snapshot time, so nothing new is tracked. `_parse_revision_stem()` handles
+  all three shapes — bare `<ts>`, `<ts>__<reason>`, `<ts>__<reason>__<source>` — and the
+  timestamp is still the fixed-width prefix, so lexical order stays chronological. Only
+  ingests carry one; claiming a relink sweep came "from" an article would be a confident
+  lie. **Every slot before a filled one is written, with `-` as the placeholder** — skip an
+  empty one and the later parts shift left, so a write with a tool and no reason parsed as
+  reason `-`, source `update-file`, tool nothing. `serve.py` resolves the slug to the source page's title for display, falling back
+  to the de-slugged text if that page has since been renamed or deleted.
 
 Served by `/wiki/<path>/history` (list), `/wiki/<path>/history/<rev>` (unified diff via
 stdlib `difflib`), and `/api/wiki/<path>/revert/<rev>`. Revert goes through `_atomic_write`,

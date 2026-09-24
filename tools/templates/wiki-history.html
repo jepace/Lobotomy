@@ -23,11 +23,51 @@
   }
   /* Monospace so the columns line up down the list and the eye can scan for the big
      changes without reading every number. */
+  /* The empty middle of each row, which was the whole point: say what the write touched
+     rather than only how many lines it moved. Shrinks first when the row is tight, and
+     disappears entirely on a narrow screen, because the timestamp and the buttons are
+     what the row cannot do without. */
+  .rev .tool {
+    flex: 0 0 auto;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    color: var(--text2);
+  }
+  /* A rewrite replaced the page. Worth finding at a glance in fifty rows of section
+     edits, which is the whole reason the tool is recorded at all. */
+  .rev .tool.big {
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .rev .what {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    font-size: 12px;
+    color: var(--text2);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .rev .what .src a { color: var(--text2); text-decoration: underline; }
+  .rev .what .src a:hover { color: var(--accent); }
+  .rev .what .secs {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  @media (max-width: 640px) { .rev .what { display: none; } }
   .rev .delta { font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                 white-space: nowrap; }
   .rev .delta .plus { color: var(--ok, #2ea043); }
   .rev .delta .minus { color: var(--danger, #d1242f); }
   .rev .delta .none { color: var(--text2); }
+  .rev .delta .unit { color: var(--text2); font-family: inherit; }
   .rev a, .rev button {
     font-size: 13px; padding: 5px 11px; border-radius: 8px; text-decoration: none;
     border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer;
@@ -63,8 +103,9 @@
   <div class="hist-wrap">
   {% if revisions is not none %}
     <div class="hist-note">
-      Each row is one version of this page: when it was written, what wrote it, how many
-      lines that added and removed, and how big the page was as a result. Newest first.
+      Each row is one version of this page: when it was written, what wrote it and from
+      which source, which sections it touched, how many words it added and removed, and
+      how big the page was as a result. Newest first.
       The oldest row is the earliest version still kept — whatever produced it has been
       pruned, so nothing records when or why.
     </div>
@@ -77,14 +118,31 @@
         {%- else %}{{ r.when }}{% endif -%}
       </div>
       {% if r.why %}<div class="why">{{ r.why }}</div>{% endif %}
+      {# Which tool wrote it. "rewrite" is the whole page replaced — the Regenerate
+         Workflow — and is the one worth spotting in a long list. #}
+      {% if r.tool %}<div class="tool{% if r.tool == 'rewrite' %} big{% endif %}">{{ r.tool }}</div>{% endif %}
+      {# What the write actually touched, in the page's own words. Derived from the same
+         diff that produces the counts, so it works on revisions already on disk. #}
+      <div class="what">
+        {%- if r.source -%}
+          <span class="src">from
+            {%- if r.source.path %} <a href="/wiki/{{ r.source.path }}">{{ r.source.title }}</a>
+            {%- else %} {{ r.source.title }}{% endif -%}
+          </span>
+        {%- endif -%}
+        {%- if r.sections -%}
+          <span class="secs">{{ r.sections|join(" · ") }}</span>
+        {%- endif -%}
+      </div>
       <div class="delta">
         {%- if r.earliest -%}
           <span class="none">origin unknown</span>
         {%- elif r.added or r.removed -%}
           {%- if r.added %}<span class="plus">+{{ r.added }}</span>{% endif -%}
           {%- if r.removed %} <span class="minus">−{{ r.removed }}</span>{% endif -%}
+          <span class="unit"> words</span>
         {%- else -%}
-          <span class="none">no line changes</span>
+          <span class="none">no text changes</span>
         {%- endif -%}
       </div>
       <div class="size">{{ r.size }} bytes</div>

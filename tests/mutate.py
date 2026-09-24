@@ -98,6 +98,32 @@ MUTATIONS = [
      # _snapshot_version skips both by name — so a write to either cannot be reverted.
      '        if f.name in _GENERATED:\n            continue\n',
      '', "tools/repair_links.py"),
+    ("history: the writing tool is recorded",
+     # "ingest" does not say whether it was a whole-page regenerate or a one-line
+     # fix, and those are very different things to find in fifty rows.
+     '    with write_tool(fn_name if fn_name in _TOOL_LABELS else ""):\n        return fn(args) if fn else f"Unknown tool: {fn_name}"',
+     '    if True:\n        return fn(args) if fn else f"Unknown tool: {fn_name}"'),
+    ("history: counts are words, not lines",
+     # Pages are written unwrapped, so one paragraph is one line: a rewritten
+     # paragraph reported "+1 -1" and looked like a typo fix.
+     '        b = _re_words.findall(before)\n        a = _re_words.findall(after)',
+     '        b = before.splitlines()\n        a = after.splitlines()'),
+    ("history: empty filename slots are placeheld",
+     # Skip an empty slot and every later part shifts left, so the tool parses as
+     # the source.
+     '        if _why or _src or _tool:\n            _suffix += f"__{_why or \'-\'}"',
+     '        if _why:\n            _suffix += f"__{_why}"'),
+    ("history: rows name the sections that changed",
+     '            if nm and nm not in seen:',
+     '            if False:'),
+    ("history: an ingest records which source it folded in",
+     '        if _why == "ingest":',
+     '        if False:'),
+    ("history: the page title is not a section",
+     # The H1 is not a section anywhere else either, and a row claiming the page
+     # own name as a changed heading is noise on every title fix.
+     '            m = re.match(r"^#{2,6}[ \\t]*(\\S.*?)[ \\t]*$", line)',
+     '            m = re.match(r"^#{1,6}[ \\t]*(\\S.*?)[ \\t]*$", line)'),
     ("done(): the ingested flag is derived, not asked for",
      # An optional boolean twenty rounds after the work, with no feedback when it
      # is forgotten and the only consequence on a page the model never sees: the
@@ -244,15 +270,15 @@ MUTATIONS = [
      '            if title and not deprecated:',
      '            if title:'),
     ("history records why each change happened",
-     '        _suffix = f"__{_why}" if _why else ""',
-     '        _suffix = ""'),
+     '        _suffix = ""\n        if _why or _src or _tool:\n            _suffix += f"__{_why or \'-\'}"',
+     '        _suffix = ""\n        if False:\n            pass'),
     ("a version is labelled by what created it, not what replaced it",
      '        maker = revs[i - 1] if i > 0 else None',
      '        maker = revs[i]'),
     ("the newest write's label lands on the current page",
      '        rows.append({"current": True, "id": None,\n'
      '                     "when": revs[-1]["when"].strftime("%Y-%m-%d %H:%M:%S"),\n'
-     '                     "why": revs[-1]["why"], "added": a, "removed": r,',
+     '                     "why": revs[-1]["why"], "source": revs[-1]["source"],',
      '        rows.append({"current": True, "id": None,\n'
      '                     "when": "", \n'
      '                     "why": "", "added": a, "removed": r,'),

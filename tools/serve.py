@@ -1640,8 +1640,28 @@ _REASON_LABELS = {
 def wiki_history(page_path):
     """List saved revisions of a page, newest first."""
     p = _resolve_wiki_page_or_404(page_path)
+    # The source slug is stored; the human-readable title is not, so look it up. Cached
+    # per request because a page's fifty revisions are usually a handful of sources.
+    _src_titles: dict = {}
+
+    def _source(slug):
+        if not slug:
+            return None
+        if slug not in _src_titles:
+            sp = WIKI_DIR / "sources" / f"{slug}.md"
+            _src_titles[slug] = (
+                {"title": page_display_title(
+                     sp.read_text(encoding="utf-8", errors="replace"), sp.stem),
+                 "path": f"sources/{slug}.md"}
+                if sp.is_file() else
+                # The source page was renamed or deleted. Say the slug rather than
+                # nothing: it is still the best available answer to "which article".
+                {"title": slug.replace("-", " "), "path": None})
+        return _src_titles[slug]
+
     revs = [dict(r, why=_REASON_LABELS.get(r["why"],
-                                           r["why"].replace("-", " ") if r["why"] else ""))
+                                           r["why"].replace("-", " ") if r["why"] else ""),
+                 source=_source(r.get("source")))
             for r in page_history(p)]
     return render_template("wiki-history.html",
                            title=page_display_title(

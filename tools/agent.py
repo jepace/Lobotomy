@@ -753,6 +753,23 @@ def wiki_pages(root: "Path | None" = None):
 
 
 _REASON_RE = re.compile(r"[^a-z0-9-]+")
+# Words for the history view's change counts. Apostrophes and hyphens stay inside a word
+# so "Carney's" and "post-war" count once each rather than two or three times.
+_re_words = re.compile(r"[\w'\u2019-]+")
+
+
+def _parse_revision_stem(stem: str) -> "tuple[str, str, str, str]":
+    """(timestamp, reason, source-slug, tool) from a revision filename's stem.
+
+    Four shapes exist on disk and all four must parse: bare `<ts>` from before reasons
+    were recorded, `<ts>__<reason>`, `<ts>__<reason>__<source>`, and
+    `<ts>__<reason>__<source-or-dash>__<tool>`.
+    """
+    def _slot(i):
+        v = parts[i] if len(parts) > i else ""
+        return "" if v == "-" else v          # "-" is the empty-slot placeholder
+    parts = stem.split("__")
+    return (parts[0], _slot(1), _slot(2), _slot(3))
 
 
 def page_history(p: Path) -> "list[dict]":
@@ -785,24 +802,99 @@ def page_history(p: Path) -> "list[dict]":
     d = HISTORY_DIR / p.resolve().relative_to(WIKI_DIR.resolve())
     revs = []
     for f in sorted(d.glob("*.md")) if d.is_dir() else []:
-        stem, _, why = f.stem.partition("__")
+        stem, why, src, tool = _parse_revision_stem(f.stem)
         try:
             when = datetime.datetime.strptime(stem, "%Y%m%dT%H%M%S%f")
         except ValueError:
             continue            # not one of ours; leave it alone rather than guess
-        revs.append({"path": f, "id": f.stem, "when": when, "why": why,
+        revs.append({"path": f, "id": f.stem, "when": when, "why": why, "source": src,
+                     # The stem carries the sanitized name ("update-file"); _TOOL_LABELS
+                     # is keyed by the tool's real name, which is what the dispatcher
+                     # checks against. Convert back rather than keeping two spellings.
+                     "tool": _TOOL_LABELS.get(tool.replace("-", "_"),
+                                              tool.replace("-", " ") if tool else ""),
                      "text": f.read_text(encoding="utf-8", errors="replace")})
 
     current_text = p.read_text(encoding="utf-8", errors="replace")
 
-    def _delta(before: str, after: str) -> "tuple[int, int]":
-        added = removed = 0
+    def _line_sections(text: str) -> list:
+        """Section name in force at each line, None inside frontmatter and the lead.
+
+        The H1 is deliberately not a section (see _page_section_names), so a change to the
+        title line reports no section rather than the page's own name.
+        """
+        out, cur, in_fm, fm_done = [], None, False, False
+        for i, line in enumerate(text.splitlines()):
+            if i == 0 and line.strip() == "---":
+                in_fm = True
+                out.append(None)
+                continue
+            if in_fm and not fm_done:
+                if line.strip() == "---":
+                    fm_done = True
+                out.append(None)
+                continue
+            m = re.match(r"^#{2,6}[ \t]*(\S.*?)[ \t]*$", line)
+            if m:
+                cur = m.group(1).strip()
+            out.append(cur)
+        return out
+
+    def _changed_sections(before: str, after: str, limit: int = 4) -> list:
+        """Which sections a write touched, in the order they appear.
+
+        Derived from the same diff that produces the +/- counts, so it costs one extra
+        pass and — the point — works on every revision already on disk. Storing it at
+        write time would only have described writes made after the feature shipped.
+
+        Frontmatter is excluded: `updated:` changes on every single write, so reporting it
+        would put the same useless word on every row.
+        """
+        b_map, a_map = _line_sections(before), _line_sections(after)
+        names, seen = [], set()
+        bl = al = 0
         for line in _difflib.unified_diff(before.splitlines(), after.splitlines(),
                                           n=0, lineterm=""):
-            if line.startswith("+") and not line.startswith("+++"):
-                added += 1
-            elif line.startswith("-") and not line.startswith("---"):
-                removed += 1
+            if line.startswith("@@"):
+                m = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
+                if m:
+                    bl, al = int(m.group(1)), int(m.group(2))
+                continue
+            if line.startswith(("+++", "---")):
+                continue
+            if line.startswith("+"):
+                nm = a_map[al - 1] if 0 < al <= len(a_map) else None
+                al += 1
+            elif line.startswith("-"):
+                nm = b_map[bl - 1] if 0 < bl <= len(b_map) else None
+                bl += 1
+            else:
+                bl += 1
+                al += 1
+                continue
+            if nm and nm not in seen:
+                seen.add(nm)
+                names.append(nm)
+        return names[:limit]
+
+    def _delta(before: str, after: str) -> "tuple[int, int]":
+        """Words added and removed — not lines.
+
+        Wiki pages are written with unwrapped lines, so one paragraph is one line. A
+        whole paragraph rewritten reported "+1 -1", and a regenerate that replaced most of
+        the page looked indistinguishable from a typo fix. Counting words is what a reader
+        means by "how much changed" in prose, and it is why the numbers on old rows will
+        look very different from what they said before.
+        """
+        b = _re_words.findall(before)
+        a = _re_words.findall(after)
+        sm = _difflib.SequenceMatcher(None, b, a, autojunk=False)
+        added = removed = 0
+        for op, i1, i2, j1, j2 in sm.get_opcodes():
+            if op in ("replace", "delete"):
+                removed += i2 - i1
+            if op in ("replace", "insert"):
+                added += j2 - j1
         return added, removed
 
     # The current page, created by the most recent recorded write.
@@ -811,11 +903,15 @@ def page_history(p: Path) -> "list[dict]":
         a, r = _delta(revs[-1]["text"], current_text)
         rows.append({"current": True, "id": None,
                      "when": revs[-1]["when"].strftime("%Y-%m-%d %H:%M:%S"),
-                     "why": revs[-1]["why"], "added": a, "removed": r,
+                     "why": revs[-1]["why"], "source": revs[-1]["source"],
+                     "tool": revs[-1]["tool"],
+                     "added": a, "removed": r,
+                     "sections": _changed_sections(revs[-1]["text"], current_text),
                      "size": len(current_text.encode("utf-8"))})
     else:
-        rows.append({"current": True, "id": None, "when": "", "why": "",
-                     "added": 0, "removed": 0,
+        rows.append({"current": True, "id": None, "when": "", "why": "", "source": "",
+                     "tool": "",
+                     "added": 0, "removed": 0, "sections": [],
                      "size": len(current_text.encode("utf-8"))})
 
     # Each stored version, labelled by the write that produced it — the revision below it.
@@ -825,7 +921,11 @@ def page_history(p: Path) -> "list[dict]":
         rows.append({"current": False, "id": revs[i]["id"],
                      "when": maker["when"].strftime("%Y-%m-%d %H:%M:%S") if maker else "",
                      "why": maker["why"] if maker else "",
+                     "source": maker["source"] if maker else "",
+                     "tool": maker["tool"] if maker else "",
                      "added": a, "removed": r,
+                     "sections": (_changed_sections(maker["text"], revs[i]["text"])
+                                  if maker else []),
                      "size": revs[i]["path"].stat().st_size,
                      "earliest": maker is None})
     return rows
@@ -849,6 +949,60 @@ def set_write_reason(reason: str) -> None:
 
 def get_write_reason() -> str:
     return getattr(_tl, "_write_reason", "")
+
+
+# Which TOOL performed the write, as distinct from why the session was writing at all.
+# "ingest" says a source was being folded in; it does not say whether that was a
+# whole-page regenerate or a one-section edit, and those are very different events to find
+# in a history list. The tools set it themselves, so nothing has to be remembered.
+_TOOL_LABELS = {
+    "update_file": "rewrite",        # the Regenerate Workflow — the whole page, replaced
+    "create_file": "created",
+    "update_section": "section",
+    "append_section": "appended",
+    "replace_text": "edit",
+    "add_timeline_entry": "timeline",
+}
+
+
+def set_write_tool(tool: str) -> None:
+    # 24, not 16: the sanitizer turns "_" into "-", and "add-timeline-entry" is 18. The
+    # first version truncated it to "add-timeline-ent", which then matched no label and
+    # rendered as a mangled pill.
+    _tl._write_tool = _REASON_RE.sub("-", (tool or "").strip().lower())[:24].strip("-")
+
+
+def get_write_tool() -> str:
+    return getattr(_tl, "_write_tool", "")
+
+
+@contextlib.contextmanager
+def write_tool(tool: str):
+    """Scope the writing tool's name to one block, restoring whatever was set before.
+
+    Nested deliberately: _create_file's autolink pass writes again through _autolink_now,
+    and that write belongs to create_file, not to whatever ran before it.
+    """
+    prev = get_write_tool()
+    set_write_tool(tool)
+    try:
+        yield
+    finally:
+        set_write_tool(prev)
+
+
+def _call_tool(fn_name: str, fn, args: dict):
+    """Dispatch one tool call, tagging every write it makes with the tool's name.
+
+    Both agent loops go through here. When each had its own copy of this, one was wrapped
+    and the other was not — so which loop served the request decided whether the history
+    row could say what wrote the page. One dispatcher, one place to get it wrong.
+
+    The scope covers the whole call, not just the tool's own write, because the
+    _autolink_now that follows is part of that tool's work and belongs to it in history.
+    """
+    with write_tool(fn_name if fn_name in _TOOL_LABELS else ""):
+        return fn(args) if fn else f"Unknown tool: {fn_name}"
 
 
 @contextlib.contextmanager
@@ -923,7 +1077,35 @@ def _snapshot_version(p: Path, new_content: str) -> None:
         # chronological — which the history view and the pruning below both depend on.
         now = datetime.datetime.now()
         _why = get_write_reason()
-        _suffix = f"__{_why}" if _why else ""
+        # An ingest also records WHICH source it was ingesting, as a third "__" part. The
+        # session already knows — _current_source_page is set the moment the source page
+        # is established — so nothing new has to be tracked, and the history view can say
+        # "ingest · from Mark Carney interview" instead of just "ingest" thirty times.
+        # Old filenames have one or two parts and still parse; only writes from here on
+        # carry a source, which is exactly why the CHANGED SECTIONS on each row are
+        # derived from the diff instead of stored: those work on the history already on
+        # disk, this one cannot.
+        _src = ""
+        if _why == "ingest":
+            try:
+                _rel = _ctx()._current_source_page or ""
+            except Exception:
+                _rel = ""
+            if _rel.startswith("sources/"):
+                _src = _REASON_RE.sub("-", Path(_rel).stem.lower())[:72].strip("-")
+        _tool = get_write_tool()
+        # Fixed positions: a slot that is empty but has a filled slot AFTER it must still
+        # be written, or everything shifts left. The first version only placeheld the
+        # source, so a write with a tool and no reason produced "__-__update-file" and
+        # parsed as reason="-", source="update-file", tool="". "-" cannot be mistaken for
+        # a real value, since the sanitizer strips leading and trailing hyphens.
+        _suffix = ""
+        if _why or _src or _tool:
+            _suffix += f"__{_why or '-'}"
+        if _src or _tool:
+            _suffix += f"__{_src or '-'}"
+        if _tool:
+            _suffix += f"__{_tool}"
         dest = d / f"{now.strftime('%Y%m%dT%H%M%S%f')}{_suffix}.md"
         while dest.exists():
             now += datetime.timedelta(microseconds=1)
@@ -6219,7 +6401,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                 # that blocks otherwise leaves no trace of which one it was.
                 log.debug("Tool call: %s  arg=%s", fn_name or "(unknown)",
                           str(list(args.values())[:1])[:60])
-                result = fn(args) if fn else f"Unknown tool: {fn_name}"
+                result = _call_tool(fn_name, fn, args)
             except json.JSONDecodeError as e:
                 result = f"Error: malformed tool arguments: {e}"
             except Exception as e:
@@ -6546,7 +6728,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                 # line in the log was the LLM response, with no way to tell which tool it
                 # had gone into. A line here costs nothing and names the culprit.
                 log.debug("Tool call: %s  arg=%s", fn_name or "(unknown)", arg_preview[:60])
-                result      = fn(args) if fn else f"Unknown tool: {fn_name}"
+                result  = _call_tool(fn_name, fn, args)
             except json.JSONDecodeError as e:
                 log.error("Tool %s: failed to parse arguments JSON: %s", fn_name, e)
                 arg_preview = ""
