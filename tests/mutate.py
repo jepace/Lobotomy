@@ -98,6 +98,12 @@ MUTATIONS = [
      # _snapshot_version skips both by name — so a write to either cannot be reverted.
      '        if f.name in _GENERATED:\n            continue\n',
      '', "tools/repair_links.py"),
+    ("merge: the subject's names are folded before comparing",
+     # Without it, merging two pages for one hospital is refused because each
+     # sentence uses that page's own name for it — blocking the cleanup that the
+     # naming mismatch made necessary in the first place.
+     '                if _subject_re:\n                    line = _subject_re.sub("\\u00absubject\\u00bb", line)',
+     '                if False:\n                    line = _subject_re.sub("\\u00absubject\\u00bb", line)'),
     ("resolver: a spelled-out name finds its initialised page",
      # Without it, done() demands a page that exists under an initialised title,
      # lookup_titles confirms the demand, and the model makes a duplicate.

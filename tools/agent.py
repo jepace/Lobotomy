@@ -3541,10 +3541,31 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
     l_title = _fm_title(l_text) or loser.stem
     s_title = _fm_title(s_text) or surv.stem
 
+    # Every name either page has for the subject, longest first so the fullest form wins.
+    # Both pages describe the SAME subject — that is the judgement the caller already made
+    # by running this — so a sentence that differs only in which name it uses is not a
+    # different sentence. Without this, merging "New York University Langone Health" into
+    # "NYU Langone Health" was refused because "<long name> is an academic medical center"
+    # does not contain "<short name> is an academic medical center", and the refusal then
+    # blocked the very cleanup the naming mismatch had made necessary.
+    _l_t, _l_al, _na2, _dep2 = _parse_title_fields(l_text)
+    _s_t, _s_al, _na, _dep = _parse_title_fields(s_text)
+    _subject_names = sorted(
+        {n.lower() for n in ([l_title, s_title] + list(_l_al) + list(_s_al)) if n},
+        key=len, reverse=True)
+    # Word-bounded, not length-limited. A short alias like "NY" or "US" is a real name and
+    # should fold; what must never happen is folding it inside "company" or "USA". A length
+    # cutoff looked like the guard for that and is not one — the fold runs over BOTH pages,
+    # so mangling is symmetric and cancels out, which is exactly why no test could catch
+    # the cutoff being removed.
+    _subject_re = (re.compile(r"(?<!\w)(?:" + "|".join(re.escape(n) for n in _subject_names)
+                              + r")(?!\w)")
+                   if _subject_names else None)
+
     # What does the loser still say that the survivor does not? Compared line by line with
-    # links flattened and whitespace normalized, ignoring headings and the generated
-    # Sources section — the same shape of test find_duplicate_sections uses to decide when
-    # a merge needs no judgment.
+    # links flattened, the subject's names folded together and whitespace normalized,
+    # ignoring headings and the generated Sources section — the same shape of test
+    # find_duplicate_sections uses to decide when a merge needs no judgment.
     def _claims(text):
         body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
         body = re.split(r"^#{1,6}[ \t]*Sources[ \t]*$", body, flags=re.MULTILINE)[0]
@@ -3552,7 +3573,10 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
         for line in body.splitlines():
             line = _MD_LINK_RE.sub(r"\1", line).strip().lstrip("-*• ").strip()
             if len(line) > 25 and not line.startswith("#"):
-                out.append(" ".join(line.split()).lower())
+                line = " ".join(line.split()).lower()
+                if _subject_re:
+                    line = _subject_re.sub("\u00absubject\u00bb", line)
+                out.append(line)
         return out
 
     s_claims = _claims(s_text)
@@ -3567,8 +3591,7 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
         return result
 
     # --- carry the names over -----------------------------------------------------
-    _t, s_aliases, _na, _dep = _parse_title_fields(s_text)
-    _t2, l_aliases, _na2, _dep2 = _parse_title_fields(l_text)
+    s_aliases, l_aliases = _s_al, _l_al
     have = {a.lower() for a in s_aliases} | {s_title.lower()}
     add = [a for a in ([l_title] + list(l_aliases) + list(extra_aliases))
            if a and a.lower() not in have and not have.add(a.lower())]

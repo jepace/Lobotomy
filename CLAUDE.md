@@ -155,6 +155,17 @@ present in the page — at ~9,000 titles this is what keeps a single autolink un
 tiebreak) and the resulting map order changed the output, so `relink` never converged: two
 consecutive whole-wiki runs both reported hundreds of changes.
 
+`merge_page()` has the same problem in miniature and solves it locally: `_claims`
+compares the two bodies line by line, so two pages for one hospital each describing it by
+their own title looked like two different sentences, and the merge was refused — blocking
+the cleanup the naming mismatch had made necessary. Running the merge *is* the judgement
+that these are one subject, so within that call every name either page has (titles and
+aliases, longest first, word-bounded) folds to one placeholder before comparing. Note the
+guard that is *not* there: a minimum name length looks like protection against folding
+"NY" inside "company" and is not one, because the fold runs over both pages and mangles
+them identically — `\b` is the real guard, and no mutation could catch the length cutoff
+being removed.
+
 **`_resolve_page()` is the one place that decides create-vs-update**, and `lookup_titles`,
 `done()`'s listed-name check and the duplicate guards all share it. That sharing is a
 feature — they cannot contradict each other — and it is also why a gap in it produces a
