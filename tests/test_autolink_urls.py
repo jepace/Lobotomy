@@ -105,5 +105,66 @@ class UrlTest(TempWikiTestCase):
                       p.read_text(encoding="utf-8"))
 
 
+class BareRelativePathTest(TempWikiTestCase):
+    """The same hazard as a bare URL, without a scheme — and the one that actually bit.
+
+    A source page said "Adapted from ../sources/backgammon-wikipedia.md" and the
+    autolinker linked the titles it found inside the path:
+
+        ../sources/[backgammon](../sources/backgammon-wikipedia.md)-[wikipedia](../concepts/wikipedia.md).md
+
+    _BARE_URL covered http:// and ftp://; a relative wiki path is just as much not-prose,
+    and it is far commoner in this wiki because every page's own links look like one.
+
+    Worse than a one-off: once a link is sitting in there, group 1 protects it, so the
+    damage is permanent unless something unwraps it. It renders as a sentence with two
+    plausible-looking links, so it reads fine and only /wiki/lint ever notices.
+    """
+
+    def _run(self, body, extra=()):
+        self.w.page("concepts/wikipedia.md", title="Wikipedia", type="concept",
+                    body="# Wikipedia\n\nAn encyclopedia.\n")
+        self.w.page("sources/backgammon-wikipedia.md", title="Backgammon", type="source",
+                    body="# Backgammon\n\n## Summary\n\nA game.\n")
+        for rel, title in extra:
+            self.w.page(rel, title=title, type="concept", body=f"# {title}\n\nX.\n")
+        self.w.page("sources/backgammon-rules.md", title="Backgammon Rules", type="source",
+                    body="# Backgammon Rules\n\n## Summary\n\n" + body)
+        agent._autolink({"path": "wiki/sources/backgammon-rules.md"})
+        return self.w.disk("sources/backgammon-rules.md")
+
+    def test_a_bare_relative_path_is_not_linked_inside(self):
+        out = self._run("See ../sources/backgammon-wikipedia.md here.\n")
+        self.assertIn("See ../sources/backgammon-wikipedia.md here.", out, out)
+
+    def test_an_already_mangled_path_is_healed(self):
+        out = self._run(
+            "See ../sources/[backgammon](../sources/backgammon-wikipedia.md)"
+            "-[wikipedia](../concepts/wikipedia.md).md here.\n")
+        self.assertIn("See ../sources/backgammon-wikipedia.md here.", out, out)
+
+    def test_healing_is_stable(self):
+        out = self._run(
+            "See ../sources/[backgammon](../sources/backgammon-wikipedia.md)"
+            "-[wikipedia](../concepts/wikipedia.md).md here.\n")
+        for _ in range(3):
+            agent._autolink({"path": "wiki/sources/backgammon-rules.md"})
+        self.assertEqual(self.w.disk("sources/backgammon-rules.md"), out)
+
+    def test_a_path_without_directories_is_also_protected(self):
+        out = self._run("Adapted from backgammon-wikipedia.md in the archive.\n",
+                        extra=(("concepts/archive.md", "Archive"),))
+        self.assertIn("from backgammon-wikipedia.md in", out, out)
+
+    def test_a_real_link_whose_target_is_a_path_still_works(self):
+        out = self._run("See [the article](../sources/backgammon-wikipedia.md) here.\n")
+        self.assertIn("[the article](../sources/backgammon-wikipedia.md)", out, out)
+
+    def test_prose_around_the_path_still_links_normally(self):
+        out = self._run("Wikipedia says so; see ../sources/backgammon-wikipedia.md.\n")
+        self.assertIn("[Wikipedia](../concepts/wikipedia.md) says so", out, out)
+        self.assertIn("see ../sources/backgammon-wikipedia.md.", out, out)
+
+
 if __name__ == "__main__":
     unittest.main()

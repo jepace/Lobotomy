@@ -98,11 +98,21 @@ MUTATIONS = [
      # _snapshot_version skips both by name — so a write to either cannot be reverted.
      '        if f.name in _GENERATED:\n            continue\n',
      '', "tools/repair_links.py"),
+    ("paths: group 1 consumes bare relative paths",
+     # The one that actually bit: "../sources/backgammon-wikipedia.md" in prose had
+     # its titles linked inside it, and group 1 then protected the damage forever.
+     '                r"(\\[[^\\]]*\\]\\([^)]*\\)|" + _BARE_URL + r"|" + _BARE_PATH + r")"',
+     '                r"(\\[[^\\]]*\\]\\([^)]*\\)|" + _BARE_URL + r")"'),
+    ("nested repair: never invent a directory target",
+     # The old fallback truncated at the first '[' and produced "[X](../sources)",
+     # which resolves — so lint went quiet while the real target was gone.
+     'title map to do it properly.\n    return m.group(0)',
+     'title map to do it properly.\n    return f"[{link_text}](" + bad_url[:bad_url.index(\'[\')].rstrip(\'/\') + ")"', "tools/repair_links.py"),
     ("urls: group 1 consumes bare URLs",
-     # Without this a title appearing in a URL path gets linked inside the URL, breaking
-     # the URL and linking a page the sentence was not about.
-     'r"(\\[[^\\]]*\\]\\([^)]*\\)|" + _BARE_URL + r")"',
-     'r"(\\[[^\\]]*\\]\\([^)]*\\))"'),
+     # Without this a title appearing in a URL path gets linked inside the URL,
+     # breaking the URL and linking a page the sentence was not about.
+     '                r"(\\[[^\\]]*\\]\\([^)]*\\)|" + _BARE_URL + r"|" + _BARE_PATH + r")"',
+     '                r"(\\[[^\\]]*\\]\\([^)]*\\)" + r")"'),
     ("urls: mangled ones are healed",
      # Prevention alone leaves every page that already carries one broken forever, since
      # group 1 protects the damage.

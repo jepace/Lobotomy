@@ -130,6 +130,22 @@ stop it. `_MANGLED_URL_RE` therefore unwraps them at the top of `_autolink`, bef
 anything else reads the text, and the wiki heals on the next write or relink with no
 separate pass.
 
+**A relative path is the same hazard without a scheme, and far commoner** — every page's
+own links look like one, so prose that names a file gets mangled. `_BARE_PATH` covers
+`../sources/foo.md`, `sources/foo.md` and a bare `foo.md`. Observed:
+`Adapted from ../sources/backgammon-wikipedia.md` became
+`../sources/[backgammon](…)-[wikipedia](…).md` — which **renders as an ordinary sentence
+with two plausible links**, so it reads fine on the page and only `/wiki/lint` ever
+notices. Do not conclude from a clean-looking page that link syntax is intact.
+
+`repair_links._repair_nested` used to make this permanent. When it could recover no target
+from inside the mangled URL it truncated at the first `[`, turning
+`[Backgammon](../sources/[backgammon].md)` into `[Backgammon](../sources)` — a link to a
+**directory**, which resolves, so lint fell silent while the real target was gone for good.
+It now leaves what it cannot repair alone: visible damage that keeps getting reported beats
+an invented link that hides it, and the dangling pass or `_MANGLED_URL_RE` handles the
+shape properly on the next run.
+
 Performance: the title+alias map and the per-title compiled regexes are cached in memory (`_title_map_cache`, `_title_regex_cache`). `_atomic_write` invalidates them only when a write actually changes `title`/`aliases`/`no_autolink`; an mtime-scan backstop in `_build_title_map()` catches writes that bypass `_atomic_write` (other processes, manual edits), with per-file vetted mtimes so the backstop doesn't false-fire on the autolinker's own body-only writes. This invalidation logic has been a repeat bug source — change it with care and test all of: safe write keeps cache, title change invalidates, bypass write is detected, safe write doesn't mask a concurrent bypass.
 
 A per-title token prefilter (`_title_tokens_cache`) skips any title whose words are not all

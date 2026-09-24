@@ -78,8 +78,13 @@ def _repair_nested(m):
     inner = re.search(r'\]\(([^)]+)\)', bad_url)
     if inner:
         return f"[{link_text}]({inner.group(1)})"
-    clean = bad_url[:bad_url.index('[')].rstrip('/')
-    return f"[{link_text}]({clean})"
+    # No target recoverable from inside. The old fallback truncated at the first '[' and
+    # produced "[Backgammon](../sources)" — a link to a DIRECTORY, which resolves, so
+    # every later pass declared the page clean while the real target was gone for good.
+    # Leave it alone instead: visible damage that lint keeps reporting is better than an
+    # invented link that silences the report. agent._MANGLED_URL_RE heals this shape on
+    # the next autolink anyway, and it has the page's title map to do it properly.
+    return m.group(0)
 
 
 # --- Fix 2: wrong relative paths --------------------------------------------

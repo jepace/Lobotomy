@@ -152,6 +152,36 @@ class DanglingLinkTest(TempWikiTestCase):
         self.assertNotIn(".history", out)
         self.assertIn("See Gone.", out)
 
+    def test_a_nested_link_with_no_recoverable_target_is_left_alone(self):
+        """The old fallback invented a link rather than admitting it could not repair one.
+
+        It truncated the mangled target at the first '[' — "[Backgammon](../sources/
+        [backgammon].md)" became "[Backgammon](../sources)". That points at a DIRECTORY,
+        which resolves, so lint fell silent while the real target was gone for good. A
+        visible break that keeps getting reported beats an invented link that hides it,
+        and agent._MANGLED_URL_RE heals this shape on the next autolink anyway.
+        """
+        self._page("concepts/x.md",
+                   "# X\n\n## Definition\n\nSee "
+                   "[Backgammon](../sources/[backgammon].md) here.\n")
+        repair_links.repair_links()
+        out = self.w.disk("concepts/x.md")
+        self.assertNotIn("../sources)", out,
+                         "a directory was invented as the link target")
+        # What happens instead is the right thing: the dangling pass sees a target that
+        # exists nowhere and unwraps it, so the words survive as prose and the autolinker
+        # re-links them from the title map on the next run. Self-healing, and nothing is
+        # silently pointed at a directory.
+        self.assertIn("See Backgammon here.", out, out)
+
+    def test_a_nested_link_whose_target_is_recoverable_is_still_repaired(self):
+        self._page("entities/acme.md", "# Acme\n\n## Overview\n\nA firm.\n")
+        self._page("concepts/y.md",
+                   "# Y\n\n## Definition\n\nSee "
+                   "[Acme](../entities/[acme](../entities/acme.md)) here.\n")
+        repair_links.repair_links()
+        self.assertIn("[Acme](../entities/acme.md)", self.w.disk("concepts/y.md"))
+
     def test_a_history_file_is_never_rewritten(self):
         self._page("concepts/fao.md",
                    "# Fao\n\n## Definition\n\nThe [United](../entities/united.md) Nations.\n")

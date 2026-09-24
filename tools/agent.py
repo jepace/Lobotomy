@@ -1736,11 +1736,21 @@ _WORD_RE = re.compile(r"\w+")
 # link to a page the sentence was not talking about. Parens stop the match, so a
 # Wikipedia-style "..._(disambiguation)" tail is left out rather than risking a runaway.
 _BARE_URL = r"(?:https?|ftp)://[^\s<>()\[\]]+"
+# The same hazard without a scheme: a relative wiki path written in prose. The autolinker
+# linked titles inside one — "../sources/backgammon-wikipedia.md" became
+# "../sources/[backgammon](../sources/backgammon-wikipedia.md)-[wikipedia](../concepts/wikipedia.md).md"
+# — and once a link is in there, group 1 protects it, so the next run nests another layer
+# around it. A path is not prose, exactly like a URL.
+# Directories optional: "backgammon-wikipedia.md" on its own is the same hazard as
+# "../sources/backgammon-wikipedia.md", and a bare filename is how prose usually
+# names a page. The lookbehind keeps it from starting mid-token.
+_BARE_PATH = r"(?<![\w/.\-])(?:\.{1,2}/)*(?:[\w.\-]+/)*[\w.\-]+\.md"
 # The same thing after the damage is done: a URL with markdown links embedded in it.
 # Healed rather than merely prevented, because the pages already carry them and the
 # autolinker's own group 1 would otherwise protect the damage forever.
 _MANGLED_URL_RE = re.compile(
-    r"(?:https?|ftp)://(?:\[[^\]]*\]\([^)]*\)|[^\s<>()\[\]])*"
+    r"(?:(?:https?|ftp)://|(?<![\w/.\-])(?:\.{1,2}/)+)"
+    r"(?:\[[^\]]*\]\([^)]*\)|[^\s<>()\[\]])*"
     r"\[[^\]]*\]\([^)]*\)"
     r"(?:\[[^\]]*\]\([^)]*\)|[^\s<>()\[\]])*")
 
@@ -4454,7 +4464,7 @@ def _autolink(args: dict) -> str:
         combined = _title_regex_cache.get(title)
         if combined is None:
             combined = re.compile(
-                r"(\[[^\]]*\]\([^)]*\)|" + _BARE_URL + r")"
+                r"(\[[^\]]*\]\([^)]*\)|" + _BARE_URL + r"|" + _BARE_PATH + r")"
                 r"|(?<!\w)(" + _title_alts(title) + r")(?!\w)",
                 re.IGNORECASE,
             )
