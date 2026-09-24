@@ -32,7 +32,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from agent import WIKI_DIR, HISTORY_DIR, wiki_pages, _atomic_write, begin_write_scope
+from agent import (WIKI_DIR, HISTORY_DIR, wiki_pages, _atomic_write,
+                   begin_write_scope, is_generated_page, _rebuild_index)
 
 args = [a for a in sys.argv[1:] if not a.startswith("-")]
 DRY = "--dry-run" in sys.argv
@@ -81,7 +82,9 @@ repointed = stripped = pages_touched = 0
 edits = []
 
 for page in wiki_pages():
-    if page.resolve() == src:
+    # index.md is regenerated below; log.md is the audit trail, and repointing a link in
+    # it would rewrite what the log says happened. See agent._GENERATED_PAGES.
+    if page.resolve() == src or is_generated_page(page):
         continue
     body = page.read_text(encoding="utf-8", errors="replace")
 
@@ -125,6 +128,12 @@ if hist_src.is_dir():
     hist_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(hist_src), str(hist_dst))
     print(f"history moved: .history/{old_rel} -> .history/{new_rel}")
+
+# The index links to the page by its old path and is not repointed above — it is
+# generated, so it is rebuilt rather than patched. Without this the rename would leave a
+# dead link in index.md until the next ingest happened to rebuild it.
+_rebuild_index({})
+print("index rebuilt")
 
 print(f"\nDone. Now run:  python3 tools/relink.py")
 print("so prose naming the subject links to it again under the new title.")

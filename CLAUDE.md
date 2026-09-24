@@ -398,13 +398,36 @@ rebinds all four module globals, resets the thread-local session context, clears
 autolinker caches, and asserts its own isolation. Nothing there touches the repo's real
 `wiki/` or `raw/`.
 
+**Link-rewriting passes must skip `agent._GENERATED_PAGES`** (`index.md` anywhere,
+`log.md`). `merge_page`, `rename_page.py` and `repair_links.py` share that one list so they
+cannot drift. Two different reasons, and the log's is the serious one: patching `index.md`
+is undone by `_rebuild_index` seconds later, but **repointing a link in `log.md` rewrites
+what the log says happened** — the entry recording that an ingest created
+`new-york-university-langone-health.md` would come to claim it created
+`nyu-langone-health.md`, which it never did. A record edited to agree with the present is
+not a record; the dead link is the true statement, and lint skips `log.md` so it costs
+nothing. Neither file can be reverted either, since `_snapshot_version` skips both.
+**The catch:** once a pass stops repointing `index.md` it *must* rebuild it, or it leaves
+the dead link the repoint used to fix. `merge_page.py` already did; `rename_page.py` had to
+start.
+
 **`mutate.py` is the one that proves the suite works.** A green run says nothing on its
 own: this disables one guard at a time and requires a test to go red for each. Every
 mutation must report CAUGHT. Add one whenever you add a guard — if you cannot write a
 mutation the suite catches, the guard is untested. It edits the file in place and restores
 it, so do not run it anywhere near a live server. A mutation targets `agent.py` by default;
 a fourth tuple element names another file (`"tools/repair_links.py"`), because the
-maintenance tools carry guards too.
+maintenance tools carry guards too. **Every file a run touches is restored before the next
+mutation is applied**, not just at the end — without that, mutations in different files
+stack, and a guard whose removal nothing notices is reported CAUGHT on the strength of the
+previous mutation's failures. That shipped briefly and inflated one result; a mutation
+runner that lies about coverage is worse than not having one.
+
+`rename_page.py` is the one maintenance tool whose logic is not in `agent.py`, so nothing
+in-process can reach it — which is exactly how its copy of the generated-pages bug went
+uncovered while `merge_page`'s was caught. `tests/test_rename_page_cli.py` runs the real
+script against a `tools/` copied into a temp directory, since `REPO_ROOT` comes from the
+script's own location. Worth moving into `agent.py` like the others.
 
 **`deploy.sh` stamps `.version` into the jail** (`git log -1`, written after the rsync)
 and `serve.py` logs it at startup — `Lobotomy starting — version: <sha> <date> <subject>`.

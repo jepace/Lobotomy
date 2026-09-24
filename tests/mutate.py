@@ -98,6 +98,14 @@ MUTATIONS = [
      # _snapshot_version skips both by name — so a write to either cannot be reverted.
      '        if f.name in _GENERATED:\n            continue\n',
      '', "tools/repair_links.py"),
+    ("merge: generated pages are not repointed",
+     # Patching index.md is undone by the rebuild seconds later; patching log.md
+     # rewrites what the log says happened, and neither can be reverted.
+     '        if f.resolve() == loser.resolve() or is_generated_page(f):',
+     '        if f.resolve() == loser.resolve():'),
+    ("rename: generated pages are not repointed",
+     '    if page.resolve() == src or is_generated_page(page):',
+     '    if page.resolve() == src:', "tools/rename_page.py"),
     ("merge: the subject's names are folded before comparing",
      # Without it, merging two pages for one hospital is refused because each
      # sentence uses that page's own name for it — blocking the cleanup that the
@@ -279,6 +287,14 @@ def main() -> int:
                       f"the code moved; fix this mutation)")
                 stale += 1
                 continue
+            # Restore every file touched so far BEFORE applying this one. Without this,
+            # mutations in different files stack: the run that added multi-file support
+            # left agent.py mutated while mutating rename_page.py, and reported CAUGHT for
+            # a guard whose removal no test actually noticed — the failures came from the
+            # previous mutation. A mutation runner that lies about coverage is worse than
+            # not having one.
+            for _t, _text in originals.items():
+                _t.write_text(_text, encoding="utf-8")
             target.write_text(base.replace(find, replace), encoding="utf-8")
             r = subprocess.run([sys.executable, str(RUNNER)],
                                capture_output=True, text=True, cwd=REPO)
