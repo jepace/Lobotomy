@@ -98,6 +98,16 @@ MUTATIONS = [
      # _snapshot_version skips both by name — so a write to either cannot be reverted.
      '        if f.name in _GENERATED:\n            continue\n',
      '', "tools/repair_links.py"),
+    ("handback: the refusal forbids the re-read",
+     # Handing the content back is half the job. Without this clause an observed
+     # ingest called read_section for the text it had just been given — a whole
+     # round and a pacing window, to fetch what it was already holding.
+     'f"into it and call update_section again — do NOT call read_section first.\\n\\n"',
+     'f"into it and call update_section again.\\n\\n"'),
+    ("handback: the payload is delimited",
+     # A bare body blends into the prose of the refusal.
+     'f\'<section path="{path}" name="{section}">\\n{heading}\\n{old_text}\\n</section>\'',
+     'f"{heading}\\n{old_text}"'),
     ("paths: group 1 consumes bare relative paths",
      # The one that actually bit: "../sources/backgammon-wikipedia.md" in prose had
      # its titles linked inside it, and group 1 then protected the damage forever.

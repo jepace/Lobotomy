@@ -205,8 +205,18 @@ Also enforced: search limited to 2 per term per session; `done()` refused if an 
 wrote no entity/concept pages or never established a source page; `update_file` refused
 until the session has read the page's full content, and `update_section` until it has read
 that section; all-lowercase titles refused; `wiki/log.md` and `wiki/index.md` refused;
-`wiki/sources/` pages immutable after creation. Refusals hand back the needed file content
-in the same response to save a round-trip.
+`wiki/sources/` pages immutable after creation.
+
+**Four refusals hand the needed content back in the same response** — `update_section`
+(unread section), `update_file` (unread page, and stale page), `create_file` (page
+exists) — and handing it back is only half the job. Each must also say
+`— do NOT call read_file first` (or `read_section`) and wrap the payload in
+`<file path="…">` / `<section path="…" name="…">` delimiters. `update_section` was the one
+missing both, and an observed ingest was handed the section text and called `read_section`
+for it anyway: a full round, plus one of the inter-round pacing windows, to fetch what it
+was already holding. A refusal that leaves the wasteful route open is one the model will
+take. `tests/test_handback_refusals.py` asserts the contract across all four at once so
+they cannot drift apart again.
 
 ### Reading a large page
 

@@ -2001,11 +2001,18 @@ def _update_section(args: dict) -> str:
     _read_whole = _ctx()._session_read_coverage.get(wiki_rel, 0) >= _full_len
     if not _read_whole and (wiki_rel, section.strip().lower()) not in _ctx()._session_read_sections:
         _ctx()._session_read_sections.add((wiki_rel, section.strip().lower()))
+        # Worded like update_file's and create_file's equivalents on purpose, down to the
+        # "do NOT" clause and the delimiters. This one lacked both, and the difference
+        # showed: an observed ingest was refused here, was handed the section text, and
+        # called read_section for it anyway — a whole round, and a pacing window, to
+        # fetch what it was already holding. Handing the content back is only half the
+        # job; the refusal also has to rule out the detour, or the model takes it.
         return (
             f"Error: update_section refused — you had not read '{section}' in {path} this "
-            f"session, so your rewrite would discard what is there. Its current content is "
-            f"below and is now marked as read. Merge your changes into it and call "
-            f"update_section again.\n\n{heading}\n{old_text}"
+            f"session, so your rewrite would discard what is there.\n\n"
+            f"Its current content is below, and is now marked as read. Merge your changes "
+            f"into it and call update_section again — do NOT call read_section first.\n\n"
+            f'<section path="{path}" name="{section}">\n{heading}\n{old_text}\n</section>'
         )
     _old_cmp, _new_cmp = _unlinked_len(old_text), _unlinked_len(new_text)
     # allow_shrink is how a deliberate reduction gets through. Consolidating a page IS
