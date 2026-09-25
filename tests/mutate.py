@@ -98,6 +98,11 @@ MUTATIONS = [
      # _snapshot_version skips both by name — so a write to either cannot be reverted.
      '        if f.name in _GENERATED:\n            continue\n',
      '', "tools/repair_links.py"),
+    ("history: the whole source slug is stored",
+     # A capture slugs to 87 characters; truncating at 72 names no file, so the
+     # row silently loses its link and renders as plain text.
+     '                _src = _REASON_RE.sub("-", Path(_rel).stem.lower())[:120].strip("-")',
+     '                _src = _REASON_RE.sub("-", Path(_rel).stem.lower())[:72].strip("-")'),
     ("history: the writing tool is recorded",
      # "ingest" does not say whether it was a whole-page regenerate or a one-line
      # fix, and those are very different things to find in fifty rows.

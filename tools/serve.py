@@ -1649,10 +1649,18 @@ def wiki_history(page_path):
             return None
         if slug not in _src_titles:
             sp = WIKI_DIR / "sources" / f"{slug}.md"
+            if not sp.is_file():
+                # Revisions stamped while the slug was truncated at 72 characters name no
+                # file, and there are already plenty of those on disk. A unique source page
+                # whose name starts with what was stored is that page — resolve it rather
+                # than dropping the link, so the rows written before the cap was raised
+                # keep working. Ambiguous prefixes resolve to nothing, on purpose.
+                _hits = [f for f in (WIKI_DIR / "sources").glob(f"{slug}*.md")]
+                sp = _hits[0] if len(_hits) == 1 else sp
             _src_titles[slug] = (
                 {"title": page_display_title(
                      sp.read_text(encoding="utf-8", errors="replace"), sp.stem),
-                 "path": f"sources/{slug}.md"}
+                 "path": f"sources/{sp.stem}.md"}
                 if sp.is_file() else
                 # The source page was renamed or deleted. Say the slug rather than
                 # nothing: it is still the best available answer to "which article".

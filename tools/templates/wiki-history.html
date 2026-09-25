@@ -54,8 +54,15 @@
     white-space: nowrap;
     text-overflow: ellipsis;
   }
-  .rev .what .src a { color: var(--text2); text-decoration: underline; }
-  .rev .what .src a:hover { color: var(--accent); }
+  /* A link that looks like body text is a link nobody clicks. Muted grey with a thin
+     underline read as plain text at a glance — accent colour is what says "this goes
+     somewhere", and this one goes to the source page the ingest was folding in. */
+  .rev .what .src a {
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+  .rev .what .src a:hover { border-bottom-color: var(--accent); }
   .rev .what .secs {
     overflow: hidden;
     text-overflow: ellipsis;

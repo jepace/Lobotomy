@@ -1092,7 +1092,13 @@ def _snapshot_version(p: Path, new_content: str) -> None:
             except Exception:
                 _rel = ""
             if _rel.startswith("sources/"):
-                _src = _REASON_RE.sub("-", Path(_rel).stem.lower())[:72].strip("-")
+                # 120, not 72. A reading-list capture slugs to things like
+                # "https-www-nytimes-com-2026-09-23-world-canada-mark-carney-calls-trump-
+                # tariffs-a-rupture" — 87 characters — and a truncated slug names no file,
+                # so the history row silently lost its link and rendered as plain text.
+                # The whole filename still fits well inside any filesystem limit:
+                # 20 (timestamp) + 24 (reason) + 120 + 24 (tool) + separators is under 200.
+                _src = _REASON_RE.sub("-", Path(_rel).stem.lower())[:120].strip("-")
         _tool = get_write_tool()
         # Fixed positions: a slot that is empty but has a filled slot AFTER it must still
         # be written, or everything shifts left. The first version only placeheld the

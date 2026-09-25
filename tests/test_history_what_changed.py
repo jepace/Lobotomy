@@ -17,6 +17,7 @@ or two parts and still parse.
 Neither is a diff. "ingest · from Mark Carney on Trump, tariffs and Canada · Positions" is
 a sentence; `@@ -12,3 +12,5 @@` is not.
 """
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -288,6 +289,94 @@ class WordCountTest(TempWikiTestCase):
     def test_a_hyphenated_word_counts_once(self):
         self._write(BASE.replace("A banker.", "A post-war banker."))
         self.assertEqual(self._row()["added"], 1, "'post-war' was counted as two words")
+
+
+class SourceLinkMarkupTest(unittest.TestCase):
+    """The source title on a history row is a link to that source page.
+
+    It was wired correctly from the start and still did not read as one: styled in the
+    muted body colour with a thin underline, it looked like plain text, and "make it a
+    hyperlink" is what a working link that does not look like one earns. Accent colour is
+    the affordance; the href was never the problem.
+
+    Markup assertions are weak, so this file keeps only the two that would be silent
+    failures: the anchor disappearing, and a source page that no longer exists being
+    rendered as a link to nothing.
+    """
+
+    def setUp(self):
+        self.html = (Path(__file__).resolve().parent.parent / "tools" / "templates"
+                     / "wiki-history.html").read_text(encoding="utf-8")
+
+    def test_the_source_title_is_an_anchor_to_the_source_page(self):
+        self.assertIn('<a href="/wiki/{{ r.source.path }}">{{ r.source.title }}</a>',
+                      self.html, "the source title stopped being a link")
+
+    def test_a_missing_source_page_renders_as_plain_text(self):
+        # serve.py sets path=None when the source page has been renamed or deleted; the
+        # template must fall through to the bare title rather than link to nothing.
+        self.assertIn("{%- else %} {{ r.source.title }}{% endif -%}", self.html)
+
+    def test_the_link_is_accent_coloured(self):
+        # The whole point of the change. A link in the body colour is a link nobody clicks.
+        m = re.search(r"\.rev \.what \.src a \{[^}]*\}", self.html, re.DOTALL)
+        self.assertIsNotNone(m, "the source link rule was removed")
+        self.assertIn("var(--accent)", m.group(0), m.group(0))
+
+
+class LongSourceSlugTest(TempWikiTestCase):
+    """A capture's slug is long, and truncating it broke the link silently.
+
+    A reading-list capture slugs to things like
+    "https-www-nytimes-com-2026-09-23-world-canada-mark-carney-calls-trump-tariffs-a-rupture"
+    — 87 characters. The stamp truncated at 72, so the stored slug named no file, serve.py
+    fell through to its "source page is gone" branch, and the row rendered as plain text.
+    Nothing failed; the link just was not there, which is why it read as "the text is there,
+    make it a hyperlink".
+
+    Two fixes, because one of them cannot reach what is already on disk: the cap is raised,
+    AND serve.py resolves a stored slug that is a prefix of exactly one source page. Rows
+    stamped before the cap changed keep working.
+    """
+
+    SLUG = ("https-www-nytimes-com-2026-09-23-world-canada-mark-carney-"
+            "calls-trump-tariffs-a-rupture")
+
+    def _ingest(self, source_rel):
+        self.w.page("entities/mark-carney.md", title="Mark Carney", type="entity",
+                    body="# Mark Carney\n\n## Overview\n\nA banker.\n")
+        p = agent.WIKI_DIR / "entities" / "mark-carney.md"
+        fm = p.read_text(encoding="utf-8").split("---\n")[1]
+        agent.begin_write_scope()
+        agent.init_session()
+        agent._ctx()._current_source_page = source_rel
+        with agent.write_reason("ingest"), agent.write_tool("update_section"):
+            agent._atomic_write(p, f"---\n{fm}---\n\n# Mark Carney\n\n"
+                                   f"## Overview\n\nA banker and politician.\n")
+        return p
+
+    def test_the_whole_slug_is_stored(self):
+        self.assertGreater(len(self.SLUG), 72, "the fixture stopped exercising the cap")
+        self.w.page(f"sources/{self.SLUG}.md", title="Carney calls tariffs a rupture",
+                    type="source", body="# X\n\n## Summary\n\nX.\n")
+        p = self._ingest(f"sources/{self.SLUG}.md")
+        self.assertEqual(agent.page_history(p)[0]["source"], self.SLUG)
+
+    def test_the_stored_slug_names_a_real_file(self):
+        # The actual failure: a truncated slug is not a filename, so no link is possible.
+        self.w.page(f"sources/{self.SLUG}.md", title="Carney calls tariffs a rupture",
+                    type="source", body="# X\n\n## Summary\n\nX.\n")
+        p = self._ingest(f"sources/{self.SLUG}.md")
+        rec = agent.page_history(p)[0]["source"]
+        self.assertTrue((agent.WIKI_DIR / "sources" / f"{rec}.md").is_file())
+
+    def test_a_filename_stays_within_reach_of_any_filesystem(self):
+        self.w.page(f"sources/{self.SLUG}.md", title="X", type="source",
+                    body="# X\n\n## Summary\n\nX.\n")
+        p = self._ingest(f"sources/{self.SLUG}.md")
+        longest = max(len(f.name) for f in
+                      (agent.HISTORY_DIR / "entities" / "mark-carney.md").glob("*.md"))
+        self.assertLess(longest, 255, "a revision filename could exceed a filesystem limit")
 
 
 if __name__ == "__main__":

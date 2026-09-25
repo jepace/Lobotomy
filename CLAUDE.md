@@ -389,8 +389,14 @@ was for. Two halves, gathered in deliberately opposite ways:
   them was wrapped, and which loop served the request decided whether the row could say
   anything at all.
 - **Which source an ingest folded in** cannot be derived, so it is *stored*, as a third
-  `__` part of the revision filename. `_current_source_page` is already on the session
-  context at snapshot time, so nothing new is tracked. `_parse_revision_stem()` handles
+  `__` part of the revision filename. **Store the whole slug** — a reading-list capture
+  slugs to `https-www-nytimes-com-2026-09-23-world-canada-mark-carney-calls-trump-tariffs-a-rupture`,
+  87 characters, and an earlier 72-char cap truncated it into something that named no
+  file. Nothing failed: `serve.py` fell through to its "the source page is gone" branch
+  and the row rendered as plain text, so the symptom was a link that was simply absent.
+  `serve.py` also resolves a stored slug that is a unique prefix of one source page, which
+  is what repairs the rows stamped while the cap was in place. `_current_source_page` is
+  already on the session context at snapshot time, so nothing new is tracked. `_parse_revision_stem()` handles
   all three shapes — bare `<ts>`, `<ts>__<reason>`, `<ts>__<reason>__<source>` — and the
   timestamp is still the fixed-width prefix, so lexical order stays chronological. Only
   ingests carry one; claiming a relink sweep came "from" an article would be a confident
