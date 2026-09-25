@@ -174,6 +174,16 @@ MUTATIONS = [
      # title's link and manufactures the malformed [[a](b)](c) shape.
      '                    _depth = 0\n                    for _k, _ch in enumerate(m.group(0)):',
      '                    _depth = 99\n                    for _k, _ch in enumerate(m.group(0)):'),
+    ("autolink: typographic variants match",
+     # A curly apostrophe in the page and a straight one in the title silently
+     # skipped one name in a list where every other name linked.
+     '    return "".join(_FLEX_CHARS.get(ch) or re.escape(ch) for ch in word)',
+     '    return re.escape(word)'),
+    ("autolink: the per-line probe is punctuation-free",
+     # A word carrying the other spelling is never found by a plain substring test,
+     # so the probe would reject the line before the flexible pattern ran.
+     '        _probe = max(re.findall(r"\\w+", title.lower()), key=len, default="")',
+     '        _probe = max(title.lower().split(), key=len, default="")'),
     ("autolink: group 1 consumes a malformed [[a](b)](c) whole",
      # The growth engine. The plain pattern eats "[[a](b)" and leaves "](c)", so
      # the scanner meets that path as bare text, links the title inside it, and the
@@ -182,9 +192,9 @@ MUTATIONS = [
      '_LINK_G1 = r"\\[[^\\]]*\\]\\([^)]*\\)"'),
     ("autolink: a short link inside a longer title is upgraded",
      # Group 1 wins at every position, so once "[New York University](x) Langone
-     # Health" exists no later pass can fix it — the linked span starts the
-     # phrase, so group 2 is never reached there.
-     '            if _upgrade is not None and "](" in line and _probe in lines_lower[i]:',
+     # Health" exists no later pass can fix it — the linked span starts the phrase,
+     # so group 2 is never reached there.
+     '            if _upgrade not in (None, _UPGRADE_PENDING) and "](" in line:',
      '            if False:'),
     ("template assumption: update_section names the page's other sections",
      # The model guesses "Overview" from the template without reading. A guess that

@@ -209,6 +209,26 @@ Performance: the title+alias map and the per-title compiled regexes are cached i
 
 A per-title token prefilter (`_title_tokens_cache`) skips any title whose words are not all
 present in the page — at ~9,000 titles this is what keeps a single autolink under a second.
+**A per-LINE probe does the same job one level down**, and matters more since the repeat
+rule landed: the body prefilter only says a title appears *somewhere*, so without it the
+combined regex runs over every line for every candidate title. Profiling a 119KB page
+against 9,600 titles showed **731,390 calls into the replacer**, and that one substring
+test took 13.8s to 9.4s. The probe is the longest `\w+` **token**, not the longest
+whitespace-word, because `noah's` is never found in a line spelling it `noah’s` — it would
+reject the line before the flexible pattern could match.
+
+**Typographic variants are the same character for matching** (`_esc_flex`). An article
+writes "Noah’s Ark Scans" with a curly apostrophe, the page is created as "Noah's Ark
+Scans" with a straight one, and the autolinker — matching the title literally — silently
+skipped it while every other name in the same list linked. `_resolve_page` already
+normalised, so no duplicate page was created and nothing reported it. Apostrophes, quotes
+and dashes each match their whole family; the display text keeps whatever the page wrote,
+since rewriting an author's punctuation is not the linker's job.
+
+**The repeat-link rule is not free.** The same fixture runs 4.5s on the code before it and
+9.9s after, because group 1 now inspects every existing link rather than returning it
+untouched. That is the cost of unlinking repeats, and it is paid on every write to a large
+page; the probe above is what keeps it from being 3×.
 
 `_build_title_map()` must be **deterministic**. It was not once (unsorted glob, no sort
 tiebreak) and the resulting map order changed the output, so `relink` never converged: two

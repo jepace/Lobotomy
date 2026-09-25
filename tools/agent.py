@@ -4324,6 +4324,19 @@ def heal_index_if_stale() -> None:
         _rebuild_index({})
 
 
+# Typographic variants that mean the same character. A source article writes "Noah’s Ark
+# Scans" with a curly apostrophe and the page gets created as "Noah's Ark Scans" with a
+# straight one, so the autolinker — which matches the title literally — silently skipped
+# it while every other name in the same list linked. Same trap for quotes and dashes.
+_FLEX_GROUPS = ("'’‘ʼ", '"“”', "-–—")
+_FLEX_CHARS = {ch: "[" + re.escape(g) + "]" for g in _FLEX_GROUPS for ch in g}
+
+
+def _esc_flex(word: str) -> str:
+    """re.escape, but a typographic character matches any of its variants."""
+    return "".join(_FLEX_CHARS.get(ch) or re.escape(ch) for ch in word)
+
+
 def _title_alts(title: str, include_bare: bool = True) -> str:
     """
     Return a regex alternation string matching `title` bare OR with exactly one
@@ -4339,7 +4352,7 @@ def _title_alts(title: str, include_bare: bool = True) -> str:
     n = len(words)
 
     def _esc(ws: list) -> str:
-        return r"\s+".join(re.escape(w) for w in ws)
+        return r"\s+".join(_esc_flex(w) for w in ws)
 
     alts = [_esc(words)] if include_bare else []  # bare match
     for s in range(n):
@@ -4356,6 +4369,7 @@ def _title_alts(title: str, include_bare: bool = True) -> str:
 
 
 _title_upgrade_cache: dict = {}   # title -> compiled upgrade regex (or None)
+_UPGRADE_PENDING = object()      # "not compiled yet", distinct from "no upgrade possible"
 
 
 def _title_upgrade_re(title: str):
@@ -4384,15 +4398,34 @@ def _title_upgrade_re(title: str):
     rx = None
     words = title.split()
     if len(words) > 1:
-        # The title's words in order, with markdown link syntax allowed around ANY of
-        # them. _title_alts only describes ONE contiguous linked sub-span, so it cannot
-        # see "[Planned Parenthood](…) of [California](…)" — two separate links inside one
-        # name — and that shape is the common one: a source page lists an entity before
-        # its page exists, the autolinker links the two halves it does know, and nothing
-        # can ever put them back together.
-        _w = r"(?:\[)?" + r"(?:\]\([^)]*\))?\s+(?:\[)?".join(
-            re.escape(w) for w in words) + r"(?:\]\([^)]*\))?"
-        rx = re.compile(r"(?<![\w\[])" + _w + r"(?!\w)", re.IGNORECASE)
+        # The title's words in order with link syntax allowed around any of them, but
+        # with AT LEAST ONE word definitely linked. _title_alts only describes one
+        # contiguous linked sub-span, so it cannot see "[Planned Parenthood](…) of
+        # [California](…)" — two separate links inside one name — and that shape is the
+        # common one: a source page lists an entity before its page exists, the autolinker
+        # links the two halves it does know, and nothing can ever put them together.
+        #
+        # One alternative per word, each pinning that word as linked. Making every piece
+        # optional instead was simpler and cost 3x: the pattern then matched BARE text as
+        # well, so it fired on every ordinary occurrence and the replacer threw each match
+        # away — a full regex pass and a bracket scan per mention, for nothing. Pinning
+        # one word means a bare phrase matches no alternative at all.
+        def _opt(w):
+            return r"(?:\[)?" + _esc_flex(w) + r"(?:\]\([^)]*\))?"
+
+        def _pin(ws):
+            # A link wraps a contiguous SPAN, not a word: "[New York University](x)" is
+            # one link over three words, so pinning per word matched none of it.
+            return r"\[" + r"\s+".join(_esc_flex(w) for w in ws) + r"\]\([^)]*\)"
+
+        alts = []
+        n = len(words)
+        for i in range(n):
+            for j in range(i + 1, n + 1):
+                parts = ([_opt(w) for w in words[:i]] + [_pin(words[i:j])]
+                         + [_opt(w) for w in words[j:]])
+                alts.append(r"\s+".join(parts))
+        rx = re.compile(r"(?<![\w\[])(?:" + "|".join(alts) + r")(?!\w)", re.IGNORECASE)
     _title_upgrade_cache[title] = rx
     return rx
 
@@ -4803,6 +4836,9 @@ def _lookup_titles(args: dict) -> str:
     return "\n".join(lines)
 
 
+_partial = __import__("functools").partial
+
+
 def _autolink(args: dict) -> str:
     """Replace all bare occurrences of each other wiki page title with a markdown link."""
     import re
@@ -4975,11 +5011,19 @@ def _autolink(args: dict) -> str:
         # here is about what an article is there.
         _title_toks = needed
         _seen = [False]        # linked already in the section being walked
-        _upgrade = _title_upgrade_re(title)
-        # A necessary condition for any upgrade alternative to match: the title's longest
-        # word is on the line. Cheap substring test against the prepared lowercase copy,
-        # and it rejects almost every (title, line) pair before touching a regex.
-        _probe = max(title.lower().split(), key=len) if _upgrade is not None else ""
+        # The title's longest word, lowercased. A necessary condition for this title to
+        # match anything on a line, and the single biggest saving in the whole loop: the
+        # token prefilter above only says the title's words are somewhere in the BODY, so
+        # without this the combined regex is run over every line for every candidate
+        # title. Profiling a 119KB page against 9,600 titles showed 731,390 calls into
+        # the replacer — the regex matching every existing link on every line, for every
+        # title, almost all of which could not possibly match.
+        # The longest \w+ TOKEN, not the longest whitespace-word: a word carrying a
+        # typographic character ("Noah’s") would never be found in a line spelling it the
+        # other way, and the probe would reject the line before the flexible pattern could
+        # match it. Tokens carry no punctuation, so they compare cleanly.
+        _probe = max(re.findall(r"\w+", title.lower()), key=len, default="")
+        _upgrade = _UPGRADE_PENDING      # compiled lazily; see below
 
         def _points_here(url: str) -> bool:
             """Does this link target the page this title lives on? Compared resolved, so
@@ -5042,7 +5086,7 @@ def _autolink(args: dict) -> str:
             if is_heading[i]:
                 _seen[0] = False                # a new section gets its own first mention
                 continue
-            if not line:
+            if not line or _probe not in lines_lower[i]:
                 continue
             _always = is_listish[i]
             # Upgrade first: a shorter title already linked inside this one's phrase. Only
@@ -5050,7 +5094,12 @@ def _autolink(args: dict) -> str:
             # almost every line. It always upgrades: correcting a wrong target matters
             # more than the once-per-section rule, and the combined pass below accounts
             # for the mention when it meets the link this leaves behind.
-            if _upgrade is not None and "](" in line and _probe in lines_lower[i]:
+            if _upgrade is _UPGRADE_PENDING and "](" in line:
+                # Compiled on the first line that could actually use it: a line this
+                # title might appear on AND that carries a link. A title never meeting
+                # both never pays for the pattern, which is the larger half of the two.
+                _upgrade = _title_upgrade_re(title)
+            if _upgrade not in (None, _UPGRADE_PENDING) and "](" in line:
                 def _up_repl(m, _lp=link_path):
                     if "](" not in m.group(0):
                         # Bare text: that is group 2's job, and doing it here would skip
@@ -5086,8 +5135,10 @@ def _autolink(args: dict) -> str:
                     lines[i] = line = _upgraded
                     lines_lower[i] = _upgraded.lower()
                     changed = True
-            new_line = combined.sub(
-                lambda m, _a=_always: _replacer(m, _always=_a), line)
+            # functools.partial rather than a lambda: this is called once per regex
+            # match, which the profile put at 731,390 times on a large page, and the
+            # extra Python frame is pure overhead at that count.
+            new_line = combined.sub(_partial(_replacer, _always=_always), line)
             if new_line != line:
                 lines[i] = new_line
                 lines_lower[i] = new_line.lower()

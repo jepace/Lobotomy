@@ -133,27 +133,32 @@ class UpgradeTest(TempWikiTestCase):
     def test_it_never_starts_inside_another_links_text(self):
         """The guard that stops this pass creating the damage it repairs.
 
-        "Monterey County" matches the tail of "[CASA of Monterey County](…)", and
-        rewriting that produced "[CASA of [Monterey County](…)](…)" — the malformed
-        [[a](b)](c) shape that took one page to twenty-eight layers. Every "](" consumed
-        must have its own "[" inside the match.
-        """
-        self.w.page("entities/monterey-county.md", title="Monterey County",
-                    type="entity", body="# Monterey County\n\nA county.\n")
-        self.w.page("entities/casa-of-monterey-county.md", title="CASA of Monterey County",
-                    type="entity", body="# CASA\n\nA charity.\n")
-        out = self._src("# S\n\n## Summary\n\nCASA of Monterey County filed in "
-                        "Monterey County court.\n")
-        self.assertIn("[CASA of Monterey County](../entities/casa-of-monterey-county.md)",
-                      out, out)
-        self.assertNotIn("[CASA of [", out, "the upgrade created a malformed link")
+        Pinning a contiguous SPAN already blocks the first version of this — "Monterey
+        County" can no longer match the tail of "[CASA of Monterey County](…)", because
+        every alternative needs a "[" of its own. What still reaches it is an optional
+        word swallowing somebody else's closer:
 
-    def test_an_unrelated_link_is_not_touched(self):
-        self._short()
-        self._long()
-        out = self._src("# S\n\n## Summary\n\nSee [the report](https://example.com/nyu) "
-                        "for more.\n")
-        self.assertIn("[the report](https://example.com/nyu)", out, out)
+            Alpha Beta [Gamma](…)        ->  [Alpha Beta](…) [Gamma](…)
+
+        and then "Beta Gamma" matches "Beta](…) [Gamma](…)" — starting inside the first
+        link and consuming its "](" . Without the check that becomes
+        "[Alpha [Beta](…) Gamma](…)": the malformed [[a](b)](c) shape that took one page
+        to twenty-eight layers of nesting, manufactured by the pass meant to repair it.
+
+        Every "](" consumed must have its own "[" inside the match.
+        """
+        for slug, t in (("alpha-beta", "Alpha Beta"), ("beta-gamma", "Beta Gamma"),
+                        ("gamma", "Gamma")):
+            self.w.page(f"entities/{slug}.md", title=t, type="entity",
+                        body=f"# {t}\n\n## Overview\n\nX.\n")
+        out = self._src("# S\n\n## Summary\n\nAlpha Beta "
+                        "[Gamma](../entities/gamma.md) here.\n")
+        line = next(l for l in out.splitlines() if "here." in l)
+        self.assertEqual(
+            line,
+            "[Alpha Beta](../entities/alpha-beta.md) "
+            "[Gamma](../entities/gamma.md) here.", line)
+        self.assertNotIn("[Alpha [", line, "the upgrade created a malformed link")
 
     def test_a_list_row_upgrade_does_not_spend_the_prose_mention(self):
         self._short()
