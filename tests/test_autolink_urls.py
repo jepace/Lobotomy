@@ -151,6 +151,39 @@ class BareRelativePathTest(TempWikiTestCase):
             agent._autolink({"path": "wiki/sources/backgammon-rules.md"})
         self.assertEqual(self.w.disk("sources/backgammon-rules.md"), out)
 
+
+    def test_a_nested_path_recovers_the_innermost_target(self):
+        """The mangling applies to its own output, so it nests:
+
+            X0   = ../sources/backgammon-wikipedia.md
+            Xk+1 = ../sources/[backgammon](Xk)-[wikipedia](../concepts/wikipedia.md).md
+
+        One real page reached twenty-eight layers. The original path is still in there,
+        innermost, and it is the FIRST complete path the scan meets — every outer
+        "../sources/" is immediately followed by "[", so only the innermost matches a path
+        pattern at all. Taking the LAST match returns "../concepts/wikipedia.md", a
+        different page; that shipped briefly and the two-title test above caught it.
+        """
+        x = "../sources/backgammon-wikipedia.md"
+        for _ in range(5):
+            x = ("../sources/[backgammon](" + x
+                 + ")-[wikipedia](../concepts/wikipedia.md).md")
+        out = self._run(f"## Overview\n\nSee {x} here.\n")
+        recovered = out.split("See ")[1]
+        self.assertTrue(recovered.startswith("../sources/backgammon-wikipedia.md"),
+                        f"the innermost path was not what came back: {recovered[:80]}")
+        # What it does NOT claim: that the line is clean afterwards. Each layer appended a
+        # real "-wikipedia.md", so unwinding leaves those behind and no pass can know they
+        # were fabricated. Recovering the target is the most that is knowable here; the
+        # rest is a human edit. Prevention is what matters, and that is _BARE_PATH.
+
+    def test_flattening_is_still_used_for_a_url(self):
+        # The scheme branch must NOT take the innermost path: there the display text is
+        # the segment it replaced, so unwrapping restores the URL exactly.
+        out = self._run("## Overview\n\nSee "
+                        "https://example.com/[meta](../entities/meta.md)/page here.\n")
+        self.assertIn("https://example.com/meta/page", out, out)
+
     def test_a_path_without_directories_is_also_protected(self):
         out = self._run("Adapted from backgammon-wikipedia.md in the archive.\n",
                         extra=(("concepts/archive.md", "Archive"),))
@@ -164,6 +197,74 @@ class BareRelativePathTest(TempWikiTestCase):
         out = self._run("Wikipedia says so; see ../sources/backgammon-wikipedia.md.\n")
         self.assertIn("[Wikipedia](../concepts/wikipedia.md) says so", out, out)
         self.assertIn("see ../sources/backgammon-wikipedia.md.", out, out)
+
+
+class MalformedLinkIsConsumedWholeTest(TempWikiTestCase):
+    """Group 1 must swallow "[[a](b)](c)" entirely, or it feeds the interior back.
+
+    The growth engine behind a page that reached twenty-eight layers of nesting. The plain
+    pattern "\\[[^\\]]*\\]\\([^)]*\\)" mis-parses a link whose display text is itself a
+    link: it consumes "[[backgammon](../concepts/backgammon.md)" and leaves
+    "](../sources/backgammon-wikipedia.md)" behind. The scanner then meets that path as
+    ordinary text, links the title inside it, and the whole thing gains a layer — every
+    pass, forever.
+
+    Two independent protections cover it now: _BARE_PATH stops a path being linked into
+    at all, and this stops group 1 handing an interior to group 2 in the first place.
+    Verified independently, with the other disabled.
+
+    Whatever writes the malformed link — and that is still unknown — it must not be able
+    to compound.
+    """
+
+    MALFORMED = ("- The first moves of a [[backgammon](../concepts/backgammon.md)]"
+                 "(../sources/backgammon-wikipedia.md)\n")
+
+    def _wiki(self, body):
+        for slug, t, ty in (("concepts/backgammon.md", "Backgammon", "concept"),
+                            ("concepts/wikipedia.md", "Wikipedia", "concept")):
+            self.w.page(slug, title=t, type=ty, body=f"# {t}\n\n## Definition\n\nX.\n")
+        self.w.page("sources/backgammon-wikipedia.md",
+                    title="Backgammon Wikipedia Article", type="source",
+                    body="# X\n\n## Summary\n\nX.\n")
+        self.w.page("sources/bot.md", title="BOT", type="source",
+                    body="# BOT\n\n## Summary\n\n" + body)
+        agent._autolink({"path": "wiki/sources/bot.md"})
+        return next(l for l in self.w.disk("sources/bot.md").splitlines()
+                    if l.startswith("- The first"))
+
+    def test_the_interior_path_is_not_mangled(self):
+        self.assertIn("(../sources/backgammon-wikipedia.md)", self._wiki(self.MALFORMED))
+
+    def test_it_does_not_gain_a_layer(self):
+        before = len(self.MALFORMED.rstrip("\n"))
+        self.assertEqual(len(self._wiki(self.MALFORMED)), before,
+                         "the malformed link grew — group 1 handed its interior back")
+
+    def test_it_stays_stable_across_passes(self):
+        once = self._wiki(self.MALFORMED)
+        for _ in range(4):
+            agent._autolink({"path": "wiki/sources/bot.md"})
+        self.assertEqual(
+            next(l for l in self.w.disk("sources/bot.md").splitlines()
+                 if l.startswith("- The first")), once)
+
+    def test_the_pattern_consumes_the_whole_malformed_link(self):
+        import re as _re
+        rx = _re.compile(agent._LINK_G1)
+        bad = "[[backgammon](../concepts/backgammon.md)](../sources/backgammon-wikipedia.md)"
+        self.assertEqual(rx.search(bad).group(0), bad,
+                         "group 1 left part of the malformed link exposed")
+
+    def test_ordinary_links_still_parse(self):
+        import re as _re
+        rx = _re.compile(agent._LINK_G1)
+        self.assertEqual([m.group(0) for m in rx.finditer("[a](x) and [b](y)")],
+                         ["[a](x)", "[b](y)"])
+        # A legitimate bracketed display text, which the old pattern could not handle
+        # either and which must not be split.
+        self.assertEqual(rx.search("[text with [brackets]](u.md)").group(0),
+                         "[text with [brackets]](u.md)")
 
 
 if __name__ == "__main__":

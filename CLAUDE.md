@@ -139,6 +139,26 @@ And it costs a regex per candidate title per line, so it is gated on `"](" in li
 lowercase substring probe for the title's longest word, kept in step via `lines_lower`
 (1.7× → 1.3× on a worst case where every line carries links).
 
+**Group 1's link pattern tolerates one level of brackets in the display text**
+(`_LINK_G1`), and that is load-bearing, not cosmetic. The plain `\[[^\]]*\]\([^)]*\)`
+mis-parses a malformed `[[a](b)](c)`: it consumes `[[a](b)` and leaves `](c)` behind, so
+the scanner meets that path as ordinary text, links the title inside it, and the link
+gains a layer — **every pass, forever**. That is the engine that took one page to
+twenty-eight layers of nesting, each layer being the previous one wrapped again:
+
+    X0   = ../sources/backgammon-wikipedia.md
+    Xk+1 = ../sources/[backgammon](Xk)-[wikipedia](../concepts/wikipedia.md).md
+
+Two independent protections cover it now — `_BARE_PATH` stops a path being linked into at
+all, and this stops group 1 handing an interior back to group 2 — and each was verified
+with the other disabled. Whatever writes the malformed link in the first place (still
+unknown), it can no longer compound. Recovery is a different matter: every layer appends a
+real `-wikipedia.md`, so unwinding leaves those behind and **no pass can know they were
+fabricated**. `_heal_mangled` recovers the innermost path, which is the most that is
+knowable; the rest is a human edit. It takes the FIRST path match, not the last — every
+outer `../sources/` is followed by `[`, so only the innermost matches a path pattern at
+all, and taking the last returns a different page entirely.
+
 The critical invariant: **never match inside existing markdown links — or inside a bare
 URL**. Group 1 of the combined regex takes priority at each position, consuming both before
 group 2 can fire. Heading lines are skipped entirely (`is_heading`), so a link inside a

@@ -159,6 +159,12 @@ MUTATIONS = [
      # lookup_titles confirms the demand, and the model makes a duplicate.
      '    _first = next((c for c in name.lower() if c.isalnum()), "")\n    for title, rel in by_key.items():\n        if _first and title[:1].isalnum() and title[:1] != _first:\n            continue\n        if _initialism_match(name, title):\n            return rel\n    return ""',
      '    return ""'),
+    ("autolink: group 1 consumes a malformed [[a](b)](c) whole",
+     # The growth engine. The plain pattern eats "[[a](b)" and leaves "](c)", so
+     # the scanner meets that path as bare text, links the title inside it, and the
+     # link gains a layer on every pass.
+     '_LINK_G1 = r"\\[(?:[^\\[\\]]|\\[[^\\]]*\\])*\\]\\([^)]*\\)"',
+     '_LINK_G1 = r"\\[[^\\]]*\\]\\([^)]*\\)"'),
     ("autolink: a short link inside a longer title is upgraded",
      # Group 1 wins at every position, so once "[New York University](x) Langone
      # Health" exists no later pass can fix it — the linked span starts the
@@ -191,8 +197,8 @@ MUTATIONS = [
     ("paths: group 1 consumes bare relative paths",
      # The one that actually bit: "../sources/backgammon-wikipedia.md" in prose had
      # its titles linked inside it, and group 1 then protected the damage forever.
-     '                r"(\\[[^\\]]*\\]\\([^)]*\\)|" + _BARE_URL + r"|" + _BARE_PATH + r")"',
-     '                r"(\\[[^\\]]*\\]\\([^)]*\\)|" + _BARE_URL + r")"'),
+     '                r"(" + _LINK_G1 + r"|" + _BARE_URL + r"|" + _BARE_PATH + r")"',
+     '                r"(" + _LINK_G1 + r"|" + _BARE_URL + r")"'),
     ("nested repair: never invent a directory target",
      # The old fallback truncated at the first '[' and produced "[X](../sources)",
      # which resolves — so lint went quiet while the real target was gone.
@@ -201,13 +207,12 @@ MUTATIONS = [
     ("urls: group 1 consumes bare URLs",
      # Without this a title appearing in a URL path gets linked inside the URL,
      # breaking the URL and linking a page the sentence was not about.
-     '                r"(\\[[^\\]]*\\]\\([^)]*\\)|" + _BARE_URL + r"|" + _BARE_PATH + r")"',
-     '                r"(\\[[^\\]]*\\]\\([^)]*\\)" + r")"'),
+     '                r"(" + _LINK_G1 + r"|" + _BARE_URL + r"|" + _BARE_PATH + r")"',
+     '                r"(" + _LINK_G1 + r"|" + _BARE_PATH + r")"'),
     ("urls: mangled ones are healed",
-     # Prevention alone leaves every page that already carries one broken forever, since
-     # group 1 protects the damage.
-     '    body, _healed = _MANGLED_URL_RE.subn(\n'
-     '        lambda m: _MD_LINK_RE.sub(r"\\1", m.group(0)), body)',
+     # Prevention alone leaves every page that already carries one broken forever,
+     # since group 1 protects the damage.
+     '    body, _healed = _MANGLED_URL_RE.subn(_heal_mangled, body)',
      '    _healed = 0'),
     ("repeat links: section resets the first mention",
      # Without the reset a title links once per PAGE. On a 136KB page that leaves

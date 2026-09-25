@@ -1946,6 +1946,13 @@ _WORD_RE = re.compile(r"\w+")
 # "https://example.com/[meta](../entities/meta.md)/page", which is a broken URL and a
 # link to a page the sentence was not talking about. Parens stop the match, so a
 # Wikipedia-style "..._(disambiguation)" tail is left out rather than risking a runaway.
+# Group 1's link pattern, tolerant of ONE level of brackets in the display text. The
+# plain "\[[^\]]*\]" mis-parses a malformed "[[a](b)](c)": it consumes "[[a](b)" and
+# leaves "](c)" behind, so the scanner meets that path as bare text and the title inside
+# it gets linked — wrapping another layer, every pass, forever. That is the engine that
+# took one page to twenty-eight layers of nesting. Whatever writes the malformed link in
+# the first place, group 1 must not hand its interior back to group 2.
+_LINK_G1 = r"\[(?:[^\[\]]|\[[^\]]*\])*\]\([^)]*\)"
 _BARE_URL = r"(?:https?|ftp)://[^\s<>()\[\]]+"
 # The same hazard without a scheme: a relative wiki path written in prose. The autolinker
 # linked titles inside one — "../sources/backgammon-wikipedia.md" became
@@ -4836,8 +4843,35 @@ def _autolink(args: dict) -> str:
     # display text is the path fragment it replaced. Taking the innermost .md path instead
     # returned "../concepts/wikipedia.md", which is a different page. The test from the
     # day that shipped caught it.
-    body, _healed = _MANGLED_URL_RE.subn(
-        lambda m: _MD_LINK_RE.sub(r"\1", m.group(0)), body)
+    def _heal_mangled(m):
+        """Recover the text a link was injected into.
+
+        In a URL the display text IS the path segment it replaced, so flattening rebuilds
+        it character for character: "https://example.com/[meta](…)/page" is restored by
+        unwrapping, and a path with two titles injected,
+        "../sources/[backgammon](…)-[wikipedia](…).md", rebuilds as
+        "../sources/backgammon-wikipedia.md".
+
+        A path can also NEST, because the mangling applies to its own output:
+
+            X0   = ../sources/backgammon-wikipedia.md
+            Xk+1 = ../sources/[backgammon](Xk)-[wikipedia](../concepts/wikipedia.md).md
+
+        and one real page reached twenty-eight layers. Flattening cannot undo that at any
+        depth — each layer appends a real "-wikipedia.md", so unwinding leaves a tail of
+        them. The original path is still in there though, innermost, and it is the FIRST
+        complete path the scan meets: every outer "../sources/" is immediately followed by
+        "[", so only the innermost one matches a path pattern at all. Taking the LAST
+        match instead returns "../concepts/wikipedia.md" — a different page — which is the
+        version that shipped for an hour and was caught by the two-title test.
+        """
+        run = m.group(0)
+        if re.match(r"(?:https?|ftp)://", run):
+            return _MD_LINK_RE.sub(r"\1", run)
+        inner = re.search(r"(?:\.{1,2}/)+[\w.\-/]+\.md", run)
+        return inner.group(0) if inner else _MD_LINK_RE.sub(r"\1", run)
+
+    body, _healed = _MANGLED_URL_RE.subn(_heal_mangled, body)
     if _healed:
         log.info("autolink: %s — unwrapped %d link(s) written inside a URL",
                  target_str, _healed)
@@ -4898,7 +4932,7 @@ def _autolink(args: dict) -> str:
         combined = _title_regex_cache.get(title)
         if combined is None:
             combined = re.compile(
-                r"(\[[^\]]*\]\([^)]*\)|" + _BARE_URL + r"|" + _BARE_PATH + r")"
+                r"(" + _LINK_G1 + r"|" + _BARE_URL + r"|" + _BARE_PATH + r")"
                 r"|(?<!\w)(" + _title_alts(title) + r")(?!\w)",
                 re.IGNORECASE,
             )
