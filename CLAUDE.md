@@ -115,6 +115,30 @@ in that branch runs a million times on a large page: parsing the link with a reg
 cost 19× (1.1s → 20.9s on a 63KB page with 1,200 links) until a plain `basename not in`
 substring test was put in front of it.
 
+**A shorter title already linked inside a longer one gets its own pass.** Observed on a
+source page's `## Entities` list: `[New York University](…) Langone Health`, with
+`nyu-langone-health.md` sitting right there. The title map is sorted longest-first, so
+when both pages exist the long title wins and this cannot happen — the failure needs a
+*sequence*, which is the normal shape of an ingest: the short page exists, the list is
+linked, and the long page is created twenty rounds later.
+
+Nothing could then fix it, because group 1 wins at every position. An upgrade is only
+reachable when the phrase has bare words BEFORE the linked part — in
+`CASA of [Monterey County](url)` group 2 starts matching at "CASA", ahead of the `[`, so
+it wins; when the linked span *starts* the phrase, group 1 matches there and returns it
+unchanged, and group 2 is never tried. `_title_upgrade_re()` therefore runs the
+already-linked alternatives alone, ahead of the combined regex. Safe unprotected, because
+every alternative carries the title's literal words *and* markdown link syntax: it cannot
+match bare prose, and cannot match inside an unrelated link's display text.
+
+Two traps in it. It must **not** touch `_seen` — the combined pass runs over the same line
+next, meets the link the upgrade just wrote at group 1, and accounts for the mention
+there; marking it in the upgrade made the combined pass read its own new link as a repeat
+and unlink it, which the golden corpus caught as three cases losing their links entirely.
+And it costs a regex per candidate title per line, so it is gated on `"](" in line` plus a
+lowercase substring probe for the title's longest word, kept in step via `lines_lower`
+(1.7× → 1.3× on a worst case where every line carries links).
+
 The critical invariant: **never match inside existing markdown links — or inside a bare
 URL**. Group 1 of the combined regex takes priority at each position, consuming both before
 group 2 can fire. Heading lines are skipped entirely (`is_heading`), so a link inside a

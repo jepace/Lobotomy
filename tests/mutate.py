@@ -159,6 +159,12 @@ MUTATIONS = [
      # lookup_titles confirms the demand, and the model makes a duplicate.
      '    _first = next((c for c in name.lower() if c.isalnum()), "")\n    for title, rel in by_key.items():\n        if _first and title[:1].isalnum() and title[:1] != _first:\n            continue\n        if _initialism_match(name, title):\n            return rel\n    return ""',
      '    return ""'),
+    ("autolink: a short link inside a longer title is upgraded",
+     # Group 1 wins at every position, so once "[New York University](x) Langone
+     # Health" exists no later pass can fix it — the linked span starts the
+     # phrase, so group 2 is never reached there.
+     '            if _upgrade is not None and "](" in line and _probe in lines_lower[i]:',
+     '            if False:'),
     ("template assumption: update_section names the page's other sections",
      # The model guesses "Overview" from the template without reading. A guess that
      # MISSES already gets the full list; a guess that HITS got the section and

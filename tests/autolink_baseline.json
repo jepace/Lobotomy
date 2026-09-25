@@ -97,7 +97,7 @@
   },
   "three_word_partial": {
     "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
-    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[Bank of Canada](../entities/bank-of-canada.md) raised rates. [Bank](../entities/bank.md) of Canada too.\n"
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[Bank of Canada](../entities/bank-of-canada.md) raised rates. Bank of Canada too.\n"
   },
   "repeated_partial": {
     "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",

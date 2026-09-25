@@ -4317,12 +4317,15 @@ def heal_index_if_stale() -> None:
         _rebuild_index({})
 
 
-def _title_alts(title: str) -> str:
+def _title_alts(title: str, include_bare: bool = True) -> str:
     """
     Return a regex alternation string matching `title` bare OR with exactly one
     contiguous sub-span of words already wrapped in a markdown link.
     This lets the autolinker upgrade partial links like
       'CASA of [Monterey County](url)' → '[CASA of Monterey County](new_url)'.
+
+    `include_bare=False` returns ONLY the already-linked forms, which is what the upgrade
+    pass needs — see _title_upgrade_re for why that cannot ride along in group 2.
     """
     import re
     words = title.split()
@@ -4331,7 +4334,7 @@ def _title_alts(title: str) -> str:
     def _esc(ws: list) -> str:
         return r"\s+".join(re.escape(w) for w in ws)
 
-    alts = [_esc(words)]  # bare match
+    alts = [_esc(words)] if include_bare else []  # bare match
     for s in range(n):
         for e in range(s + 1, n + 1):
             if s == 0 and e == n:
@@ -4342,7 +4345,42 @@ def _title_alts(title: str) -> str:
             p += r"\[" + _esc(span) + r"\]\([^)]*\)"
             if post: p += r"\s+" + _esc(post)
             alts.append(p)
-    return "(?:" + "|".join(alts) + ")"
+    return "(?:" + "|".join(alts) + ")" if alts else ""
+
+
+_title_upgrade_cache: dict = {}   # title -> compiled upgrade regex (or None)
+
+
+def _title_upgrade_re(title: str):
+    """Match this title where a sub-span of it is ALREADY linked. None for one-word titles.
+
+    Group 1 of the combined regex wins at every position, which is the invariant that
+    keeps the autolinker out of existing links. It also means an upgrade is only reachable
+    when the phrase has bare words BEFORE the linked part: in "CASA of [Monterey
+    County](url)" group 2 starts matching at "CASA", before the "[", so it wins. In
+    "[New York University](url) Langone Health" the linked span starts the phrase, so
+    group 1 matches at that position and returns it unchanged — group 2 is never tried,
+    and the short link is frozen there permanently.
+
+    That is not hypothetical: a source page's ## Entities list was linked while only
+    New York University had a page, the Langone Health page was created twenty rounds
+    later in the same ingest, and the re-autolink at done() could not fix it. Nor could
+    any later relink sweep.
+
+    So the already-linked forms get their own pass, ahead of the combined regex. They are
+    safe to run unprotected because every alternative contains this title's literal words
+    AND markdown link syntax — it cannot match arbitrary prose, and it cannot match inside
+    an unrelated link's display text, which has no "](" of its own.
+    """
+    if title in _title_upgrade_cache:
+        return _title_upgrade_cache[title]
+    rx = None
+    if len(title.split()) > 1:
+        alts = _title_alts(title, include_bare=False)
+        if alts:
+            rx = re.compile(r"(?<!\w)" + alts + r"(?!\w)", re.IGNORECASE)
+    _title_upgrade_cache[title] = rx
+    return rx
 
 
 def _parse_title_fields(text: str) -> "tuple[str | None, list[str], bool, bool]":
@@ -4799,6 +4837,10 @@ def _autolink(args: dict) -> str:
                  target_str, _healed)
 
     lines = body.split("\n")
+    # Kept in step with `lines` on every substitution. The upgrade pass needs a per-line
+    # case-insensitive probe, and lowercasing each line once per title is O(titles x
+    # lines) — the same shape of cost the token prefilter exists to avoid.
+    lines_lower = [ln.lower() for ln in lines]
     is_heading = [bool(re.match(r"^#{1,6}\s", ln)) for ln in lines]
     # A list row or table row always links, however many times the title has appeared
     # already. This is Wikipedia's own carve-out from "link once" (MOS:REPEATLINK relinks
@@ -4866,6 +4908,11 @@ def _autolink(args: dict) -> str:
         # here is about what an article is there.
         _title_toks = needed
         _seen = [False]        # linked already in the section being walked
+        _upgrade = _title_upgrade_re(title)
+        # A necessary condition for any upgrade alternative to match: the title's longest
+        # word is on the line. Cheap substring test against the prepared lowercase copy,
+        # and it rejects almost every (title, line) pair before touching a regex.
+        _probe = max(title.lower().split(), key=len) if _upgrade is not None else ""
 
         def _points_here(url: str) -> bool:
             """Does this link target the page this title lives on? Compared resolved, so
@@ -4931,10 +4978,33 @@ def _autolink(args: dict) -> str:
             if not line:
                 continue
             _always = is_listish[i]
+            # Upgrade first: a shorter title already linked inside this one's phrase. Only
+            # on lines that carry a link at all, which is a cheap substring test and skips
+            # almost every line. It always upgrades: correcting a wrong target matters
+            # more than the once-per-section rule, and the combined pass below accounts
+            # for the mention when it meets the link this leaves behind.
+            if _upgrade is not None and "](" in line and _probe in lines_lower[i]:
+                def _up_repl(m, _lp=link_path):
+                    # Deliberately does NOT touch _seen. The combined pass runs over this
+                    # same line next, meets the link this just wrote at group 1, and marks
+                    # the mention there. Setting it here instead made the combined pass
+                    # read its own new link as a repeat and unlink it again — three golden
+                    # cases went from a correct link to no link at all.
+                    #
+                    # Out of the f-string: a backslash in an f-string expression is a
+                    # syntax error before Python 3.12, and this has to run on the jail.
+                    _disp = _MD_LINK_RE.sub(r"\1", m.group(0))
+                    return f"[{_disp}]({_lp})"
+                _upgraded = _upgrade.sub(_up_repl, line)
+                if _upgraded != line:
+                    lines[i] = line = _upgraded
+                    lines_lower[i] = _upgraded.lower()
+                    changed = True
             new_line = combined.sub(
                 lambda m, _a=_always: _replacer(m, _always=_a), line)
             if new_line != line:
                 lines[i] = new_line
+                lines_lower[i] = new_line.lower()
                 changed = True
         if changed:
             linked += 1
