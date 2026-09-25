@@ -151,6 +151,13 @@ before every `create_file` or `update_file` call.
 - Contradictions *(if any)*
 - Sources *(auto-generated — do not write)*
 
+**The template is a starting point, not a description of any particular page.** A page
+that has been updated for a year has headings of its own, and they are usually better ones
+— assuming `## Overview` is where your material goes, on a page with a section named for
+exactly your subject, is how a page gets worse one ingest at a time. `update_section` and
+`append_section` both name the page's other sections in their replies, so you never have to
+re-read a page to find out what it actually contains. Read that list before deciding.
+
 These headings assume a person or organization. For an entity that is neither — a place,
 an event, a signal, a vehicle, a work — keep Overview, Background, Contradictions and
 Sources, and replace the middle sections with ones that actually fit the subject

@@ -244,6 +244,24 @@ guarantee both — so it derives, keeps the argument as a backstop, and an expli
 still wins. A raw file with `fetch_failed` still reports `0`, because no source page was
 created for it and there is nothing to derive from. Same shape as `ensure_h1`.
 
+**The template is a guess about the name, not a description of the page.** The model
+reaches `update_section(path, "Overview")` without reading anything, because
+`LOBOTOMY.md`'s entity template guarantees an `## Overview` and that guess is right nearly
+always. The danger is the belief that comes with it. A page updated for a year grows
+headings the template never mentions, and the failure was an **asymmetry**: a guess that
+MISSES already got the full section list from the not-found reply and self-corrected,
+while a guess that HITS got that one section and nothing else — so material belonging
+under "Sanctions and the Oil Sector" was merged into Overview with nothing to notice. The
+hit is the common case, so the quiet failure was the common one. Both replies now name the
+page's other sections (names only; the body is already in the reply).
+
+`append_section` had the same cause and a worse result: asked for the template's
+"Positions" on a page calling it "Political Stances", it created a second section for one
+subject and reported success — `_heading_dupes` cannot see that, because the *names*
+differ. That one **reports rather than refuses**, because creating a section is legitimate
+and a refusal would have no escape hatch: there is no "yes, really" argument, so the model
+would loop or give up (principle 4).
+
 **Four refusals hand the needed content back in the same response** — `update_section`
 (unread section), `update_file` (unread page, and stale page), `create_file` (page
 exists) — and handing it back is only half the job. Each must also say

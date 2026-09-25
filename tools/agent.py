@@ -2218,12 +2218,36 @@ def _update_section(args: dict) -> str:
         # called read_section for it anyway — a whole round, and a pacing window, to
         # fetch what it was already holding. Handing the content back is only half the
         # job; the refusal also has to rule out the detour, or the model takes it.
+        # Name the page's OTHER sections too. The model reaches update_section without
+        # reading, because LOBOTOMY.md's entity template guarantees an ## Overview and
+        # guessing that name is right nearly always — which is fine for the name and
+        # nothing else. A page that has been through a few years of ingests grows
+        # sections the template never mentions, and handing back only the guessed one
+        # leaves the model certain it has seen the page.
+        #
+        # The asymmetry this removes: a guess that MISSES already gets the full section
+        # list ("Pick the one this material belongs to"), so a wrong guess about a page
+        # with no Overview is self-correcting. A guess that HITS got the section body and
+        # nothing else, so material that belonged under "Sanctions and the Oil Sector"
+        # was merged into Overview with nothing to notice. The hit is the common case,
+        # so the quiet failure was the common one.
+        #
+        # Names only, no sizes or previews — the body is already in this reply, and the
+        # point is to show that somewhere better might exist, not to re-serve the page.
+        _others = [n for _lvl, n in _page_section_names(body, _fm_title(frontmatter))
+                   if _norm_heading(n) != _norm_heading(section)]
+        _elsewhere = (
+            f"\n\nThe page's other sections: {', '.join(_others)}. If this material "
+            f"belongs in one of those instead, call update_section on that one — you have "
+            f"the list, so do not re-read the page to find it."
+        ) if _others else ""
         return (
             f"Error: update_section refused — you had not read '{section}' in {path} this "
             f"session, so your rewrite would discard what is there.\n\n"
             f"Its current content is below, and is now marked as read. Merge your changes "
             f"into it and call update_section again — do NOT call read_section first.\n\n"
             f'<section path="{path}" name="{section}">\n{heading}\n{old_text}\n</section>'
+            f"{_elsewhere}"
         )
     _old_cmp, _new_cmp = _unlinked_len(old_text), _unlinked_len(new_text)
     # allow_shrink is how a deliberate reduction gets through. Consolidating a page IS
@@ -2452,6 +2476,7 @@ def _append_section(args: dict) -> str:
         at = nxt_m.start() if nxt_m else len(body)
         new_body = body[:at].rstrip() + "\n\n" + addition + "\n\n" + body[at:].lstrip("\n")
         where = f"appended to '{section}'"
+        _created_note = ""
     else:
         # New section — place it before ## Sources, which is always rendered last.
         src_m = re.search(r"^#{1,6}[ \t]*Sources[ \t]*$", body, re.MULTILINE | re.IGNORECASE)
@@ -2459,6 +2484,29 @@ def _append_section(args: dict) -> str:
         new_body = (body[:at].rstrip() + f"\n\n## {section}\n\n" + addition + "\n\n"
                     + body[at:].lstrip("\n"))
         where = f"created section '{section}'"
+        # A new section on a page that already had some is the other half of the template
+        # problem. The model reaches here assuming LOBOTOMY.md's headings — "Positions" —
+        # on a page that has grown its own — "Political Stances" — and a second section
+        # for the same thing appears with nothing to notice it: _heading_dupes cannot see
+        # it, because the NAMES differ.
+        #
+        # Reported, not refused. Creating a section is legitimate and sometimes exactly
+        # right, and a refusal here would have no escape hatch — there is no "yes, really"
+        # argument, so the model would either loop or give up, which is principle 4. So
+        # the write succeeds and the reply names what else is on the page, which is the
+        # one thing the model did not have.
+        _existing = [n for _lvl, n in _page_section_names(body, _fm_title(frontmatter))]
+        if _existing:
+            log.info("append_section: %s — created '%s' alongside %s",
+                     path, section, ", ".join(_existing))
+            _created_note = (
+                f"\n\nNOTE: this page already had these sections: {', '.join(_existing)}. "
+                f"A new heading was added because none of them is named {section!r}. If one "
+                f"of them already covers this material, that is a duplicate — move the text "
+                f"with update_section and leave {section!r} empty."
+            )
+        else:
+            _created_note = ""
 
     _title = _fm_title(frontmatter)
     new_body, _renamed, _collided = _absorb_date_qualifiers(new_body, body, _title)
@@ -2490,7 +2538,8 @@ def _append_section(args: dict) -> str:
     _ctx()._session_stale_pages.add(wiki_rel)
     _atomic_write(p, new_content)
     _autolink_now(p)
-    return f"{where} in {path} (+{len(addition)} chars, page now {len(new_content)} bytes)"
+    return (f"{where} in {path} (+{len(addition)} chars, page now {len(new_content)} bytes)"
+            + _created_note)
 
 
 _TIMELINE_HEADING = "Timeline"
