@@ -6181,6 +6181,16 @@ def _model_cooling(model: str) -> "tuple[bool, bool]":
         return True, daily
 
 
+def _model_cooldown_left(model: str) -> "tuple[int, bool]":
+    """(seconds remaining, was for a daily quota). (0, False) when not cooling."""
+    with _model_cooldown_lock:
+        entry = _model_cooldowns.get(model)
+        if not entry:
+            return 0, False
+        expiry, daily = entry
+        return max(0, int(expiry - time.monotonic())), daily
+
+
 def _post_with_fallback(client: dict, payload: dict, primary: str) -> "tuple[dict, str]":
     """POST `payload`, trying each model in the chain until one is not rate limited.
 
@@ -6204,7 +6214,17 @@ def _post_with_fallback(client: dict, payload: dict, primary: str) -> "tuple[dic
         try:
             result = _llm_post(client["endpoint"], client["api_key"], attempt_payload)
             if model != chain[0]:
-                log.warning("served by fallback model %s (primary %s unavailable)", model, chain[0])
+                # Say WHICH quota and for how long. "unavailable" is the same word for
+                # two situations that call for opposite responses: a per-minute limit is
+                # what slowing down protects you from, and a per-day one is a fixed count
+                # that throttling cannot preserve — running at max_rpm 1 for an hour
+                # spends exactly as much of a daily budget as running flat out. Without
+                # this line the log cannot tell you which one you are paying for.
+                _left, _daily = _model_cooldown_left(chain[0])
+                log.warning(
+                    "served by fallback model %s — primary %s rate limited on a %s quota%s",
+                    model, chain[0], "per-DAY" if _daily else "per-minute",
+                    f", retried in {_left}s" if _left else ", cooldown lapsed")
             return result, model
         except _LLMError as e:
             if not e.rate_limited:

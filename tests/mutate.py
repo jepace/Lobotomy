@@ -98,6 +98,11 @@ MUTATIONS = [
      # _snapshot_version skips both by name — so a write to either cannot be reverted.
      '        if f.name in _GENERATED:\n            continue\n',
      '', "tools/repair_links.py"),
+    ("fallback warning names the quota it is cooling on",
+     # "unavailable" is one word for two situations needing opposite responses:
+     # slowing down protects a per-minute limit and cannot preserve a daily one.
+     '                _left, _daily = _model_cooldown_left(chain[0])',
+     '                _left, _daily = 0, False'),
     ("history: the whole source slug is stored",
      # A capture slugs to 87 characters; truncating at 72 names no file, so the
      # row silently loses its link and renders as plain text.

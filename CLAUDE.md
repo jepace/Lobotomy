@@ -520,3 +520,18 @@ failing loudly when it runs out of room.
 LLM providers use OpenAI-compatible APIs. The `agent.py:PROVIDERS` dict maps provider names to base URLs and default models. Provider config can also override `api_base` and `model` per-provider inside `config.json`.
 
 **Model fallback on 429.** A provider block may list `fallback_models`. Because free-tier quotas are per-model, `_post_with_fallback()` treats a 429 as "this model is spent" rather than "the provider is down": it reissues the same request against the next model in the chain immediately, and only raises — handing control back to the existing two-phase backoff — once every model is rate limited. Only 429 walks the chain (`_LLMError.rate_limited`); 500s, timeouts and connection errors are provider-wide and would fail identically on every model, so they propagate at once. A rate-limited model goes into `_model_cooldowns` and is skipped until it lapses (`retry_after` or 60s; `daily_quota_poll_interval` when the body names a `PerDay` quota), which keeps later rounds from burning a wasted call on a model already known to be exhausted. Cooldowns are the only state — nothing is sticky, so the primary is retried first as soon as its window passes.
+
+**The fallback warning names which quota and how long is left**, because "unavailable" is
+one word for two situations that call for opposite responses. `max_rpm` throttles requests
+per *minute*, so it is exactly what protects a per-minute limit — and it cannot preserve a
+per-*day* quota at all, since that is a fixed count of requests: an hour at `max_rpm: 1`
+spends precisely as much of a daily budget as an hour flat out. An observed ingest ran
+every round on the fallback with the primary "unavailable" and nothing said whether the
+deliberate one-request-per-minute pacing was buying anything. `_model_cooldowns` had
+recorded both facts since fallback was added; the warning just never read them.
+
+`max_rpm` is also the dominant term in ingest wall-clock, and that is a deliberate setting,
+not a bug to fix: at `1` the gap between requests is a flat 60s against 3–5s of actual
+work, so a 19-page ingest spends ~38 of its ~40 minutes asleep. Before proposing a change
+there, check `_model_cooldown_left` in the log — if the primary is out on a per-day quota,
+going faster costs nothing extra.
