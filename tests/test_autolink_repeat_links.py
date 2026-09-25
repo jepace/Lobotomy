@@ -175,5 +175,61 @@ class StabilityTest(TempWikiTestCase):
         self.assertEqual(self.w.disk("entities/pa.md"), before)
 
 
+class LookupRowVersusProseBulletTest(TempWikiTestCase):
+    """Not every bullet is a lookup row.
+
+    "## Entities" and "## Concepts" rows are names and a Timeline row is a dated entry —
+    those are read out of order, so a row whose link was spent in a paragraph above it is
+    a dead row. "## Claims" is a bulleted list of full SENTENCES: prose that happens to
+    carry hyphens, read top to bottom, where linking California in all nine claims is
+    exactly the repetition the once-per-section rule exists to stop.
+
+    Length is the honest discriminator between a name and a sentence. Timeline rows are
+    exempted explicitly, because a dated entry is a lookup row however long it runs.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.w.page("entities/california.md", title="California", type="entity",
+                    body="# California\n\n## Overview\n\nA state.\n")
+
+    def _src(self, body):
+        self.w.page("sources/s.md", title="S", type="source", body="# S\n\n" + body)
+        agent._autolink({"path": "wiki/sources/s.md"})
+        return self.w.disk("sources/s.md")
+
+    def test_a_claims_list_links_once_for_the_section(self):
+        out = self._src(
+            "## Claims\n\n"
+            "- California has moved to protect reproductive health services after the "
+            "federal ruling.\n"
+            "- California officials said the clinics would remain open through the year.\n"
+            "- Funding in California is drawn from a state reserve, not federal grants.\n")
+        self.assertEqual(out.count("](../entities/california.md)"), 1, out)
+
+    def test_a_name_row_still_always_links(self):
+        out = self._src("## Overview\n\nCalifornia acted.\n\n"
+                        "## Entities\n\n- California\n")
+        self.assertEqual(out.count("](../entities/california.md)"), 2, out)
+
+    def test_a_timeline_row_always_links_however_long(self):
+        out = self._src(
+            "## Timeline\n\n"
+            "- **2026-09** — California announced the plan after weeks of sustained "
+            "pressure from advocates and county health officials.\n"
+            "- **2026-10** — California expanded it to cover three more counties, "
+            "bringing the statewide total to eleven.\n")
+        self.assertEqual(out.count("](../entities/california.md)"), 2, out)
+
+    def test_a_table_row_always_links(self):
+        out = self._src("## Funding\n\n| State | Amount |\n| California | 10 |\n"
+                        "| California | 20 |\n")
+        self.assertEqual(out.count("](../entities/california.md)"), 2, out)
+
+    def test_a_short_bullet_is_a_name_even_outside_entities(self):
+        out = self._src("## Affected\n\n- California\n- California\n")
+        self.assertEqual(out.count("](../entities/california.md)"), 2, out)
+
+
 if __name__ == "__main__":
     unittest.main()

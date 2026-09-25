@@ -96,9 +96,14 @@ the letter of it, both forced by the shape of these pages:
 - **Per section, not per page.** `donald-trump.md` is 136KB across twenty-odd sections; one
   link at the top leaves the rest with no navigation. A section here is about what an
   article is there. `_seen` resets on every heading line.
-- **A list row never spends the section's prose mention** (`is_listish`). A source page's
-  `## Entities` / `## Concepts` and a `## Timeline` are lookup tables, and a row whose link
-  was spent in a paragraph above it is a dead row.
+- **A lookup row never spends the section's prose mention** (`_is_lookup_row`). A source
+  page's `## Entities` / `## Concepts` and a `## Timeline` are lookup tables, and a row
+  whose link was spent in a paragraph above it is a dead row. **Not every bullet is one:**
+  `## Claims` is a list of full sentences — prose that happens to carry hyphens, read top
+  to bottom — and always-linking there put California in all nine claims. Length is the
+  honest discriminator between a name and a sentence (60 chars, links flattened first);
+  table rows and Timeline bullets are exempted explicitly, since a dated entry is a lookup
+  row however long it runs.
 
 The half that is easy to miss: the rule must also **unlink** repeats already on disk, or it
 applies only to newly written text while ~9,000 pages keep every repeat. Unlinking is
@@ -127,7 +132,17 @@ reachable when the phrase has bare words BEFORE the linked part — in
 `CASA of [Monterey County](url)` group 2 starts matching at "CASA", ahead of the `[`, so
 it wins; when the linked span *starts* the phrase, group 1 matches there and returns it
 unchanged, and group 2 is never tried. `_title_upgrade_re()` therefore runs the
-already-linked alternatives alone, ahead of the combined regex. Safe unprotected, because
+already-linked forms alone, ahead of the combined regex. It matches **the title's words in
+order with link syntax allowed around any of them**, not `_title_alts`'s single contiguous
+linked sub-span, because the common shape has several:
+`[Planned Parenthood](…) of [California](…)`, produced when a source page lists an entity
+before its page exists. Making every piece of link syntax optional means the pattern also
+matches bare text, so the replacer declines a match containing no `](` and leaves it to
+group 2. **And it rejects a match whose `](` has no `[` of its own inside it** — without
+that balance check the shorter title "Monterey County" matches the tail of
+`[CASA of Monterey County](…)` and rewrites it to `[CASA of [Monterey County](…)](…)`,
+manufacturing the very malformed shape `_LINK_G1` exists to contain. A pass that repairs
+nesting must not be able to create it; the golden corpus caught that within the hour. Safe unprotected, because
 every alternative carries the title's literal words *and* markdown link syntax: it cannot
 match bare prose, and cannot match inside an unrelated link's display text.
 
@@ -273,7 +288,11 @@ Three principles, each learned expensively:
 Also enforced: search limited to 2 per term per session; `done()` refused if an ingest
 wrote no entity/concept pages or never established a source page; `update_file` refused
 until the session has read the page's full content, and `update_section` until it has read
-that section; all-lowercase titles refused; `wiki/log.md` and `wiki/index.md` refused;
+that section; all-lowercase titles refused — and, on a source page, a majority-lowercase
+`## Entities` / `## Concepts` list, since each row becomes a page title in Step 5 and the
+page is immutable afterwards, so it is permanent; the check is on the ratio because
+"bell hooks" is a real name and a per-row rule would leave no way to write it;
+`wiki/log.md` and `wiki/index.md` refused;
 `wiki/sources/` pages immutable after creation.
 
 **`done()` derives `ingested` rather than asking for it.** `serve.py`'s `on_done` marks

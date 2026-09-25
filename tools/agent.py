@@ -4382,10 +4382,17 @@ def _title_upgrade_re(title: str):
     if title in _title_upgrade_cache:
         return _title_upgrade_cache[title]
     rx = None
-    if len(title.split()) > 1:
-        alts = _title_alts(title, include_bare=False)
-        if alts:
-            rx = re.compile(r"(?<!\w)" + alts + r"(?!\w)", re.IGNORECASE)
+    words = title.split()
+    if len(words) > 1:
+        # The title's words in order, with markdown link syntax allowed around ANY of
+        # them. _title_alts only describes ONE contiguous linked sub-span, so it cannot
+        # see "[Planned Parenthood](…) of [California](…)" — two separate links inside one
+        # name — and that shape is the common one: a source page lists an entity before
+        # its page exists, the autolinker links the two halves it does know, and nothing
+        # can ever put them back together.
+        _w = r"(?:\[)?" + r"(?:\]\([^)]*\))?\s+(?:\[)?".join(
+            re.escape(w) for w in words) + r"(?:\]\([^)]*\))?"
+        rx = re.compile(r"(?<![\w\[])" + _w + r"(?!\w)", re.IGNORECASE)
     _title_upgrade_cache[title] = rx
     return rx
 
@@ -4888,7 +4895,27 @@ def _autolink(args: dict) -> str:
     # source page's ## Entities and ## Concepts are bullet lists of names, and a Timeline
     # is a list of dated entries. Those are lookup tables, read out of order, and a row
     # whose link was spent higher up the page is a dead row.
-    is_listish = [bool(re.match(r"^\s*(?:[-*+]\s|\d+[.)]\s|\|)", ln)) for ln in lines]
+    def _is_lookup_row(ln: str) -> bool:
+        """A list row the reader arrives at out of order, so it always links.
+
+        Not every bullet is one. "## Entities" and "## Concepts" rows are names, a
+        Timeline row is a dated entry, a table row is a cell — those are lookup tables,
+        and a row whose link was spent in a paragraph above it is a dead row.
+
+        "## Claims" is a bulleted list of full sentences, which is prose that happens to
+        carry hyphens: it is read top to bottom like any paragraph, and linking California
+        in all nine claims is the repetition the once-per-section rule exists to stop.
+        Length is the honest discriminator between a name and a sentence — a title is
+        rarely over sixty characters and a claim rarely under. Timeline rows are exempted
+        explicitly, since a dated entry is a lookup row however long it runs.
+        """
+        if not re.match(r"^\s*(?:[-*+]\s|\d+[.)]\s|\|)", ln):
+            return False
+        if re.match(r"^\s*\|", ln) or _TL_BULLET_RE.match(ln.strip()):
+            return True
+        return len(_MD_LINK_RE.sub(r"\1", re.sub(r"^\s*(?:[-*+]|\d+[.)])\s*", "", ln))) <= 60
+
+    is_listish = [_is_lookup_row(ln) for ln in lines]
 
     # Which titles could possibly appear here at all. A title matches only if every one of
     # its words appears literally in the body — bare, or as the display text of a linked
@@ -5025,6 +5052,25 @@ def _autolink(args: dict) -> str:
             # for the mention when it meets the link this leaves behind.
             if _upgrade is not None and "](" in line and _probe in lines_lower[i]:
                 def _up_repl(m, _lp=link_path):
+                    if "](" not in m.group(0):
+                        # Bare text: that is group 2's job, and doing it here would skip
+                        # the once-per-section accounting the combined pass performs.
+                        return m.group(0)
+                    # Every "](" consumed must have its own "[" inside the match, or the
+                    # match began in the MIDDLE of somebody else's link. Without this the
+                    # shorter title "Monterey County" matches the tail of
+                    # "[CASA of Monterey County](…)" and rewrites it to
+                    # "[CASA of [Monterey County](…)](…)" — manufacturing exactly the
+                    # malformed [[a](b)](c) shape that took one page to twenty-eight
+                    # layers. A pass that repairs nesting must not be able to create it.
+                    _depth = 0
+                    for _k, _ch in enumerate(m.group(0)):
+                        if _ch == "[":
+                            _depth += 1
+                        elif _ch == "]" and m.group(0)[_k + 1:_k + 2] == "(":
+                            _depth -= 1
+                            if _depth < 0:
+                                return m.group(0)
                     # Deliberately does NOT touch _seen. The combined pass runs over this
                     # same line next, meets the link this just wrote at group 1, and marks
                     # the mention there. Setting it here instead made the combined pass
@@ -5598,6 +5644,38 @@ def _create_file(args: dict) -> str:
                 f"read its '## Entities' and '## Concepts' lists to decide which pages to "
                 f"create or update — without them this ingest cannot do its job. Add the "
                 f"missing section(s) as '## <Name>' headings."
+            )
+
+        # The names in those lists are checked for the same reason the title is, and more
+        # urgently: a source page cannot be edited afterwards, so a lowercased list is
+        # permanent, and Step 5 turns each row into a page TITLE. LOBOTOMY.md says to
+        # write each name "exactly as a human would read it aloud" — instruction only,
+        # and an observed ingest lowercased the lot.
+        #
+        # Flagged on the RATIO, not per row. Some names really are lowercase — bell hooks,
+        # danah boyd, iPhone — and a per-row rule would refuse those with no way to say
+        # "yes, really". A majority of rows being lowercase is not a name, it is a habit.
+        _rows = []
+        for _sec in ("Entities", "Concepts"):
+            _m = re.search(r"^#{1,6}\s*" + _sec + r"\s*$(.*?)(?=^#{1,6}\s|\Z)",
+                           body, re.MULTILINE | re.DOTALL)
+            if _m:
+                _rows += [re.sub(r"^[-*+]\s*", "", l).strip()
+                          for l in _m.group(1).splitlines()
+                          if l.strip().startswith(("-", "*", "+"))]
+        _alpha = [r for r in _rows if any(c.isalpha() for c in r)]
+        _lower = [r for r in _alpha if r == r.lower()]
+        if len(_alpha) >= 2 and len(_lower) * 2 > len(_alpha):
+            _problems.append(
+                f"{len(_lower)} of {len(_alpha)} names in the ## Entities / ## Concepts "
+                f"lists are all lowercase: {', '.join(repr(n) for n in _lower[:4])}"
+                f"{'…' if len(_lower) > 4 else ''}. Each row becomes a page title in "
+                f"Step 5, and this page cannot be edited afterwards, so the form has to be "
+                f"right now. Write each name as a human would read it aloud — "
+                f"\"Planned Parenthood of California\", not \"planned parenthood of "
+                f"california\" — keeping acronyms and proper nouns as they are. A name "
+                f"that genuinely is lowercase (bell hooks) is fine; this only triggers "
+                f"when most of the list is."
             )
 
     # The one heading the template says every page of these types keeps. Checking it here

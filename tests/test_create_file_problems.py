@@ -104,5 +104,72 @@ class CollectedProblemsTest(TempWikiTestCase):
                       "the already-exists reply was replaced by a problem list")
 
 
+class LowercasedEntityListTest(TempWikiTestCase):
+    """The names in a source page's ## Entities / ## Concepts lists are checked too.
+
+    The same reason the title is, and more urgently: a source page cannot be edited after
+    it is written, so a lowercased list is permanent — and Step 5 turns each row into a
+    page TITLE. LOBOTOMY.md says to write each name "exactly as a human would read it
+    aloud"; that was instruction only, and an observed ingest lowercased the lot.
+
+    Flagged on the RATIO, not per row. Some names really are lowercase — bell hooks,
+    danah boyd — and a per-row rule would refuse those with no way to say "yes, really",
+    which is principle 4. A majority of the list being lowercase is not a name, it is a
+    habit.
+    """
+
+    BODY = ("## Summary\n\nA report.\n\n## Claims\n\n- One.\n\n"
+            "## Entities\n\n- planned parenthood of california\n- gavin newsom\n"
+            "- california department of public health\n\n"
+            "## Concepts\n\n- reproductive health care\n")
+
+    def _create(self, body, slug="ap-2026-pp"):
+        agent.init_session(inbox_path="raw/x.md")
+        return agent.TOOL_FNS["create_file"]({
+            "path": f"wiki/sources/{slug}.md", "title": "AP 2026 Report",
+            "type": "source", "body": body})
+
+    def test_a_lowercased_list_is_refused(self):
+        r = self._create(self.BODY)
+        self.assertTrue(r.startswith("Error:"), r)
+        self.assertIn("all lowercase", r)
+        self.assertIn("planned parenthood of california", r)
+
+    def test_the_refusal_shows_the_form_it_wants(self):
+        self.assertIn("Planned Parenthood of California", self._create(self.BODY))
+
+    def test_nothing_is_written(self):
+        self._create(self.BODY)
+        self.assertFalse(self.w.exists("sources/ap-2026-pp.md"))
+
+    def test_a_properly_cased_list_is_accepted(self):
+        good = (self.BODY.replace("planned parenthood of california",
+                                  "Planned Parenthood of California")
+                .replace("gavin newsom", "Gavin Newsom")
+                .replace("california department of public health",
+                         "California Department of Public Health")
+                .replace("reproductive health care", "Reproductive Health Care"))
+        r = self._create(good, "ap-2026-ok")
+        self.assertFalse(r.startswith("Error:"), r)
+
+    def test_one_genuinely_lowercase_name_is_fine(self):
+        # bell hooks styled her name in lowercase. A per-row rule would make her
+        # unwritable; the ratio rule does not care.
+        r = self._create(
+            "## Summary\n\nA report.\n\n## Claims\n\n- One.\n\n"
+            "## Entities\n\n- bell hooks\n- Gloria Steinem\n- Audre Lorde\n\n"
+            "## Concepts\n\n- Feminist Theory\n", "x-2026-fem")
+        self.assertFalse(r.startswith("Error:"), r)
+
+    def test_only_source_pages_are_checked(self):
+        # An entity page's body is prose, not a list of future page titles, and it can be
+        # edited afterwards.
+        agent.init_session()
+        r = agent.TOOL_FNS["create_file"]({
+            "path": "wiki/entities/acme.md", "title": "Acme Corp", "type": "entity",
+            "body": "## Overview\n\nA firm.\n\n## Background\n\n- one\n- two\n"})
+        self.assertFalse(r.startswith("Error:"), r)
+
+
 if __name__ == "__main__":
     unittest.main()

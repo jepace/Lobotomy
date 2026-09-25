@@ -159,6 +159,21 @@ MUTATIONS = [
      # lookup_titles confirms the demand, and the model makes a duplicate.
      '    _first = next((c for c in name.lower() if c.isalnum()), "")\n    for title, rel in by_key.items():\n        if _first and title[:1].isalnum() and title[:1] != _first:\n            continue\n        if _initialism_match(name, title):\n            return rel\n    return ""',
      '    return ""'),
+    ("source list: a lowercased entity list is refused",
+     # Each row becomes a page title in Step 5, and a source page cannot be edited
+     # afterwards, so the form is permanent.
+     '        if len(_alpha) >= 2 and len(_lower) * 2 > len(_alpha):',
+     '        if False:'),
+    ("autolink: a prose bullet is not a lookup row",
+     # "## Claims" is full sentences in bullet form; always-link there repeats a
+     # title in every claim, which is what once-per-section exists to stop.
+     '        return len(_MD_LINK_RE.sub(r"\\1", re.sub(r"^\\s*(?:[-*+]|\\d+[.)])\\s*", "", ln))) <= 60',
+     '        return True'),
+    ("autolink: the upgrade never starts inside another link",
+     # Without the balance check a shorter title steals the tail of a longer
+     # title's link and manufactures the malformed [[a](b)](c) shape.
+     '                    _depth = 0\n                    for _k, _ch in enumerate(m.group(0)):',
+     '                    _depth = 99\n                    for _k, _ch in enumerate(m.group(0)):'),
     ("autolink: group 1 consumes a malformed [[a](b)](c) whole",
      # The growth engine. The plain pattern eats "[[a](b)" and leaves "](c)", so
      # the scanner meets that path as bare text, links the title inside it, and the
@@ -221,9 +236,9 @@ MUTATIONS = [
      '                _seen[0] = False                # a new section gets its own first mention',
      '            if is_heading[i]:\n'
      '                pass'),
-    ("repeat links: lists always link",
+    ("repeat links: lookup rows always link",
      # A source page's ## Entities and a Timeline are lookup tables read out of order.
-     '    is_listish = [bool(re.match(r"^\\s*(?:[-*+]\\s|\\d+[.)]\\s|\\|)", ln)) for ln in lines]',
+     '    is_listish = [_is_lookup_row(ln) for ln in lines]',
      '    is_listish = [False for ln in lines]'),
     ("repeat links: existing repeats are unlinked",
      # Without this the rule applies only to newly written text, and the ~9,000 pages

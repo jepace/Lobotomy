@@ -113,11 +113,40 @@ class UpgradeTest(TempWikiTestCase):
         self.assertIsNone(agent._title_upgrade_re("Measles"))
         self.assertIsNotNone(agent._title_upgrade_re("New York University Langone Health"))
 
-    def test_the_upgrade_pattern_cannot_match_bare_prose(self):
-        # It is run without group 1's protection, so it must require link syntax.
-        rx = agent._title_upgrade_re("New York University Langone Health")
-        self.assertIsNone(rx.search("New York University Langone Health is a hospital."))
-        self.assertIsNotNone(rx.search("[New York University](x.md) Langone Health"))
+    def test_bare_prose_is_left_to_the_combined_pass(self):
+        """The pattern now matches bare text too, and the replacer declines it.
+
+        Generalising the pattern to handle SEVERAL linked sub-spans — "[Planned
+        Parenthood](…) of [California](…)" — meant making every piece of link syntax
+        optional, so it matches the bare form as well. Upgrading there would skip the
+        once-per-section accounting the combined pass does, so the replacer returns the
+        match untouched and lets group 2 handle it. Asserted as behaviour, because that
+        is where the guarantee now lives.
+        """
+        self._short()
+        self._long()
+        out = self._src("# S\n\n## Summary\n\nNew York University Langone Health runs "
+                        "it, and New York University Langone Health again.\n")
+        # Linked once for the section, not twice, and pointing at the long page.
+        self.assertEqual(out.count("](../entities/nyu-langone-health.md)"), 1, out)
+
+    def test_it_never_starts_inside_another_links_text(self):
+        """The guard that stops this pass creating the damage it repairs.
+
+        "Monterey County" matches the tail of "[CASA of Monterey County](…)", and
+        rewriting that produced "[CASA of [Monterey County](…)](…)" — the malformed
+        [[a](b)](c) shape that took one page to twenty-eight layers. Every "](" consumed
+        must have its own "[" inside the match.
+        """
+        self.w.page("entities/monterey-county.md", title="Monterey County",
+                    type="entity", body="# Monterey County\n\nA county.\n")
+        self.w.page("entities/casa-of-monterey-county.md", title="CASA of Monterey County",
+                    type="entity", body="# CASA\n\nA charity.\n")
+        out = self._src("# S\n\n## Summary\n\nCASA of Monterey County filed in "
+                        "Monterey County court.\n")
+        self.assertIn("[CASA of Monterey County](../entities/casa-of-monterey-county.md)",
+                      out, out)
+        self.assertNotIn("[CASA of [", out, "the upgrade created a malformed link")
 
     def test_an_unrelated_link_is_not_touched(self):
         self._short()

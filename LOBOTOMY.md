@@ -315,7 +315,10 @@ Required sections:
   it aloud: natural spacing and capitalization, never a filename slug.** Write
   "Film Criticism", not "film-criticism". This list is permanent — the page it's on cannot
   be edited afterward — and it becomes the title of a page in Step 5, so get the form right
-  the first time.
+  the first time. **`create_file` checks this**: if most of the names in these two lists
+  are all lowercase it refuses the page, because the list cannot be fixed later. A name
+  that genuinely is lowercase ("bell hooks") is fine — the check only fires when the
+  majority are.
 
   **If the wiki already has a page for a name, use that page's title here, exactly.**
   Calling `lookup_titles` on your candidate names *before* you finalise this list is worth
