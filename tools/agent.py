@@ -4830,6 +4830,12 @@ def _autolink(args: dict) -> str:
     # below will ever take it out again — prevention alone leaves every page that already
     # has one broken forever. Runs on every autolink and every relink, so the wiki heals
     # itself without a separate pass.
+    # Flatten, do not try to pick the "real" target out of the wreckage. Tried that: on a
+    # path with TWO titles injected — "../sources/[backgammon](…)-[wikipedia](…).md" —
+    # flattening rebuilds "../sources/backgammon-wikipedia.md" exactly, because each
+    # display text is the path fragment it replaced. Taking the innermost .md path instead
+    # returned "../concepts/wikipedia.md", which is a different page. The test from the
+    # day that shipped caught it.
     body, _healed = _MANGLED_URL_RE.subn(
         lambda m: _MD_LINK_RE.sub(r"\1", m.group(0)), body)
     if _healed:
