@@ -982,6 +982,30 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
         return text, None
 
 
+def _raw_source_index() -> dict:
+    """raw_source: value -> wiki/sources page path, built in one pass.
+
+    Resolving this per inbox item meant reading and parsing every page in
+    wiki/sources/ once per wikified item — 90 items against a few thousand source
+    pages is hundreds of thousands of reads to build the same mapping 90 times.
+    The map is the same for every item, so it is built once per request.
+    """
+    idx = {}
+    sdir = WIKI_DIR / "sources"
+    if not sdir.is_dir():
+        return idx
+    for wf in sdir.glob("*.md"):
+        try:
+            wm, _ = _parse_frontmatter(wf.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            continue
+        rs = (wm.get("raw_source") or "").strip()
+        # First page wins, matching the old loop's break on the first match.
+        if rs and rs not in idx:
+            idx[rs] = str(wf.relative_to(WIKI_DIR))
+    return idx
+
+
 def list_inbox(show_archived: bool = False) -> list:
     candidates = []
     if RAW_DIR.is_dir():
@@ -990,24 +1014,34 @@ def list_inbox(show_archived: bool = False) -> list:
             if f.is_file() and not f.name.startswith(".") and f.name != "index.md"
         ]
     items = []
-    def _inbox_sort_key(f):
-        try:
-            fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
-            v = fm.get("added") or fm.get("saved") or ""
-            if v:
-                return str(v)
-        except Exception:
-            pass
-        import datetime as _dt
-        return _dt.datetime.fromtimestamp(f.stat().st_mtime).isoformat()
 
-    for f in sorted(candidates, key=_inbox_sort_key, reverse=True):
-        if not f.is_file() or f.name.startswith("."):
-            continue
+    # Read and parse each raw file ONCE. The sort key, the excerpt and the
+    # wikified/archived flags all used to read and parse it separately, so every
+    # file was read three times per page load.
+    parsed = []
+    for f in candidates:
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
         except Exception:
             text = ""
+        try:
+            fm, body = _parse_frontmatter(text)
+        except Exception:
+            fm, body = {}, text
+        parsed.append((f, text, fm, body))
+
+    def _inbox_sort_key(item):
+        f, _text, fm, _body = item
+        v = fm.get("added") or fm.get("saved") or ""
+        if v:
+            return str(v)
+        import datetime as _dt
+        return _dt.datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+
+    src_index = None
+    for f, text, fm, body in sorted(parsed, key=_inbox_sort_key, reverse=True):
+        if not f.is_file() or f.name.startswith("."):
+            continue
 
         has_content = False
         source_url  = ""
@@ -1018,8 +1052,8 @@ def list_inbox(show_archived: bool = False) -> list:
             source_url = url_line[4:].strip()
             excerpt    = source_url
         else:
-            # Strip frontmatter from all text files before extracting title/excerpt
-            meta, body = _parse_frontmatter(text)
+            # Frontmatter was already stripped when the file was read above.
+            meta         = fm
             source_url   = meta.get("url", "")
             fetch_failed = bool(meta.get("fetch_failed"))
             title        = meta.get("title", "").strip() or f.stem
@@ -1037,28 +1071,18 @@ def list_inbox(show_archived: bool = False) -> list:
                 excerpt = " ".join(lines[:3])[:200]
 
         mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
-        wikified = False
         wiki_path = ""
-        try:
-            raw_text = f.read_text(encoding="utf-8", errors="replace")
-            fm, _ = _parse_frontmatter(raw_text)
-            wikified = bool(fm.get("wikified"))
-            archived = bool(fm.get("archived"))
-            if archived and not show_archived:
-                continue
-        except Exception:
-            pass
+        # archived used to be assigned only inside a try/except that swallowed
+        # everything, so a read failure reached the item dict below with the name
+        # unbound and took the whole page down with a NameError.
+        wikified = bool(fm.get("wikified"))
+        archived = bool(fm.get("archived"))
+        if archived and not show_archived:
+            continue
         if wikified:
-            # Find the wiki/sources/ page that has raw_source pointing to this file
-            raw_rel = str(f.relative_to(REPO_ROOT))
-            for wf in (WIKI_DIR / "sources").glob("*.md") if (WIKI_DIR / "sources").is_dir() else []:
-                try:
-                    wm, _ = _parse_frontmatter(wf.read_text(encoding="utf-8", errors="replace"))
-                    if wm.get("raw_source") == raw_rel:
-                        wiki_path = str(wf.relative_to(WIKI_DIR))
-                        break
-                except Exception:
-                    pass
+            if src_index is None:          # built at most once, and only if needed
+                src_index = _raw_source_index()
+            wiki_path = src_index.get(str(f.relative_to(REPO_ROOT)), "")
         items.append({
             "name":        f.name,
             "title":       title,

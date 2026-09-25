@@ -57,6 +57,18 @@ quick-reference table that also needs the new row.
 
 **`tools/serve.py`** — Flask web server. Routes for: `/chat` (streaming AI), `/wiki/*` (rendered markdown), `/inbox` (read-it-later), auth, and settings. Imports `agent.py` for AI functionality and `job_queue.py` for background jobs.
 
+`list_inbox()` is the one hot path in it, because **`/inbox` polls `/inbox/list` every 8
+seconds while the tab is visible** and both go through it. So a per-item cost there is not
+paid once on a page load, it is paid continuously against the same server that renders the
+wiki and runs ingests. It was resolving "which `wiki/sources` page came from this raw file"
+inside the per-item loop, globbing and frontmatter-parsing source pages until it hit the
+match — and a miss parsed all of them. That map is identical for every item, so 90 reading-
+list items rebuilt the same dictionary ~85 times: 1.03s → 0.03s once it was built once
+(90 items, 1,500 source pages). Deliberately **not** cached across requests — the polling
+exists to notice items that have just been wikified, so a cache would break the feature it
+serves. `tests/test_inbox_listing.py` counts reads rather than timing them, because the
+complexity is what regressed and wall-clock is flaky on someone else's disk.
+
 **`tools/wiki.py`** — CLI wrapper around the same agent tools. An interactive REPL or one-shot runner; no Flask dependency.
 
 **`tools/config.py`** — reads `config.json`. Use `cfg_get(section, key, default)` throughout. Config is never hardcoded.
