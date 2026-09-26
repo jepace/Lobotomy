@@ -374,6 +374,15 @@ MUTATIONS = [
     ('fm: heal a malformed title line',
      '                    if _canon_t != f"title: {_ti.group(1).strip()}":',
      '                    if False:'),
+    # The outline has to name the route that fits the job. It used to warn only
+    # when a page was too large to rewrite, and say nothing when it wasn't — so a
+    # reorganize was steered into per-section rewrites the 40% guard refuses.
+    ('outline: names the whole-page route when it is available',
+     '            _rewritable = total <= (cfg_int("llm", "max_tokens", default=16384) * 4) // 2',
+     '            _rewritable = False'),
+    ('outline: says why a reorganize is not per-section',
+     '                f"page: this moves material BETWEEN sections, so it cannot be done as a "',
+     '                f"page: "'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',

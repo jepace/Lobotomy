@@ -729,7 +729,25 @@ on the page into better shape, and the page's existing content is the only thing
 **Nothing may be lost.**
 
 1. **`read_file` the page.** Over 20,000 chars you get an outline — every section, its
-   size, its opening. That is your map, not your material.
+   size, its opening. That is your map, not your material. **The outline tells you which
+   of the two routes below applies to this page. Read it and follow that one;** it knows
+   the page's size against the output budget and you do not.
+
+   **Route A — the page fits in one rewrite** (the outline says so explicitly). This is
+   the better route for a reorganization whenever it is available, because moving material
+   between sections is one coherent edit, not a series of independent ones. Page through
+   the page with `read_file(path, offset=0)` and keep calling `read_file` with the offset
+   each reply gives you until you reach the end, then send the entire reorganized page in
+   **one** `update_file`. `update_file` is refused until you have genuinely seen all of
+   it, which is the point: a whole-page write composed from a partial read would silently
+   discard everything past what you read.
+
+   **Route B — the page is too large to rewrite in one call** (the outline says so). Then
+   it has to be done section by section, in the order below. Steps 2–6 are Route B.
+
+   Do not do a reorganization as a series of independent section rewrites that each cut
+   their section down. That is not a reorganization, it is a series of deletions, and
+   `update_section`'s 40% guard will refuse them one at a time.
 2. **`read_section` every section you intend to touch**, including the ones you will move
    text *into*. You cannot move what you have not read, and the guards will refuse a
    rewrite of a section you have not read this session.
@@ -743,8 +761,10 @@ on the page into better shape, and the page's existing content is the only thing
    cannot tell a deliberate move from an ingest that silently condensed a page. The flag
    is you taking responsibility for the order: **destination first, confirmed, then
    source.** Reverse it and the text is gone.
-6. Repeat per section. Do not batch a page-wide rewrite through `update_file` on a large
-   page — it is steered away above half the output budget for good reason.
+6. Repeat per section. Do not batch a page-wide rewrite through `update_file` **on a page
+   the outline told you was too large for one** — above half the output budget the model
+   silently condenses instead of failing, which is the very thing this workflow exists to
+   prevent. On a page the outline says fits, Route A is preferred.
 7. `done()` when the page reads as one synthesis rather than a pile.
 
 Sections the user says they added are instructions, not suggestions: use them, and put the

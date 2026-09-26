@@ -437,16 +437,53 @@ def _read_file(path: str, offset: int = -1) -> "str | list":
             _skip = {"sources"} | ({_fm_t.lower()} if _fm_t else set())
 
             _outline = _page_outline(_body, _fm_t, preview=_OUTLINE_PREVIEW)
+            # Two routes, and the outline has to name BOTH — because which one is right
+            # depends on the job, and only the caller knows the job.
+            #
+            # This used to say "call read_section for the one you are changing", then "Do
+            # NOT call read_file again with an offset", with the regenerate route appended
+            # as an exception to that prohibition. Asked to reorganize a 28,401-char page,
+            # the model read one section and tried to rewrite it 81% shorter — refused, as
+            # it should be — then moved to the next section and did the same. It was never
+            # going to work: consolidating a page moves material BETWEEN sections, so it
+            # is not a per-section edit at all, and the dominant signal in the reply was
+            # "don't read the rest".
+            #
+            # Worse, the asymmetry: a page OVER the rewrite threshold got an explicit note
+            # telling it to use update_section, while a page under it — the case where the
+            # regenerate would have worked — got silence. Same shape as the template
+            # lesson: the informative branch fired on the failure case, so the quiet
+            # failure was the common one. Both branches now state the route affirmatively.
+            _rewritable = total <= (cfg_int("llm", "max_tokens", default=16384) * 4) // 2
+            if _rewritable:
+                _whole_page = (
+                    "This page is small enough to rewrite in one call, so page through it "
+                    "first and then send it whole: read_file(path, offset=0), then "
+                    "read_file again with the offset each reply gives you until you reach "
+                    "the end, then ONE update_file with the entire reorganized page. "
+                    "update_file is refused until you have actually seen all of it.")
+            else:
+                _whole_page = (
+                    "This page is too large to rewrite in one update_file call, so do it "
+                    "section by section (LOBOTOMY.md 6b): read every section involved, "
+                    "plan the whole move, write the DESTINATION first and confirm it, then "
+                    "shrink the source with allow_shrink=true. Never shrink a section "
+                    "before its material is safely in another one.")
             text = (
                 f"{_fm}"
                 f"[OUTLINE — this page is {total:,} chars, over the {limit:,}-char read limit, "
-                f"so its sections are summarized rather than quoted.\n"
-                f"Each section below shows its size and opening. Call read_section(path, section) "
-                f"for the one you are changing — it returns that section in full.\n"
-                f"Do NOT call read_file again with an offset: every chunk read stays in the "
-                f"conversation and is re-sent on every later round of this ingest. The one "
-                f"exception is a regenerate, which rewrites the whole page with update_file "
-                f"and so must genuinely see all of it — start that with offset=0.]\n\n"
+                f"so its sections are summarized rather than quoted. Each section below shows "
+                f"its size and opening.\n\n"
+                f"Two routes — pick by what you are doing:\n"
+                f"1. CHANGING PARTICULAR SECTIONS, or folding in a new source: call "
+                f"read_section(path, section) for each section you are changing — it returns "
+                f"that section in full — then update_section. Do not read the rest of the "
+                f"page: every chunk read stays in the conversation and is re-sent on every "
+                f"later round.\n"
+                f"2. REORGANIZING, CONSOLIDATING, DE-DUPLICATING or REGENERATING the whole "
+                f"page: this moves material BETWEEN sections, so it cannot be done as a "
+                f"series of independent section rewrites — update_section refuses a cut of "
+                f"more than 40% precisely to stop that. {_whole_page}]\n\n"
                 f"{_outline}\n")
             # Nothing was quoted, so nothing is credited as read. update_section will ask for
             # the section explicitly, which is the intended next step — better than a refusal
@@ -499,8 +536,11 @@ def _read_file(path: str, offset: int = -1) -> "str | list":
         # fit alongside tool-call JSON and reasoning, so half the budget is the steer. (For
         # reference, a 37,893-char rewrite at 58% of the default budget was observed being
         # silently condensed; a 2,456-char one at 4% was fine.)
+        # The outline branch above already states this as one of its two routes, and
+        # saying it twice in one reply — once as "use update_section for each section you
+        # are changing" — is how the consolidation route got drowned out to begin with.
         _budget_chars = cfg_int("llm", "max_tokens", default=16384) * 4
-        if total > _budget_chars // 2:
+        if total > _budget_chars // 2 and "[OUTLINE" not in text:
             text += (
                 f"\n\n[This page is {total} chars — too large to rewrite safely in one "
                 f"update_file call. Use update_section(path, section, content) for each "
