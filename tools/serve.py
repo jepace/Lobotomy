@@ -738,8 +738,19 @@ def _rewrite_md_link(href: str, from_page: Path) -> str:
 def render_md(path: Path) -> str:
     if not path.exists():
         return "<p><em>Page not found.</em></p>"
-    text = path.read_text(encoding="utf-8")
+    return render_md_text(path.read_text(encoding="utf-8"), path)
+
+
+def render_md_text(text: str, link_base: Path) -> str:
+    """Render page markdown to HTML, resolving relative .md links against `link_base`.
+
+    Split out of render_md so a stored REVISION can be rendered too. The revision file
+    lives at wiki/.history/<relpath>/<ts>.md, so rendering it by its own path would resolve
+    `../entities/foo.md` against the history store and every link on the page would break.
+    The base is the live page, which is where those links were written to work from.
+    """
     text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
+    path = link_base
     # Drop the page's own H1. Every wiki page carries one so the file reads correctly in
     # any markdown viewer, but this template already prints the title in its top bar, and
     # rendering both shows the name twice. The file is canonical; this is presentation.
@@ -1721,11 +1732,17 @@ def wiki_history_diff(page_path, rev):
     old, new = f.read_text(encoding="utf-8", errors="replace"), p.read_text(encoding="utf-8", errors="replace")
     diff = list(difflib.unified_diff(old.splitlines(), new.splitlines(),
                                      fromfile=f"{rev} (saved)", tofile="current", lineterm=""))
+    # ?view=full renders the saved version as a page instead of as a diff. A diff answers
+    # "what changed"; it does not answer "is the old one better", which is the question when
+    # a rewrite has restructured everything and every line reads as changed. old_text was
+    # already being passed to the template and nothing rendered it.
+    view = "full" if request.args.get("view") == "full" else "diff"
     return render_template("wiki-history.html",
                            title=page_display_title(
                                p.read_text(encoding="utf-8", errors="replace"), p.stem),
                            current_path=str(p.relative_to(WIKI_DIR)),
                            revisions=None, rev=rev, diff=diff, old_text=old,
+                           view=view, old_html=render_md_text(old, p),
                            identical=(old == new))
 
 

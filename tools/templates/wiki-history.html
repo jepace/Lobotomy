@@ -71,6 +71,13 @@
   /* The overflow count is the warning on a row whose section list was capped, so it must
      not read as just more of the list. */
   .rev .what .secs .more { opacity: .75; font-style: italic; }
+  .viewtoggle { margin-left: 8px; }
+  /* An old version must not be mistaken for the live page, so it is visibly set apart. */
+  .oldver {
+    border-left: 3px solid var(--accent, #d29922);
+    padding-left: 14px;
+    margin-top: 12px;
+  }
   @media (max-width: 640px) { .rev .what { display: none; } }
   .rev .delta { font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                 white-space: nowrap; }
@@ -162,8 +169,13 @@
         {%- endif -%}
       </div>
       <div class="size">{{ r.size }} bytes</div>
+      {#- Show as well as Compare. A diff answers "what changed"; it does not answer "was
+          the old one better", and after a rewrite that restructured everything every line
+          reads as changed, so the diff is the least useful view of exactly the write you
+          most want to judge. -#}
       {% if r.current %}<a href="/wiki/{{ current_path }}">View</a>
-      {% else %}<a href="/wiki/{{ current_path }}/history/{{ r.id }}">Compare</a>{% endif %}
+      {% else %}<a href="/wiki/{{ current_path }}/history/{{ r.id }}?view=full">Show</a>
+      <a href="/wiki/{{ current_path }}/history/{{ r.id }}">Compare</a>{% endif %}
     </div>
     {% else %}
     <div class="empty">
@@ -173,10 +185,23 @@
 
   {% else %}
     <div class="hist-note">
-      Changes from the version saved at <strong>{{ rev }}</strong> to the page as it stands now.
+      {% if view == "full" %}
+        The version saved at <strong>{{ rev }}</strong>, in full, as that page read.
+      {% else %}
+        Changes from the version saved at <strong>{{ rev }}</strong> to the page as it stands now.
+      {% endif %}
+      <span class="viewtoggle">
+        {% if view == "full" %}
+          <a href="/wiki/{{ current_path }}/history/{{ rev }}">See what changed</a>
+        {% else %}
+          <a href="/wiki/{{ current_path }}/history/{{ rev }}?view=full">Show this version in full</a>
+        {% endif %}
+      </span>
     </div>
 
-    {% if identical %}
+    {% if view == "full" %}
+      <div class="wiki-content oldver">{{ old_html|safe }}</div>
+    {% elif identical %}
       <div class="empty">This revision is identical to the current page.</div>
     {% else %}
       <div class="diff-actions">

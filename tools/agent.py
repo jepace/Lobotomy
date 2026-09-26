@@ -1953,6 +1953,65 @@ def ensure_h1(body: str, title: str) -> str:
     return f"# {title}\n\n" + body.lstrip("\n")
 
 
+def demote_stray_h1s(body: str, title: str) -> "tuple[str, list[str]]":
+    """Rewrite a SECTION written as `# Name` into `## Name`. Returns (body, demoted names).
+
+    The page's own H1 is the first line and `ensure_h1` owns it. Anything else at level 1 is
+    a section written one `#` short, and the damage is subtler than it looks. Measured
+    rather than assumed: `read_section` DOES find such a section and `update_section` DOES
+    rewrite it, so it is not unreachable. What it is, is **invisible to every listing**,
+    because `_page_section_names` skips level-1 headings — so it is missing from the
+    `read_file` outline, from the "other sections on this page" hints, and from
+    `section_inventory.py`, and `_bad_headings` exempts it so nothing ever reports it
+    either. The page has content that the page's own map denies.
+
+    (CLAUDE.md said such a section "can never be read or edited by the section tools". That
+    is not true, and the real failure is worse for being quieter: a listing that omits a
+    section is a listing an agent plans from.)
+
+    Observed on artificial-intelligence.md, which carried `# Applications` and `# Current
+    Debates & Challenges`. Asked to reorganize it, the model read an outline naming neither
+    — it planned a restructure of a page whose two largest sections it could not see.
+
+    One mechanically-correct answer (add a `#`), so heal_pages absorbs it rather than
+    reporting it — principle 1. Two things it must not do:
+
+      * touch the page's own opening H1, which is why the first heading is skipped; and
+      * touch a `#` inside a fenced code block, where it is a shell comment or a C
+        preprocessor line and not a heading at all. A pass that "fixed" those would
+        corrupt every page quoting a script.
+
+    An H1 whose text IS the page title is left alone and reported, not demoted: demoting it
+    would manufacture a `## <page title>` section, which the heading rules refuse, so the
+    fix would be one violation traded for another (principle 4).
+    """
+    lines = body.splitlines(keepends=True)
+    out, demoted, in_fence, seen_heading = [], [], False, False
+    norm_title = _norm_heading(title) if title else ""
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        m = re.match(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", line.rstrip("\n")) if not in_fence else None
+        if not m:
+            out.append(line)
+            continue
+        if not seen_heading:
+            # The page's own H1 (or, on a page with none, whatever heading comes first).
+            seen_heading = True
+            out.append(line)
+            continue
+        if len(m.group(1)) == 1 and _norm_heading(m.group(2)) != norm_title:
+            demoted.append(m.group(2))
+            nl = "\n" if line.endswith("\n") else ""
+            out.append(f"## {m.group(2)}{nl}")
+        else:
+            out.append(line)
+    return "".join(out), demoted
+
+
 def page_display_title(text: str, stem: str) -> str:
     """The name to show for a page: its frontmatter title, or the slug if it has none.
 
@@ -4427,6 +4486,21 @@ def _heal_pages_impl(dry_run: bool = False) -> dict:
                         if _healed != new[_fm_end.end():]:
                             new = new[:_fm_end.end()] + _healed
                             n_fm += 1
+
+                # A section written as `# Name` instead of `## Name`. Unaddressable by
+                # every section tool, so the only way to fix such a page was a whole-page
+                # rewrite — which is how one page traded two bad headings for half its
+                # sourced detail.
+                _fm_end_h = re.match(r"^---\s*\n.*?\n---\s*\n", new, re.DOTALL)
+                if _fm_end_h:
+                    _t_for_h1 = _fm_title(new)
+                    _demoted_body, _demoted = demote_stray_h1s(
+                        new[_fm_end_h.end():], _t_for_h1)
+                    if _demoted:
+                        log.info("heal_pages: %s had %d section(s) at level 1 — demoted to "
+                                 "'##': %s", rel, len(_demoted), ", ".join(_demoted))
+                        new = new[:_fm_end_h.end()] + _demoted_body
+                        n_fm += 1
 
                 # A title: line that is not a correctly quoted scalar — backticks, or the
                 # unescaped inner quote create_file used to write. Re-rendering it from

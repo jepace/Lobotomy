@@ -388,6 +388,17 @@ MUTATIONS = [
     ('history: the changed-section list is not silently capped',
      '        return names[:limit] if limit else names',
      '        return names[:limit] if limit else names[:4]'),
+    # A section written `# Name` is invisible to every listing — including the
+    # outline an agent plans a reorganization from.
+    ('h1-demote: only a stray level-1 heading, not the page title',
+     '        if len(m.group(1)) == 1 and _norm_heading(m.group(2)) != norm_title:',
+     '        if len(m.group(1)) == 1 :'),
+    ('h1-demote: a fenced code block is not headings',
+     '        if stripped.startswith("```") or stripped.startswith("~~~"):',
+     '        if False:'),
+    ('h1-demote: heal_pages applies it',
+     '                    if _demoted:',
+     '                    if False:'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',

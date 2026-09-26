@@ -707,12 +707,36 @@ Call `search_wiki` with query `"<page title> in:sources"` to find any source pag
 ### Step 4 — Rewrite the page
 Only after reading all source pages: call `update_file` with the full rewritten content synthesized from everything you read. Do not include `sources:`, `created:`, or `raw_source:` in the frontmatter — these are managed automatically by the system.
 
-A regenerate often produces a **shorter** page than it replaced — that is normal and often
-the point, since consolidating material that accumulated across many ingests removes
-repetition. `update_file` refuses a large reduction by default, because during an *ingest*
-it means content was lost. Here it is deliberate, so pass `allow_shrink: true`. Use it only
-because shrinking is genuinely intended — never to get an oversized rewrite past the guard.
-The previous version is saved in the page's History either way.
+**A regenerate removes REPETITION, never INFORMATION.** This is the distinction the whole
+workflow turns on, and getting it wrong is the most damaging thing you can do to this wiki.
+
+The page's specifics are the asset — they are what forty ingests bought. **Every figure,
+percentage, dollar amount, date, proper name, organization, incident and quoted claim that
+was on the page must still be on the page afterwards.** Three paragraphs that each say
+"data centers use a lot of energy" become one. Three paragraphs naming three different
+facilities, each with its own cost and location, stay three facts however you arrange them.
+
+So the shrinkage you are aiming for comes from **collapsing restatement**, and never from
+generalizing a specific into a summary. If your rewrite says "major chipmakers finance
+customer data centers" where the page said "Nvidia committed up to $105 billion for an
+OpenAI-leased facility in Ohio and paid $12.9 billion for Hugging Face", you have not
+consolidated the page, you have deleted it and left a description of it behind.
+
+The test before you write: **the page cites every source in `sources:`. Could a reader
+still tell what each of those sources contributed?** If a source's contribution is no
+longer traceable in the body, the citation has become a claim the page cannot support —
+and you have made the page worse while making it tidier. A page that cites forty sources
+and contains a dozen facts is the failure mode.
+
+A regenerate is therefore often only *somewhat* shorter, and a rewrite that comes back at
+half the length is nearly always this failure rather than good editing. `update_file`
+refuses a large reduction by default. `allow_shrink: true` is the deliberate opt-out, and
+before you reach for it: a large reduction means you are removing something, so name to
+yourself what it is. If the honest answer is "detail", stop and keep the detail. Never pass
+it merely to get an oversized rewrite past the guard.
+
+The previous version is saved in the page's History either way — but a user who cannot see
+what you dropped cannot ask for it back, so "it is revertable" is not a licence.
 
 ### Step 5 — Done
 Call `done()`.
@@ -773,6 +797,15 @@ material that belongs there into them even if the page never had such a section 
 If two points say the same thing with different detail, keep the fuller one and fold in
 anything the shorter one adds. If they genuinely conflict, that is a `## Contradictions`
 entry, not something to resolve by deleting one.
+
+**Reorganizing moves material; it does not summarize it.** Every figure, percentage, dollar
+amount, date, proper name, organization and incident on the page before must be on the page
+after — in a better place, perhaps merged with a restatement of itself, but still there.
+Replacing "Nvidia paid $12.9 billion for Hugging Face" with "major chipmakers acquire
+ecosystem assets" is not tidying, it is deletion with a tidy result. A reorganized page is
+usually about as long as it started; if yours came back at half the length, you summarized
+instead of reorganizing, and the specifics that took dozens of ingests to accumulate are
+what you spent.
 
 Every page you touch keeps a version history entry, so a reorganization that goes wrong is
 revertable from the page's History view. That is not licence to be careless — losing text
