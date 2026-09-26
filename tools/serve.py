@@ -154,6 +154,7 @@ from config import (cfg_get, cfg_bool, cfg_int, validate_config,
                     cfg_active_provider, cfg_provider, cfg_available_models,
                     cfg_all_providers, cfg_write_llm)
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title, _H1_RE,
+                   fm_scalar, parse_tags_line,
                    write_reason, page_history,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, run_agent_turn, system_prompt,
@@ -293,12 +294,15 @@ def _parse_frontmatter(text: str) -> tuple:
         k, _, v = line.partition(":")
         k = k.strip()
         v = v.strip()
-        if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
-            v = v[1:-1]
         if v.startswith("[") and v.endswith("]"):
             inner = v[1:-1]
-            meta[k] = [x.strip().strip('"').strip("'") for x in inner.split(",") if x.strip()]
-        elif v.lower() == "true":
+            meta[k] = [fm_scalar(x) for x in inner.split(",") if x.strip()]
+            continue
+        # agent.fm_scalar so this agrees with every reader in agent.py: matched wrapper
+        # pairs off, backticks out, and the escaping fm_quote writes undone — otherwise a
+        # title containing a quote would render with visible backslashes.
+        v = fm_scalar(v)
+        if v.lower() == "true":
             meta[k] = True
         elif v.lower() == "false":
             meta[k] = False
@@ -1870,7 +1874,7 @@ def wiki_tags():
         tags_raw = meta.get("tags", "")
         # Canonical via agent.parse_tags_line: a tag wrapped in backticks used to read as
         # a tag of its own here, so one subject's tag page split in two.
-        tags = agent.parse_tags_line(tags_raw)
+        tags = parse_tags_line(tags_raw)
         title = meta.get("title", "").strip('"')
         pg_type = meta.get("type", "").strip()
         rel = str(f.relative_to(WIKI_DIR))
@@ -1902,7 +1906,7 @@ def wiki_tag(tag):
         tags_raw = meta.get("tags", "")
         # Canonical via agent.parse_tags_line: a tag wrapped in backticks used to read as
         # a tag of its own here, so one subject's tag page split in two.
-        tags = agent.parse_tags_line(tags_raw)
+        tags = parse_tags_line(tags_raw)
         if tag not in tags:
             continue
         title = meta.get("title", "").strip('"')

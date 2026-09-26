@@ -387,6 +387,37 @@ mechanically-correct answer, so absorbed per principle 1), and `serve.py`'s two 
 used it too — a backticked tag was splitting one subject's tag page in two. Case is folded
 for the same reason, since the schema already says lowercase.
 
+**One reading and one rendering of a frontmatter scalar** (`fm_scalar`, `fm_quote`), which
+is the same lesson as the tags one, found by asking whether it had siblings. It did, two:
+
+- **A backticked title was invisible to the autolinker.** There were nine copies of the
+  title regex in two variants — `["\']?(.+?)["\']?` in seven places, `"?([^"\n]+)"?` in two
+  — and not one stripped a backtick, so a title the model wrote as code entered
+  `_build_title_map` *with* the backticks and could only match text spelled the same way.
+  A permanent silent miss. `_resolve_page`'s filename fallback means it did **not** also
+  produce a duplicate page — the shared resolver earning its keep. All nine now go through
+  `_fm_title`.
+- **Quoting without escaping produced invalid YAML, and the readers then disagreed.**
+  `create_file` interpolated into `"{value}"`, so a title containing a quote was written
+  `title: "The "Big Lie""`, which `_parse_title_fields` read as `The "Big Lie` —
+  `.strip('"')` eats every quote at both ends — while the `["\']?` regex read
+  `The "Big Lie"`. Two readers, two titles for one page, and the autolinker used the
+  truncated one. **This is why "just force double quotes on everything" is the wrong
+  instruction**: more quoting without escaping spreads that defect. `fm_scalar` strips
+  MATCHED pairs only, one layer at a time, then removes backticks outright (an unmatched
+  one is not a pair, and no frontmatter value legitimately contains one).
+
+Deliberately **not** normalized: `type:` (a bare enum, sanitized separately), `created:` /
+`updated:` (YAML dates — quoting makes them strings) and `no_autolink:` (a boolean, where
+`"true"` is a string that works only by truthiness accident).
+
+**`serve.py` imports with `from agent import (...)`, so `agent.foo(...)` inside it is a
+`NameError`** — and `list_inbox` wraps its parse in a `try/except` that swallows
+everything, so the symptom was not a traceback but every title quietly falling back to the
+filename. The suite touched neither of serve's two tag readers, so the same mistake sat in
+the `/wiki/tags` path undetected. Add the name to the import list, and when a helper is
+shared across the two modules, test that `serve.x is agent.x`.
+
 ### Reading a large page
 
 `_read_file` on a wiki page over `_WIKI_READ_LIMIT` (20,000 chars) returns an **outline** —

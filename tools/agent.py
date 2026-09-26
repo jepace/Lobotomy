@@ -433,11 +433,10 @@ def _read_file(path: str, offset: int = -1) -> "str | list":
             # is a section anything should be written to. Same exclusions as _read_section's
             # outline, and the title is matched against frontmatter rather than by heading
             # level, since some pages carry a real section at H1.
-            _title_m = re.search(r'^title:\s*["\']?(.+?)["\']?\s*$', _full, re.MULTILINE)
-            _skip = {"sources"} | ({_title_m.group(1).strip().lower()} if _title_m else set())
+            _fm_t = _fm_title(_full)
+            _skip = {"sources"} | ({_fm_t.lower()} if _fm_t else set())
 
-            _outline = _page_outline(_body, _title_m.group(1).strip() if _title_m else "",
-                                     preview=_OUTLINE_PREVIEW)
+            _outline = _page_outline(_body, _fm_t, preview=_OUTLINE_PREVIEW)
             text = (
                 f"{_fm}"
                 f"[OUTLINE — this page is {total:,} chars, over the {limit:,}-char read limit, "
@@ -600,6 +599,42 @@ _SOURCES_SECTION_TYPES = {"entity", "concept", "synthesis"}
 # caused this — a markdown BACKTICK: the model renders a tag name as code, so it writes
 # tags: ["justice-department", `law-enforcement`], which is not YAML quoting at all.
 _TAG_WRAP = "\"'`“”‘’ \t"
+
+
+def fm_scalar(raw: str) -> str:
+    """One canonical reading of a quoted frontmatter scalar.
+
+    Strips MATCHED wrapper pairs, one layer at a time, then unescapes. Matched pairs
+    only, and that is the whole point: `.strip('"')` removes every quote at both ends, so
+    the invalid line create_file used to write for a title containing a quote —
+
+        title: "The "Big Lie""
+
+    came back from _parse_title_fields as 'The "Big Lie' — truncated, one closing quote
+    eaten — while the seven copies of the ["\\']? regex read 'The "Big Lie"'. Two readers,
+    two different titles for one page, and the autolinker used the truncated one.
+
+    Backticks are then removed outright rather than only as a pair. No frontmatter value
+    legitimately contains one, the model writes them because it renders a name as code,
+    and an UNMATCHED one (`Noah's Ark with no closer) is not a pair to strip.
+    """
+    v = str(raw).strip()
+    while len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'`":
+        v = v[1:-1].strip()
+    v = v.replace("`", "")
+    # Undo the escaping fm_quote applies. Ordering matters: \\" before \\\\, or an escaped
+    # backslash followed by a quote unescapes into a quote that ends the value.
+    return v.replace('\\"', '"').replace("\\'", "'").replace("\\\\", "\\").strip()
+
+
+def fm_quote(value: str) -> str:
+    """Render a value as a double-quoted frontmatter scalar, escaped.
+
+    create_file interpolated straight into '"{value}"' with no escaping, so any value
+    carrying a double quote produced invalid YAML. Adding more quoting without this would
+    have spread that, not fixed it.
+    """
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def norm_tag(t: str) -> str:
@@ -1883,9 +1918,17 @@ def page_display_title(text: str, stem: str) -> str:
 
 
 def _fm_title(text: str) -> str:
-    """The title: from a page's frontmatter, or "" if it has none."""
-    m = re.search(r'^title:[ \t]*["\']?(.+?)["\']?[ \t]*$', text, re.MULTILINE)
-    return m.group(1).strip() if m else ""
+    """The title: from a page's frontmatter, or "" if it has none.
+
+    THE one way a title is read. There were nine copies of this regex in two different
+    variants — `["\\']?(.+?)["\\']?` in seven places, `"?([^"\\n]+)"?` in two — and none of
+    them stripped a backtick, so a title the model wrote as code entered the autolinker's
+    title map WITH the backticks and could then only match text spelled the same way: a
+    permanent silent miss, the Noah's-Ark symptom class again. Every caller goes through
+    here so they cannot disagree about a page's own name.
+    """
+    m = re.search(r"^title:[ \t]*(.*?)[ \t]*$", text, re.MULTILINE)
+    return fm_scalar(m.group(1)) if m else ""
 
 
 def _sections_fully_shown(chunk: str, reached_eof: bool) -> "list[str]":
@@ -1978,10 +2021,9 @@ def _read_section(args: dict) -> str:
         # as a section; and 736 pages have no Overview, so the schema-correct first guess
         # misses, and a name-only reply sends the agent back for a second read before it
         # can write. With the openings included it can pick AND compose in one round.
-        _t_m = re.search(r'^title:\s*["\']?(.+?)["\']?\s*$', content, re.MULTILINE)
-        _digest = _page_outline(body, _t_m.group(1).strip() if _t_m else "",
-                                preview=_OUTLINE_PREVIEW)
-        heads = [n for _, n in _page_section_names(body, _t_m.group(1).strip() if _t_m else "")]
+        _t = _fm_title(content)
+        _digest = _page_outline(body, _t, preview=_OUTLINE_PREVIEW)
+        heads = [n for _, n in _page_section_names(body, _t)]
         return (f"Error: {path} has no section '{section}'.\n\n{_digest}\n\n"
                 f"Pick the one this material belongs to and call update_section on it, or "
                 f"append_section to add a new section. Do not re-read the page first — its "
@@ -1996,8 +2038,7 @@ def _read_section(args: dict) -> str:
     # them here is free and lets it correct course in the same round.
     # Exclude the page's own H1 title (matched against frontmatter, not by heading level —
     # some pages carry a real section at H1) and the auto-generated Sources section.
-    _title_m = re.search(r'^title:\s*["\']?(.+?)["\']?\s*$', content, re.MULTILINE)
-    _page_title = (_title_m.group(1).strip().lower() if _title_m else "")
+    _page_title = _fm_title(content).lower()
     _skip = {"sources", section.strip().lower()} | ({_page_title} if _page_title else set())
     others = [h for h in re.findall(r"^#{1,6}[ \t]*(\S.*?)[ \t]*$", body, re.MULTILINE)
               if h.strip().lower() not in _skip]
@@ -2266,10 +2307,9 @@ def _update_section(args: dict) -> str:
         # as a section; and 736 pages have no Overview, so the schema-correct first guess
         # misses, and a name-only reply sends the agent back for a second read before it
         # can write. With the openings included it can pick AND compose in one round.
-        _t_m = re.search(r'^title:\s*["\']?(.+?)["\']?\s*$', content, re.MULTILINE)
-        _digest = _page_outline(body, _t_m.group(1).strip() if _t_m else "",
-                                preview=_OUTLINE_PREVIEW)
-        heads = [n for _, n in _page_section_names(body, _t_m.group(1).strip() if _t_m else "")]
+        _t = _fm_title(content)
+        _digest = _page_outline(body, _t, preview=_OUTLINE_PREVIEW)
+        heads = [n for _, n in _page_section_names(body, _t)]
         return (f"Error: {path} has no section '{section}'.\n\n{_digest}\n\n"
                 f"Pick the one this material belongs to and call update_section on it, or "
                 f"append_section to add a new section. Do not re-read the page first — its "
@@ -3240,9 +3280,7 @@ def _auto_write_log_entry() -> None:
         src_p = WIKI_DIR / _ctx()._current_source_page
         if src_p.exists():
             text = src_p.read_text(encoding="utf-8", errors="replace")
-            m = _re.search(r"^title:\s*\"?([^\"\n]+)\"?", text, _re.MULTILINE)
-            if m:
-                title = m.group(1).strip()
+            title = _fm_title(text) or title
     if not title:
         title = "unknown"
 
@@ -3253,9 +3291,7 @@ def _auto_write_log_entry() -> None:
         pg_type = ""
         if p.exists():
             txt = p.read_text(encoding="utf-8", errors="replace")
-            m = _re.search(r'^title:\s*"?([^"\n]+)"?', txt, _re.MULTILINE)
-            if m:
-                name = m.group(1).strip()
+            name = _fm_title(txt) or name
             tm = _re.search(r'^type:\s*(\S+)', txt, _re.MULTILINE)
             if tm:
                 pg_type = tm.group(1).strip()
@@ -3349,7 +3385,7 @@ def _post_process_session() -> None:
                 existing = [s.strip().strip('"').strip("'") for s in src_m.group(1).split(",") if s.strip().strip('"').strip("'")]
                 if _ctx()._current_source_page in existing:
                     continue
-                new_src_str = ", ".join(f'"{s}"' for s in [_ctx()._current_source_page] + existing)
+                new_src_str = ", ".join(fm_quote(s) for s in [_ctx()._current_source_page] + existing)
                 ep_content = _re.sub(r"^sources:\s*\[[^\]]*\]", f"sources: [{new_src_str}]", ep_content, flags=_re.MULTILINE)
             else:
                 # sources: field missing entirely — insert before the closing --- of frontmatter
@@ -4176,8 +4212,7 @@ def _promote_lead_to_opener_impl(dry_run: bool = False) -> dict:
         opener = _OPENER.get(t_m.group(1).strip() if t_m else "")
         if not opener:
             continue
-        title_m = re.search(r'^title:[ \t]*["\']?(.+?)["\']?[ \t]*$', fm, re.MULTILINE)
-        title = title_m.group(1).strip() if title_m else ""
+        title = _fm_title(fm)
         if any(_norm_heading(n) == _norm_heading(opener)
                for _, n in _page_section_names(body, title)):
             continue                                   # already has its opener
@@ -4335,15 +4370,28 @@ def _heal_pages_impl(dry_run: bool = False) -> dict:
                 # The page's own H1. Derivable from title:, so it is filled rather than
                 # reported — and because heal_pages runs at startup and after every
                 # ingest, pages written before this rule acquire one on their own.
-                _t_m = re.search(r'^title:[ \t]*["\']?(.+?)["\']?[ \t]*$',
-                                 fm.group(1), re.MULTILINE)
-                if _t_m and _t_m.group(1).strip():
+                _t_m = _fm_title(fm.group(1))
+                if _t_m:
                     _fm_end = re.match(r"^---\s*\n.*?\n---\s*\n", new, re.DOTALL)
                     if _fm_end:
-                        _healed = ensure_h1(new[_fm_end.end():], _t_m.group(1).strip())
+                        _healed = ensure_h1(new[_fm_end.end():], _t_m)
                         if _healed != new[_fm_end.end():]:
                             new = new[:_fm_end.end()] + _healed
                             n_fm += 1
+
+                # A title: line that is not a correctly quoted scalar — backticks, or the
+                # unescaped inner quote create_file used to write. Re-rendering it from
+                # its own canonical reading has one answer, and it has to happen here
+                # because the title feeds _build_title_map: a page whose title carries a
+                # backtick is invisible to the autolinker until the line is fixed.
+                _ti = re.search(r"^title:[ \t]*(.*?)[ \t]*$", fm.group(1), re.MULTILINE)
+                if _ti and _ti.group(1).strip():
+                    _canon_t = f"title: {fm_quote(fm_scalar(_ti.group(1)))}"
+                    if _canon_t != f"title: {_ti.group(1).strip()}":
+                        log.info("heal_pages: %s had title %r — normalized to %r",
+                                 rel, _ti.group(1).strip(), _canon_t)
+                        new = _set_fm_field(new, "title", _canon_t)
+                        n_fm += 1
 
                 # A tags: line carrying markdown backticks or mismatched quotes. Stripping
                 # the wrapping punctuation off a tag has exactly one answer, so it is
@@ -4536,7 +4584,10 @@ def _parse_title_fields(text: str) -> "tuple[str | None, list[str], bool, bool]"
     while i < len(fm_lines):
         line = fm_lines[i]
         if line.startswith("title:"):
-            title = line.split(":", 1)[1].strip().strip('"')
+            # fm_scalar, not .strip('"'): that removed EVERY quote at both ends, so an
+            # unescaped title: "The "Big Lie"" lost a closing quote here while the other
+            # readers kept it, and the autolinker used this truncated one.
+            title = fm_scalar(line.split(":", 1)[1])
         elif line.startswith("no_autolink:"):
             val = line.split(":", 1)[1].strip().lower()
             no_autolink = val in ("true", "yes", "1")
@@ -4547,13 +4598,17 @@ def _parse_title_fields(text: str) -> "tuple[str | None, list[str], bool, bool]"
             if rest.startswith("["):
                 import json
                 try:
-                    aliases = json.loads(rest)
+                    aliases = [fm_scalar(a) for a in json.loads(rest)]
                 except Exception:
-                    pass
+                    # Not valid JSON — a backtick or a stray quote in the list is enough.
+                    # Falling through to [] would drop every alias on the page silently,
+                    # so parse it the tolerant way instead.
+                    aliases = [fm_scalar(a) for a in rest.strip("[]").split(",")
+                               if fm_scalar(a)]
             else:
                 j = i + 1
                 while j < len(fm_lines) and fm_lines[j].startswith("- "):
-                    aliases.append(fm_lines[j][2:].strip().strip('"'))
+                    aliases.append(fm_scalar(fm_lines[j][2:]))
                     j += 1
         i += 1
     return title, aliases, no_autolink, deprecated
@@ -5893,11 +5948,13 @@ def _create_file(args: dict) -> str:
         raw_source = _ctx()._current_inbox_path
 
     tags_line = render_tags_line(tags)
-    src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]) if s is not None)
-    url_line = f'url: "{url}"\n' if url else ""
-    raw_source_line = f'raw_source: "{raw_source}"\n' if raw_source else ""
+    # fm_quote, not '"{...}"': an unescaped value carrying a double quote produced
+    # invalid YAML, and the readers then disagreed about what the title was.
+    src_str = ", ".join(fm_quote(s) for s in (sources if isinstance(sources, list) else [sources]) if s is not None)
+    url_line = f'url: {fm_quote(url)}\n' if url else ""
+    raw_source_line = f'raw_source: {fm_quote(raw_source)}\n' if raw_source else ""
     frontmatter = (
-        f'---\ntitle: "{title}"\ntype: {pg_type}\n{tags_line}\n'
+        f'---\ntitle: {fm_quote(title)}\ntype: {pg_type}\n{tags_line}\n'
         f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n{url_line}{raw_source_line}---\n\n'
     )
     body_text = body.lstrip("\n")

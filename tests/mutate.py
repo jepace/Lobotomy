@@ -359,6 +359,21 @@ MUTATIONS = [
     ("tag: heal_pages repairs pages already on disk",
      '                    if _canon != _tg.group(0):',
      '                    if False:'),
+    # Frontmatter scalars: one reading, one rendering. A backticked title was
+    # invisible to the autolinker, and quoting without escaping made two readers
+    # disagree about the same page's title.
+    ('fm: backticks out of a scalar',
+     '    v = v.replace("`", "")',
+     '    v = v'),
+    ('fm: strip matched wrapper pairs only',
+     '    while len(v) >= 2 and v[0] == v[-1] and v[0] in "\\"\'`":\n        v = v[1:-1].strip()',
+     '    v = v.strip("\\"\'`")'),
+    ('fm: escape on write',
+     '    return \'"\' + str(value).replace("\\\\", "\\\\\\\\").replace(\'"\', \'\\\\"\') + \'"\'',
+     '    return \'"\' + str(value) + \'"\''),
+    ('fm: heal a malformed title line',
+     '                    if _canon_t != f"title: {_ti.group(1).strip()}":',
+     '                    if False:'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',
