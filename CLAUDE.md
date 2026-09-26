@@ -368,6 +368,25 @@ was already holding. A refusal that leaves the wasteful route open is one the mo
 take. `tests/test_handback_refusals.py` asserts the contract across all four at once so
 they cannot drift apart again.
 
+**A tag is one string however the model wrapped it** (`norm_tag`, `parse_tags_line`,
+`render_tags_line`). Observed: `tags: ["justice-department", `law-enforcement`,
+`federal-agency`, "drug-policy"]` — backticks, because the model renders a tag name as
+code, and that is not YAML quoting at all. The single bad line was not the bug; the bug is
+that it **spread**, and doing so needed four separate places to disagree about what a tag
+is. `update_file` passed the model's `tags:` line through verbatim — `type:` is sanitized
+three lines away, from the `concept}EX_HEAT_CP` episode, and `tags:` never was — so it
+reached disk; `_collect_tags` stripped `"` and `'` but not backticks, so it entered the
+wiki's canonical tag list; `orientation_message()` hands that list to every later ingest as
+*"Prefer tags from this list"*; the model copied it onto the next page. **One page's
+markdown habit became the wiki's vocabulary, and repairing a page by hand could not stop
+it** — every other page carrying the tag fed it straight back on the next round. That is
+the shape to watch for: a malformed value that is read back as input becomes
+self-reinforcing, and the fix has to break the *loop*, not clean the value. All four sites
+now go through one canonicalizer, `heal_pages` repairs pages already on disk (one
+mechanically-correct answer, so absorbed per principle 1), and `serve.py`'s two tag views
+used it too — a backticked tag was splitting one subject's tag page in two. Case is folded
+for the same reason, since the schema already says lowercase.
+
 ### Reading a large page
 
 `_read_file` on a wiki page over `_WIKI_READ_LIMIT` (20,000 chars) returns an **outline** —

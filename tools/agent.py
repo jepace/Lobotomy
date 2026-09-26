@@ -596,6 +596,65 @@ def _strip_broken_wiki_links(content: str, page_path: Path) -> str:
 _VALID_PAGE_TYPES = {"source", "entity", "concept", "synthesis"}
 _SOURCES_SECTION_TYPES = {"entity", "concept", "synthesis"}
 
+# Wrapping characters a tag can arrive in. Straight and curly quotes, and — the one that
+# caused this — a markdown BACKTICK: the model renders a tag name as code, so it writes
+# tags: ["justice-department", `law-enforcement`], which is not YAML quoting at all.
+_TAG_WRAP = "\"'`“”‘’ \t"
+
+
+def norm_tag(t: str) -> str:
+    """The one canonical spelling of a tag, shared by every reader and every writer.
+
+    Four places used to parse a tags: line and each stripped a different set of
+    characters — create_file quoted on the way in, _collect_tags stripped `"` and `'`,
+    serve.py's two tag views stripped only `"` — so a backticked tag was a different tag
+    to each of them. That disagreement is what made the damage spread rather than sit
+    still:
+
+      1. update_file passed the model's tags: line through verbatim (type: is sanitized
+         right beside it, tags: was not), so `law-enforcement` reached disk.
+      2. _collect_tags did not strip backticks, so it entered the canonical tag list.
+      3. orientation_message() hands that list to every later ingest as "Prefer tags from
+         this list where appropriate".
+      4. The model copied it verbatim onto the next page.
+
+    So one page's markdown habit became the wiki's vocabulary, and repairing a page by
+    hand could not stop it — every other page carrying the tag fed it back on the next
+    round. Lowercased because the tags: schema already says "lowercase hyphenated" and
+    two spellings of one tag split its tag page in the same way.
+    """
+    return str(t).strip().strip(_TAG_WRAP).strip().lower()
+
+
+def parse_tags_line(line: str) -> list[str]:
+    """Canonical tags from a raw `tags: [...]` frontmatter line, deduplicated in order."""
+    # Only a leading "tags:" prefix is removed, never any colon — splitting on the first
+    # colon would cut a tag that contains one, and this is called both with the whole
+    # frontmatter line and with just its value.
+    raw = re.sub(r"^\s*tags\s*:", "", line)
+    out, seen = [], set()
+    for part in raw.strip().strip("[]").split(","):
+        tag = norm_tag(part)
+        if tag and tag not in seen:
+            seen.add(tag)
+            out.append(tag)
+    return out
+
+
+def render_tags_line(tags) -> str:
+    """The one way a tags: line is ever written."""
+    if not isinstance(tags, list):
+        tags = [tags]
+    out, seen = [], set()
+    for t in tags:
+        if t is None:
+            continue
+        tag = norm_tag(t)
+        if tag and tag not in seen:
+            seen.add(tag)
+            out.append(tag)
+    return "tags: [" + ", ".join(f'"{t}"' for t in out) + "]"
+
 
 def _inject_sources_section(content: str, page_path: Path) -> str:
     """Render a ## Sources section from frontmatter and append/replace it at the bottom.
@@ -1520,6 +1579,19 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
             _val = _clean.group(0).lower() if _clean else ""
             if _val in _VALID_PAGE_TYPES:
                 content = _set_fm_field(content, "type", f"type: {_val}")
+
+        # tags: is supplied by the LLM on every write and used to be passed through
+        # verbatim — which is how `law-enforcement`, a tag the model wrote as markdown
+        # code, reached disk and then became part of the wiki's canonical tag vocabulary
+        # via _collect_tags and orientation_message(). One mechanically-correct answer
+        # (drop the wrapping punctuation), so it is absorbed rather than refused.
+        _tags_m = _re.search(r"^tags:.*$", content, _re.MULTILINE)
+        if _tags_m:
+            _canon = render_tags_line(parse_tags_line(_tags_m.group(0)))
+            if _canon != _tags_m.group(0):
+                log.info("update_file: %s had a malformed tags line %r — normalized to %r",
+                         path, _tags_m.group(0), _canon)
+                content = _set_fm_field(content, "tags", _canon)
 
         for _field in ("created", "raw_source"):
             _disk_m = _re.search(r"^" + _field + r":[ \t]*\S.*", _disk_existing, _re.MULTILINE)
@@ -4273,6 +4345,21 @@ def _heal_pages_impl(dry_run: bool = False) -> dict:
                             new = new[:_fm_end.end()] + _healed
                             n_fm += 1
 
+                # A tags: line carrying markdown backticks or mismatched quotes. Stripping
+                # the wrapping punctuation off a tag has exactly one answer, so it is
+                # healed rather than reported — and it has to be healed here, because
+                # _collect_tags feeds every page's tags back to the next ingest: repairing
+                # one page by hand leaves every other page still teaching the model the
+                # broken spelling.
+                _tg = re.search(r"^tags:.*$", fm.group(1), re.MULTILINE)
+                if _tg:
+                    _canon = render_tags_line(parse_tags_line(_tg.group(0)))
+                    if _canon != _tg.group(0):
+                        log.info("heal_pages: %s had tags %r — normalized to %r",
+                                 rel, _tg.group(0), _canon)
+                        new = _set_fm_field(new, "tags", _canon)
+                        n_fm += 1
+
                 # A Timeline written by hand at create_file time, in a shape the tool did
                 # not recognise, with the tool's own restatement of the same facts sitting
                 # underneath it. Mechanically fixable — one format, sorted, restatements
@@ -5805,12 +5892,12 @@ def _create_file(args: dict) -> str:
     if pg_type == "source" and not raw_source:
         raw_source = _ctx()._current_inbox_path
 
-    tag_str = ", ".join(f'"{t}"' for t in (tags if isinstance(tags, list) else [tags]) if t is not None)
+    tags_line = render_tags_line(tags)
     src_str = ", ".join(f'"{s}"' for s in (sources if isinstance(sources, list) else [sources]) if s is not None)
     url_line = f'url: "{url}"\n' if url else ""
     raw_source_line = f'raw_source: "{raw_source}"\n' if raw_source else ""
     frontmatter = (
-        f'---\ntitle: "{title}"\ntype: {pg_type}\ntags: [{tag_str}]\n'
+        f'---\ntitle: "{title}"\ntype: {pg_type}\n{tags_line}\n'
         f'created: {created}\nupdated: {today}\nsources: [{src_str}]\n{url_line}{raw_source_line}---\n\n'
     )
     body_text = body.lstrip("\n")
@@ -6346,11 +6433,9 @@ def _collect_tags() -> list[str]:
                 continue
             for line in m.group(1).splitlines():
                 if line.startswith("tags:"):
-                    raw = line.split(":", 1)[1].strip().strip("[]")
-                    for t in raw.split(","):
-                        tag = t.strip().strip('"\'')
-                        if tag:
-                            seen.add(tag)
+                    # Canonical, so a tag that reached disk wrapped in backticks cannot be
+                    # served back to the next ingest as a tag to prefer.
+                    seen.update(parse_tags_line(line))
     return sorted(seen)
 
 

@@ -347,6 +347,18 @@ MUTATIONS = [
     ("read-before-write on update_file",
      '_WIKI_READ_LIMIT = 20_000',
      '_WIKI_READ_LIMIT = 20_000_000'),
+    # A tag is one string however the model wrapped it. The backtick is the character
+    # that mattered: the model writes a tag name as markdown code, and _collect_tags
+    # feeding it back made one page's habit the wiki's vocabulary.
+    ("tag: backtick is a wrapper",
+     '_TAG_WRAP = "\\"\'`“”‘’ \\t"',
+     '_TAG_WRAP = "\\"\'“”‘’ \\t"'),
+    ("tag: update_file normalizes the line it is given",
+     '            if _canon != _tags_m.group(0):',
+     '            if False:'),
+    ("tag: heal_pages repairs pages already on disk",
+     '                    if _canon != _tg.group(0):',
+     '                    if False:'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',

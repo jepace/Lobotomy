@@ -1868,7 +1868,9 @@ def wiki_tags():
                 k, v = line.split(":", 1)
                 meta[k.strip()] = v.strip()
         tags_raw = meta.get("tags", "")
-        tags = [t.strip().strip('"') for t in tags_raw.strip("[]").split(",") if t.strip().strip('"')]
+        # Canonical via agent.parse_tags_line: a tag wrapped in backticks used to read as
+        # a tag of its own here, so one subject's tag page split in two.
+        tags = agent.parse_tags_line(tags_raw)
         title = meta.get("title", "").strip('"')
         pg_type = meta.get("type", "").strip()
         rel = str(f.relative_to(WIKI_DIR))
@@ -1898,7 +1900,9 @@ def wiki_tag(tag):
                 k, v = line.split(":", 1)
                 meta[k.strip()] = v.strip()
         tags_raw = meta.get("tags", "")
-        tags = [t.strip().strip('"') for t in tags_raw.strip("[]").split(",") if t.strip().strip('"')]
+        # Canonical via agent.parse_tags_line: a tag wrapped in backticks used to read as
+        # a tag of its own here, so one subject's tag page split in two.
+        tags = agent.parse_tags_line(tags_raw)
         if tag not in tags:
             continue
         title = meta.get("title", "").strip('"')

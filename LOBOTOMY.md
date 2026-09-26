@@ -123,7 +123,7 @@ before every `create_file` or `update_file` call.
 |-------|------|-------|
 | `title` | string (quoted) | Title-case, human readable |
 | `type` | enum | One of: `source`, `entity`, `concept`, `synthesis` |
-| `tags` | list of strings | lowercase, hyphenated, no spaces. Prefer tags from the list in the orientation message; introduce new tags only when no existing tag fits. |
+| `tags` | list of strings | lowercase, hyphenated, no spaces. Prefer tags from the list in the orientation message; introduce new tags only when no existing tag fits. **Plain double quotes only — never wrap a tag in backticks.** A tag is a string, not code: `` tags: ["a", `b`] `` is malformed. Written that way it is normalized on the way in rather than refused, but the tag list you are shown is the wiki's real vocabulary, so copy those names exactly as given. |
 | `created` | YYYY-MM-DD | Date first created. **System-managed — never supply or modify.** |
 | `updated` | YYYY-MM-DD | Date of most recent edit. Update on every write. |
 | `sources` | list of strings | Paths from `wiki/` to supporting source documents. **System-managed — never supply or modify.** During an ingest you do not need to read these — the page body already synthesizes them. They are the reading list for the Regenerate Workflow (Section 6) only. |
