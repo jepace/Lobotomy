@@ -178,6 +178,27 @@ otherwise reverting would discard the ingest that came after, so the page is lis
 state before the pass started. `index.md` and `log.md` keep no history and cannot be
 restored from here; it says so. The revert is itself recorded, so it can be undone too.
 
+### `what_was_lost.py` — did a write remove material, or only shorten prose?
+The history row says a write cut 2,461 words and added 479. It cannot say which of those
+two things happened, and that is the only question you have: collapsing duplication you
+asked to be removed looks identical, from the metadata, to discarding sourced detail.
+
+```sh
+python3 tools/what_was_lost.py wiki/concepts/artificial-intelligence.md          # the last write
+python3 tools/what_was_lost.py wiki/concepts/artificial-intelligence.md --all    # every write, oldest first
+python3 tools/what_was_lost.py wiki/concepts/artificial-intelligence.md --rev 20260926163407123456
+```
+
+Reports the disappearances that are not matters of taste — a **section**, a **dated
+timeline entry**, a **link target** — plus the word and byte arithmetic. A heading is not
+prose and does not get tightened away; a wiki link is a reference to another page, so a
+target that appears nowhere afterwards is a reference that is gone. Link targets are
+compared as a **set**, deliberately: the once-per-section rule legitimately deletes repeat
+links to a page the text still discusses, and counting occurrences would report loss on
+every relink sweep until nobody read the output.
+
+Reads only `wiki/.history`. No LLM, no API cost, and it writes nothing at all.
+
 ### `unlink_headings.py` — take markdown links out of headings
 `## [Atheism](../sources/atheism-wikipedia-2026.md)` → `## Atheism`. Every section tool
 finds a section by its heading text, so a heading carrying link syntax is unaddressable:

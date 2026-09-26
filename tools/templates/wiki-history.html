@@ -68,6 +68,9 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* The overflow count is the warning on a row whose section list was capped, so it must
+     not read as just more of the list. */
+  .rev .what .secs .more { opacity: .75; font-style: italic; }
   @media (max-width: 640px) { .rev .what { display: none; } }
   .rev .delta { font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                 white-space: nowrap; }
@@ -138,7 +141,13 @@
           </span>
         {%- endif -%}
         {%- if r.sections -%}
-          <span class="secs">{{ r.sections|join(" · ") }}</span>
+          {#- The list is complete in the data; the cap is here, and it SAYS when it caps.
+              A silently truncated list read as "these are the sections that changed" on a
+              write that had deleted a dozen of them. -#}
+          <span class="secs" title="{{ r.sections|join(' · ') }}">
+            {{- r.sections[:4]|join(" · ") -}}
+            {%- if r.sections|length > 4 %} <span class="more">+{{ r.sections|length - 4 }} more</span>{% endif -%}
+          </span>
         {%- endif -%}
       </div>
       <div class="delta">

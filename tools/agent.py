@@ -974,7 +974,7 @@ def page_history(p: Path) -> "list[dict]":
             out.append(cur)
         return out
 
-    def _changed_sections(before: str, after: str, limit: int = 4) -> list:
+    def _changed_sections(before: str, after: str, limit: int = 0) -> list:
         """Which sections a write touched, in the order they appear.
 
         Derived from the same diff that produces the +/- counts, so it costs one extra
@@ -983,6 +983,15 @@ def page_history(p: Path) -> "list[dict]":
 
         Frontmatter is excluded: `updated:` changes on every single write, so reporting it
         would put the same useless word on every row.
+
+        **Returns ALL of them; `limit` defaults to off.** It used to truncate to four
+        silently, and the template joined whatever it was handed with no overflow marker,
+        so a row reading "Definition · Applications · Infrastructure · Current Debates"
+        meant "at least four, here are the first four" while looking like a complete list.
+        On the write that took a page from 28,401 to 13,564 bytes — −2,461 words — that is
+        the difference between four sections edited and a dozen deleted, and the row was
+        least trustworthy exactly where it mattered most. The cap belongs in the view,
+        which can say "+8 more"; a function that returns data should return the data.
         """
         b_map, a_map = _line_sections(before), _line_sections(after)
         names, seen = [], set()
@@ -1009,7 +1018,7 @@ def page_history(p: Path) -> "list[dict]":
             if nm and nm not in seen:
                 seen.add(nm)
                 names.append(nm)
-        return names[:limit]
+        return names[:limit] if limit else names
 
     def _delta(before: str, after: str) -> "tuple[int, int]":
         """Words added and removed — not lines.

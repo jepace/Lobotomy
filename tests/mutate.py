@@ -383,6 +383,11 @@ MUTATIONS = [
     ('outline: says why a reorganize is not per-section',
      '                f"page: this moves material BETWEEN sections, so it cannot be done as a "',
      '                f"page: "'),
+    # A history row that caps its section list without saying so read as a
+    # four-section edit on a write that had deleted a dozen.
+    ('history: the changed-section list is not silently capped',
+     '        return names[:limit] if limit else names',
+     '        return names[:limit] if limit else names[:4]'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',
