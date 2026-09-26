@@ -603,7 +603,13 @@ refusal costs a round; reading it in the schema costs nothing.
 python3 tests/run_all.py              # everything; exits non-zero on failure
 python3 tests/run_all.py test_timeline  # one module
 python3 tests/mutate.py               # break each guard, check a test notices
+python3 tests/mutate.py read-before    # just the mutations whose name matches
 ```
+
+`mutate.py` runs the entire suite once per mutation, so it takes minutes and gets slower
+every time a test is added — each new test is paid ~78 times over. Start it in the
+background and do something else; the pattern argument is there for when you only need the
+one you just added.
 
 `run_all.py` is stdlib `unittest` over `tests/` (repo root — the suite covers the
 whole project, not just `tools/`), built on a `TempWiki` harness that
@@ -623,6 +629,15 @@ nothing. Neither file can be reverted either, since `_snapshot_version` skips bo
 **The catch:** once a pass stops repointing `index.md` it *must* rebuild it, or it leaves
 the dead link the repoint used to fix. `merge_page.py` already did; `rename_page.py` had to
 start.
+
+`run_all.py --failfast` stops at the first failure, and `mutate.py` passes it. That is
+sound rather than a corner cut: the CAUGHT/MISSED verdict is the runner's exit code and
+nothing else, so one red test is the entire answer and the other five hundred add no
+information. A MISSED mutation still pays for the whole suite, because proving that nothing
+objected means running everything. Measured on one mutation: 294 tests in 0.76s against
+513 in 3.79s, same verdict. **Do not use `--failfast` for an ordinary run** — the count it
+prints is the count it reached, not the count that exists, which is why the summary line
+says so out loud when it stops early.
 
 **`mutate.py` is the one that proves the suite works.** A green run says nothing on its
 own: this disables one guard at a time and requires a test to go red for each. Every

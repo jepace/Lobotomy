@@ -423,7 +423,12 @@ def main() -> int:
             for _t, _text in originals.items():
                 _t.write_text(_text, encoding="utf-8")
             target.write_text(base.replace(find, replace), encoding="utf-8")
-            r = subprocess.run([sys.executable, str(RUNNER)],
+            # --failfast: the verdict below is the exit code and nothing else, so ONE red
+            # test is the whole answer and running the other five hundred buys nothing.
+            # Not a loosening — a CAUGHT mutation is exactly as caught, it is just found
+            # sooner. A MISSED one still pays for the full suite, because proving that
+            # nothing objected means running everything.
+            r = subprocess.run([sys.executable, str(RUNNER), "--failfast"],
                                capture_output=True, text=True, cwd=REPO)
             summary = next((l.strip() for l in reversed(r.stdout.splitlines())
                             if "failure(s)" in l), "")
