@@ -87,8 +87,11 @@ never shown twice. Write the body starting at its first `## ` section; if you do
 the H1, make it match `title:` exactly.
 
 **Every section is `## `.** `###` only for a genuine subsection inside one. A section
-written as `# Overview` is invisible to `read_section`, `update_section` and the page
-outline, all of which skip level 1 — so it can never be read or edited again.
+written as `# Overview` is **invisible to the page outline and to every section list** —
+they skip level 1 — so nobody planning an edit can see that it exists, including you on a
+later visit. (It remains readable and writable by name; the damage is that the page's own
+map denies it.) `heal_pages` demotes such a heading to `##` when it finds one, but write it
+correctly and nothing has to.
 
 **Every list needs a blank line above it.** Each required section below (Summary, Claims,
 Entities, etc.) typically opens with a paragraph and then a bulleted list — put a blank
@@ -262,6 +265,14 @@ Two different questions, two different tools. Confusing them wastes entire round
   whether a page exists and where. The answer is exact, covers the whole wiki, and
   includes aliases. **Do not use `search_wiki` for this**, and do not call
   `lookup_titles` once per name — batch them.
+
+  The reply also lists **each existing page's sections**. Read them: that is where you
+  decide which section your material belongs in, before you write it. **`## Overview` is a
+  summary of the whole page, not the default destination** — a page with a section about
+  the thing your source is about already has its answer, and putting it in Overview instead
+  buries it and leaves the right section stale. The section tools will tell you a page's
+  sections when they refuse a write, but by then you have already composed the text for the
+  wrong one.
 - **"Which pages mention X?"** → `search_wiki`. Full-text search cannot be answered by a
   title lookup, so this is what it is for.
 

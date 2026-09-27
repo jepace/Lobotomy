@@ -5010,6 +5010,39 @@ def _norm_title_key(name: str) -> str:
     return " ".join(parts)
 
 
+def _page_shape(rel: str, limit: int = 14) -> str:
+    """" — sections: A, B, C" for an existing page, or "" if it has none worth naming.
+
+    Told only that wiki/entities/gavin-newsom.md EXISTS, the agent composes Overview
+    content and calls update_section('Overview'). It learns the page has twenty sections
+    only from the read-before-write refusal — AFTER the material is written, when the
+    cheapest move is to resend what it already has. An observed ingest did that on all 58
+    of its pages: guess Overview, get refused, resend Overview.
+
+    The section list was already in that refusal (852e5cb) and it is not enough, because a
+    list that arrives after the decision cannot change the decision. This puts the page's
+    shape where the choice is actually made — while the agent is still deciding what to
+    write and where.
+
+    Names only, and deliberately no content: nothing here may credit read coverage, or the
+    guard that protects the page's existing text stops firing.
+    """
+    try:
+        text = (WIKI_DIR / rel).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    # No Sources filter here: _page_section_names already excludes it (and the page's own
+    # H1). A second copy of that rule was dead code — mutate.py reported it MISSED, which
+    # is what a redundant "guard" looks like — and two places deciding what counts as a
+    # section is exactly how they come to disagree.
+    names = [n for _lvl, n in _page_section_names(text, _fm_title(text))]
+    if not names:
+        return ""
+    shown = names[:limit]
+    more = f", +{len(names) - len(shown)} more" if len(names) > len(shown) else ""
+    return f" — sections: {', '.join(shown)}{more}"
+
+
 def _lookup_titles(args: dict) -> str:
     """Batch existence check: map each supplied name to its wiki page, if any.
 
@@ -5049,7 +5082,7 @@ def _lookup_titles(args: dict) -> str:
                 # lookup was wrong about which page this is.
                 note = (" (found by filename or by normalizing the name — the page's "
                         "title: is written differently. Update this page; do not make a second one)")
-            found.append(f"  - {n} → wiki/{rel}{note}")
+            found.append(f"  - {n} → wiki/{rel}{note}{_page_shape(rel)}")
             continue
         cands = [(t, r) for t, r in by_norm.get(_norm_title_key(n), [])
                  if t.lower() != n.lower()]
@@ -5071,7 +5104,10 @@ def _lookup_titles(args: dict) -> str:
     if found:
         lines += ["", f"UPDATE ({len(found)}) — these already have a page. Do NOT call "
                       f"create_file for any of them; read the page, then fold this source "
-                      f"in with update_section:"]
+                      f"in with update_section. **Each page's existing sections are listed "
+                      f"after it — put your material in the one it actually belongs to.** "
+                      f"Overview is a summary of the page, not the place everything goes; "
+                      f"a page with a section for this subject already has its answer:"]
         lines += found
     if missing:
         lines += ["", f"CREATE ({len(missing)}) — these have no page. Call create_file for "

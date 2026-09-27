@@ -1,0 +1,131 @@
+"""lookup_titles names each existing page's sections, so placement is decided in time.
+
+Observed across a 58-page ingest, once per page: update_section('Overview') -> refused for
+not having read it -> update_section('Overview') again with the same destination. Every
+page. The agent was told only that wiki/entities/gavin-newsom.md EXISTS, so it composed
+Overview content and went; it learned the page had twenty other sections from the refusal,
+which arrives AFTER the material is written and where the cheapest move is to resend what
+it already has.
+
+The section list was already in that refusal (852e5cb). It is not enough, and the reason is
+structural rather than a wording problem: a list that arrives after the decision cannot
+change the decision. So the page's shape moves to lookup_titles, which is where the agent is
+still deciding what to write and where.
+
+Two constraints on that:
+
+  * NAMES ONLY, never content. Anything here that credited read coverage would stop the
+    read-before-write guard firing, and that guard is what protects a page's existing text
+    from a blind rewrite. There is a test for exactly that.
+  * `## Sources` is excluded — it is auto-generated from frontmatter and is never a
+    destination for anything. That exclusion lives in `_page_section_names` and nowhere
+    else: a second copy here was dead code, and mutate.py said so by reporting it MISSED.
+    The behaviour is still asserted below; only the duplicate rule is gone.
+"""
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness import TempWikiTestCase
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+import agent
+
+
+class PageShapeTest(TempWikiTestCase):
+
+    def _newsom(self):
+        self.w.page("entities/gavin-newsom.md", title="Gavin Newsom", type="entity",
+                    body="# Gavin Newsom\n\n## Overview\n\nx\n\n## Political Career\n\ny\n\n"
+                         "## Presidential Ambitions\n\nz\n\n## Sources\n\n- a\n")
+
+    def test_the_sections_are_named_beside_the_page(self):
+        self._newsom()
+        out = agent._lookup_titles({"names": ["Gavin Newsom"]})
+        self.assertIn("sections: Overview, Political Career, Presidential Ambitions", out)
+
+    def test_the_sources_section_is_never_offered(self):
+        self._newsom()
+        self.assertNotIn("Sources", agent._lookup_titles({"names": ["Gavin Newsom"]})
+                         .split("CREATE")[0].split("sections:")[1])
+
+    def test_an_overview_only_page_says_so(self):
+        """Useful in its own right: it tells the agent Overview IS the only choice."""
+        self.w.page("entities/janice-hahn.md", title="Janice Hahn", type="entity",
+                    body="# Janice Hahn\n\n## Overview\n\nx\n")
+        out = agent._lookup_titles({"names": ["Janice Hahn"]})
+        self.assertIn("sections: Overview", out)
+
+    def test_a_page_with_no_sections_adds_nothing(self):
+        self.w.page("entities/bare.md", title="Bare", type="entity", body="# Bare\n\nx\n")
+        out = agent._lookup_titles({"names": ["Bare"]})
+        self.assertIn("wiki/entities/bare.md", out)
+        self.assertNotIn("sections:", out)
+
+    def test_a_missing_page_gets_no_section_list(self):
+        out = agent._lookup_titles({"names": ["Nobody At All"]})
+        self.assertIn("Nobody At All", out)
+        self.assertNotIn("sections:", out)
+
+    def test_a_long_section_list_is_capped_and_says_so(self):
+        names = [f"Section {i}" for i in range(20)]
+        body = "# Big\n\n" + "".join(f"## {n}\n\nx\n\n" for n in names)
+        self.w.page("entities/big.md", title="Big", type="entity", body=body)
+        out = agent._lookup_titles({"names": ["Big"]})
+        self.assertIn("+6 more", out)
+        self.assertIn("Section 0", out)
+
+    def test_the_instruction_names_the_mistake(self):
+        """Overview is a summary of the page, not the place everything goes."""
+        self._newsom()
+        out = agent._lookup_titles({"names": ["Gavin Newsom"]})
+        self.assertIn("belongs to", out)
+        self.assertIn("Overview is a summary of the page", out)
+
+
+class ItMustNotCreditReadCoverageTest(TempWikiTestCase):
+    """The load-bearing constraint. lookup_titles names sections; it does not show text, so
+    it cannot satisfy read-before-write. If it ever did, a blind rewrite would go straight
+    through and discard the page's existing content."""
+
+    def setUp(self):
+        super().setUp()
+        self.w.page("entities/x.md", title="X", type="entity",
+                    body="# X\n\n## Overview\n\nimportant existing text\n\n## Career\n\ny\n")
+
+    def test_update_section_is_still_refused_after_a_lookup(self):
+        agent._lookup_titles({"names": ["X"]})
+        r = agent._update_section({"path": "wiki/entities/x.md", "section": "Overview",
+                                   "content": "replacement"})
+        self.assertIn("had not read", r)
+        self.assertIn("important existing text", self.w.disk("entities/x.md"))
+
+    def test_update_file_is_still_refused_after_a_lookup(self):
+        agent._lookup_titles({"names": ["X"]})
+        r = agent._update_file("wiki/entities/x.md",
+                               '---\ntitle: "X"\ntype: entity\ntags: []\n'
+                               'updated: 2026-09-27\nsources: []\n---\n\n# X\n\ngutted\n')
+        self.assertIn("not read", r)
+        self.assertIn("important existing text", self.w.disk("entities/x.md"))
+
+    def test_no_page_content_leaks_into_the_reply(self):
+        out = agent._lookup_titles({"names": ["X"]})
+        self.assertNotIn("important existing text", out)
+
+
+class TheRefusalStillCarriesTheListTest(TempWikiTestCase):
+    """Belt and braces: the earlier fix stays. A page whose shape the agent did not look up
+    still gets told what else is there when the guard fires."""
+
+    def test_the_refusal_names_the_other_sections(self):
+        self.w.page("entities/x.md", title="X", type="entity",
+                    body="# X\n\n## Overview\n\nx\n\n## Sanctions and the Oil Sector\n\ny\n")
+        r = agent._update_section({"path": "wiki/entities/x.md", "section": "Overview",
+                                   "content": "new"})
+        self.assertIn("other sections", r)
+        self.assertIn("Sanctions and the Oil Sector", r)
+
+
+if __name__ == "__main__":
+    unittest.main()

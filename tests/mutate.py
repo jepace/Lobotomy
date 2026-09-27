@@ -399,6 +399,11 @@ MUTATIONS = [
     ('h1-demote: heal_pages applies it',
      '                    if _demoted:',
      '                    if False:'),
+    # A section list that arrives in the refusal arrives after the decision. The
+    # page's shape has to be where the agent is still choosing what to write.
+    ("lookup: names each page's sections",
+     '            found.append(f"  - {n} → wiki/{rel}{note}{_page_shape(rel)}")',
+     '            found.append(f"  - {n} → wiki/{rel}{note}")'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',
