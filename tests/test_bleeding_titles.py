@@ -150,8 +150,8 @@ class ScanTest(TempWikiTestCase):
         self.assertEqual({p: p.read_text() for p in agent.wiki_pages()}, before)
 
     def test_the_report_prints_a_rename_command(self):
-        self._subject("power", "Power", typ="concept")
-        self._prose("power power power power power power")
+        self._subject("succession", "Succession")      # entity: a real bleed
+        self._prose("succession succession succession succession succession succession")
         buf, argv = io.StringIO(), sys.argv
         sys.argv = ["bleeding_titles.py"]
         try:
@@ -161,7 +161,7 @@ class ScanTest(TempWikiTestCase):
             sys.argv = argv
         out = buf.getvalue()
         self.assertIn("rename_page.py", out)
-        self.assertIn("concepts/power.md", out)
+        self.assertIn("entities/succession.md", out)
         # And the caveat, because the rename alone wins no links back.
         self.assertIn("no_autolink", out)
 
@@ -176,7 +176,72 @@ class ScanTest(TempWikiTestCase):
         finally:
             sys.argv = argv
         self.assertEqual(rc, 0)
-        self.assertIn("No bleeding titles found", buf.getvalue())
+        self.assertIn("No entity page's name collides", buf.getvalue())
+
+
+class PageTypeTest(TempWikiTestCase):
+    """The column the first version of this report did not have, and the reason it was
+    useless on real data: it flagged 383 titles and told you to rename them, when most were
+    concept pages doing exactly what a concept page is for.
+
+    A `concept` page is MEANT to catch the common noun — "inflation" in prose is about
+    inflation, and that link is the whole point of a concept wiki. An `entity` page is a
+    proper noun, so a lowercase use of its name is a different word entirely.
+    """
+
+    def _prose(self, body):
+        self.w.page("entities/a.md", title="A", type="entity",
+                    body=f"# A\n\n## Overview\n\n{body}\n")
+        agent._title_map_cache = None
+
+    def _report(self, *argv):
+        buf, old = io.StringIO(), sys.argv
+        sys.argv = ["bleeding_titles.py", *argv]
+        try:
+            with contextlib.redirect_stdout(buf):
+                bt.main()
+        finally:
+            sys.argv = old
+        return buf.getvalue()
+
+    def setUp(self):
+        super().setUp()
+        self.w.page("concepts/inflation.md", title="Inflation", type="concept",
+                    body="# Inflation\n\n## Definition\n\nX.\n")
+        self.w.page("entities/succession.md", title="Succession", type="entity",
+                    body="# Succession\n\n## Overview\n\nA series.\n")
+        self._prose("Rising inflation; inflation again; more inflation; inflation; inflation. "
+                    "The succession of leaders; succession unclear; succession again; "
+                    "his succession; succession.")
+
+    def test_the_type_is_reported(self):
+        rows = {r["key"]: r for r in bt.scan()}
+        self.assertEqual(rows["inflation"]["type"], "concept")
+        self.assertEqual(rows["succession"]["type"], "entity")
+
+    def test_an_entity_collision_is_the_headline(self):
+        out = self._report("--min-lower", "3")
+        head = out.split("CONCEPT PAGE")[0]
+        self.assertIn("entities/succession.md", head)
+        self.assertIn("PROPER NOUN", head)
+
+    def test_a_concept_page_is_not_in_the_bug_list(self):
+        out = self._report("--min-lower", "3")
+        self.assertNotIn("concepts/inflation.md", out)
+        self.assertIn("--concepts to review them", out)
+
+    def test_concepts_are_shown_on_request_and_labelled_review_only(self):
+        out = self._report("--min-lower", "3", "--concepts")
+        self.assertIn("concepts/inflation.md", out)
+        self.assertIn("NOT A BUG LIST", out)
+        self.assertIn("Do not rename these", out)
+
+    def test_no_rename_command_is_offered_for_a_concept(self):
+        """The failure mode of the first version: it would have had you rename inflation."""
+        out = self._report("--min-lower", "3", "--concepts")
+        cmds = out.split("To disambiguate")[1] if "To disambiguate" in out else ""
+        self.assertNotIn("inflation", cmds)
+        self.assertIn("succession", cmds)
 
 
 class AliasTest(TempWikiTestCase):

@@ -191,6 +191,15 @@ python3 tools/bleeding_titles.py --min-lower 25  # raise the floor
 python3 tools/bleeding_titles.py --words 2       # also two-word titles (slower)
 ```
 
+**Read the page type first.** A `concept` page is *supposed* to catch the common
+noun — "inflation" in prose is about inflation, and that link is what a concept wiki
+is for — so concepts are listed only under `--concepts`, for review, never as a bug
+list. An `entity` is a proper noun, so a lowercase use of its name is a different
+word: Succession the series against succession the process, Visa the company against
+a visa in a passport, Block, Notion, Coach, Vanguard, Girls, Survivor. Those are the
+real bleeds and they are the default report. On a real wiki this was the difference
+between 383 titles and about twenty.
+
 No dictionary, and none is needed — the wiki reports on itself. A proper noun is written
 capitalised wherever it appears and a common noun lowercase, so counting both per title says
 which is which. Two numbers, two different decisions: **linked** is wrong links on disk

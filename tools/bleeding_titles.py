@@ -12,6 +12,17 @@ No dictionary is needed to find these, and none is used: the wiki says which of 
 titles are common words. A proper noun is written capitalised wherever it appears; a common
 noun is written lowercase. So count both, per title, across the whole wiki.
 
+**Read the page TYPE first, because it decides whether a lowercase use is wrong at all.**
+
+  * A `concept` page is *supposed* to catch the common noun. "inflation" in prose is about
+    inflation, and `[inflation](../concepts/inflation.md)` is the link a concept wiki
+    exists to make. A high lowercase share on a concept page is normal, and renaming it
+    would be a mistake. They are reported under --concepts, for review, not for action.
+  * An `entity` page is a proper noun, so a lowercase use of its name is a DIFFERENT WORD.
+    "Succession" the series against succession the process; "Visa" the company against a
+    visa in a passport; "Block", "Notion", "Coach", "Vanguard", "Girls", "Survivor". These
+    are the real bleeds and they are what the default report shows.
+
 Two numbers matter and they are different questions:
 
   * ALREADY LINKED, lowercase display text — links on disk right now that are almost
@@ -54,6 +65,21 @@ _WORD = re.compile(r"[A-Za-z0-9]+(?:['’][A-Za-z]+)?")
 
 def _slug_of(rel: str) -> str:
     return Path(rel).name
+
+
+def _page_type(rel: str) -> str:
+    """entity / concept / source / synthesis, from the page's own frontmatter.
+
+    The single most important column, and it was missing from the first version of this
+    report: without it the tool flagged 383 titles and told you to rename them, when most
+    were concept pages doing exactly what a concept page is for.
+    """
+    try:
+        text = (agent.WIKI_DIR / rel).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "?"
+    m = re.search(r"^type:[ \t]*(\S+)", text, re.MULTILINE)
+    return m.group(1).strip().lower() if m else "?"
 
 
 def _candidates(max_words: int):
@@ -126,6 +152,7 @@ def scan(max_words: int = 1):
         rows.append({
             "key": key,
             "titles": cands[key],
+            "type": _page_type(cands[key][0][1]),
             "lower": lower, "cap": cap,
             "linked_lower": st["linked_lower"], "bare_lower": st["lower"],
             "share": lower / (lower + cap) if (lower + cap) else 1.0,
@@ -137,8 +164,10 @@ def scan(max_words: int = 1):
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--concepts", action="store_true",
+                    help="also list concept pages (expected behaviour, review only)")
     ap.add_argument("--all", action="store_true",
-                    help="every title with any lowercase use, not just the worst")
+                    help="every title with any lowercase use, at any ratio")
     ap.add_argument("--min-lower", type=int, default=5,
                     help="ignore titles with fewer lowercase uses than this (default 5)")
     ap.add_argument("--words", type=int, default=1,
@@ -146,40 +175,60 @@ def main() -> int:
     args = ap.parse_args()
 
     rows = scan(max_words=max(1, args.words))
-    shown = [r for r in rows
-             if args.all or (r["lower"] >= args.min_lower and r["share"] >= 0.5)]
+    keep = [r for r in rows
+            if args.all or (r["lower"] >= args.min_lower and r["share"] >= 0.5)]
+    bleeds = [r for r in keep if r["type"] not in ("concept", "?")]
+    expected = [r for r in keep if r["type"] == "concept"]
 
-    if not shown:
-        print("No bleeding titles found.")
-        return 0
+    def table(rs):
+        print(f"{'title':<24} {'type':<8} {'linked':>7} {'bare':>7} {'CAPS':>6} "
+              f"{'lower':>6}  page")
+        print("-" * 92)
+        for r in rs:
+            title, rel = r["titles"][0]
+            print(f"{title[:23]:<24} {r['type'][:7]:<8} {r['linked_lower']:>7} "
+                  f"{r['bare_lower']:>7} {r['cap']:>6}  {r['share']*100:>5.0f}%  {rel}")
 
-    print(f"{len(shown)} title(s) used mostly as ordinary words. "
-          f"'linked' are links on disk now; 'bare' is what the next relink would link.\n")
-    print(f"{'title':<24} {'linked':>7} {'bare':>7} {'CAPS':>7}  {'lower':>6}  page")
-    print("-" * 88)
-    for r in shown:
-        title, rel = r["titles"][0]
-        print(f"{title[:23]:<24} {r['linked_lower']:>7} {r['bare_lower']:>7} "
-              f"{r['cap']:>7}  {r['share']*100:>5.0f}%  {rel}")
-        for extra_t, extra_rel in r["titles"][1:]:
-            print(f"{'  also ' + extra_t[:15]:<24} {'':>7} {'':>7} {'':>7}  {'':>6}  {extra_rel}")
+    if bleeds:
+        print(f"{len(bleeds)} PROPER NOUN(S) COLLIDING WITH AN ORDINARY WORD.\n"
+              f"A lowercase use of an entity's name is a different word, so these links are "
+              f"wrong.\n'linked' is wrong links on disk now; 'bare' is what the next relink "
+              f"would add.\n")
+        table(bleeds)
+    else:
+        print("No entity page's name collides with an ordinary word.")
 
-    print("\nTo disambiguate one, Wikipedia-style — the parenthetical never appears in\n"
-          "prose, so the bleeding stops immediately and the wrong links are stripped:\n")
-    for r in shown[:5]:
-        title, rel = r["titles"][0]
-        stem = Path(rel).stem
-        print(f"  python3 tools/rename_page.py wiki/{rel} wiki/{Path(rel).parent}/"
-              f"{stem}-disambiguated.md \\\n"
-              f'      --title "{title} (…)"')
-    print("\n  python3 tools/relink.py        # once, after the renames")
-    print("\nNote that renaming stops the bleeding but wins no links back: prose says\n"
-          f'"{shown[0]["titles"][0][0]}", never "{shown[0]["titles"][0][0]} (…)". An '
-          'aliases: entry would restore\nlinking AND the bleeding, because matching is '
-          "case-insensitive — so the alias\ntakes the lowercase occurrence first and the "
-          "once-per-section rule then leaves\nthe real mention with nothing. Until alias "
-          "matching can be case-sensitive,\n`no_autolink: true` is the honest setting for "
-          "a page like this.")
+    if expected:
+        if args.concepts:
+            print(f"\n\n{len(expected)} CONCEPT PAGE(S) — REVIEW ONLY, NOT A BUG LIST.\n"
+                  f"A concept page is meant to catch the common noun: 'inflation' in prose "
+                  f"IS about\ninflation, and that link is what a concept wiki is for. Do not "
+                  f"rename these because\nthey appear here. Worth a look only where the word "
+                  f"is too generic to be a subject\n(a modal verb, a preposition, 'spread', "
+                  f"'floor') — that is a page that should not\nexist, not a page that needs "
+                  f"disambiguating.\n")
+            table(expected)
+        else:
+            print(f"\n{len(expected)} concept page(s) also use their name as a common noun. "
+                  f"That is what a\nconcept page is FOR, so they are not listed — pass "
+                  f"--concepts to review them anyway.")
+
+    if bleeds:
+        print("\n\nTo disambiguate one, Wikipedia-style. The parenthetical never appears in "
+              "prose,\nso the bleeding stops at once and rename_page.py strips the wrong "
+              "links back to\nplain text:\n")
+        for r in bleeds[:5]:
+            title, rel = r["titles"][0]
+            stem, parent = Path(rel).stem, Path(rel).parent
+            print(f"  python3 tools/rename_page.py wiki/{rel} wiki/{parent}/{stem}-x.md \\\n"
+                  f'      --title "{title} (…)"        # (…) = what it actually is')
+        print("\n  python3 tools/relink.py        # once, after the renames")
+        print("\nThe rename stops the bleeding but wins no links back: prose says the bare\n"
+              "name, never the parenthetical. An aliases: entry would restore linking AND "
+              "the\nbleeding, because matching is case-insensitive — the alias takes the "
+              "lowercase\noccurrence first, and the once-per-section rule then leaves the "
+              "real mention\nwith nothing. So pair the rename with `no_autolink: true` "
+              "until alias matching\ncan be case-sensitive.")
     return 0
 
 

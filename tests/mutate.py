@@ -418,6 +418,10 @@ MUTATIONS = [
      '        bare = _MD_LINK_RE.sub(" ", body)',
      '        bare = body',
      'tools/bleeding_titles.py'),
+    ('bleeding: a concept page is not a bug report',
+     '    bleeds = [r for r in keep if r["type"] not in ("concept", "?")]',
+     '    bleeds = keep',
+     'tools/bleeding_titles.py'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',
