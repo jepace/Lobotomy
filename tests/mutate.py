@@ -404,6 +404,20 @@ MUTATIONS = [
     ("lookup: names each page's sections",
      '            found.append(f"  - {n} → wiki/{rel}{note}{_page_shape(rel)}")',
      '            found.append(f"  - {n} → wiki/{rel}{note}")'),
+    # The diagnostic that finds common-word titles. Its value is entirely in not
+    # crying wolf — a report that flags every page is one nobody reads.
+    ('bleeding: a page does not report its own title',
+     '                    if any(r == rel for _t, r in cands[key]):',
+     '                    if False:',
+     'tools/bleeding_titles.py'),
+    ('bleeding: headings are not linkable, so not counted',
+     '            if re.match(r"^\\s*#{1,6}\\s", line):',
+     '            if False:',
+     'tools/bleeding_titles.py'),
+    ('bleeding: an existing link is not counted twice',
+     '        bare = _MD_LINK_RE.sub(" ", body)',
+     '        bare = body',
+     'tools/bleeding_titles.py'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',

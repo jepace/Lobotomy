@@ -178,6 +178,34 @@ otherwise reverting would discard the ingest that came after, so the page is lis
 state before the pass started. `index.md` and `log.md` keep no history and cannot be
 restored from here; it says so. The revert is itself recorded, so it can be undone too.
 
+### `bleeding_titles.py` — which titles are common words
+A page titled "Lost" links the word *lost* in "the hikers were lost for three days".
+"Agency", "Power" and "Mission" do the same. The autolinker matches case-insensitively, and
+the once-per-section rule makes it worse than a stray link: the wrong mention spends the
+section's one link, so the genuine mention gets nothing.
+
+```sh
+python3 tools/bleeding_titles.py                 # the worst offenders
+python3 tools/bleeding_titles.py --all           # every title with any lowercase use
+python3 tools/bleeding_titles.py --min-lower 25  # raise the floor
+python3 tools/bleeding_titles.py --words 2       # also two-word titles (slower)
+```
+
+No dictionary, and none is needed — the wiki reports on itself. A proper noun is written
+capitalised wherever it appears and a common noun lowercase, so counting both per title says
+which is which. Two numbers, two different decisions: **linked** is wrong links on disk
+right now, **bare** is what the next relink sweep will link. Capitalised occurrences are the
+denominator, and they over-count (a sentence can *start* "Lost in the woods…"), which makes
+the report conservative rather than alarmist.
+
+Excluded: headings, because the autolinker skips them; a page's own title on its own page;
+and `index.md`/`log.md`. A link whose display text matches but which points at some other
+page is not counted against this one. Aliases are checked too — they bleed identically, and
+an alias is exactly what someone adds after a disambiguating rename leaves a page unlinked.
+
+Read-only, no LLM, no API cost. It prints the `rename_page.py` command for each page it
+flags.
+
 ### `what_was_lost.py` — did a write remove material, or only shorten prose?
 The history row says a write cut 2,461 words and added 479. It cannot say which of those
 two things happened, and that is the only question you have: collapsing duplication you

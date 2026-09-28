@@ -263,6 +263,31 @@ since rewriting an author's punctuation is not the linker's job.
 untouched. That is the cost of unlinking repeats, and it is paid on every write to a large
 page; the probe above is what keeps it from being 3×.
 
+**A title that is also a common word bleeds, and the once-per-section rule makes that
+worse than a stray link.** A page titled "Lost" links *lost* in "the hikers were lost for
+three days"; "Agency", "Power" and "Mission" do the same. Matching is case-insensitive
+(`re.IGNORECASE` on the combined regex), so there is no way for the linker to tell the
+proper noun from the common one. Measured, after renaming the page to "Lost (TV series)"
+and adding `aliases: ["Lost"]` to win the links back:
+
+    The hikers were [lost](../entities/lost-tv-series.md) for three days,
+    and the finale of Lost aired in 2010.
+
+The alias took the ADJECTIVE, and that **spent the section's one mention**, so the genuine
+subject went unlinked. An alias is strictly worse than no alias here. Until matching can be
+case-sensitive for such a name, the honest settings are a disambiguated title (the
+parenthetical never appears in prose, so the bleeding stops and `rename_page.py` strips the
+wrong links back to plain text) plus `no_autolink: true`, which declares the intent and
+keeps the page in `lookup_titles` so an ingest cannot create a duplicate later.
+
+`tools/bleeding_titles.py` finds them, and needs no dictionary because **the wiki reports on
+itself**: a proper noun is written capitalised wherever it appears and a common noun
+lowercase, so counting both per title says which is which. It separates links already on
+disk (damage done) from bare lowercase occurrences (what the next relink will link), and the
+capitalised count over-counts sentence-initial use, which makes it conservative. Its whole
+value is in not crying wolf — "Nvidia" and "Gavin Newsom" must never appear in the report —
+so that is what its mutations protect.
+
 `_build_title_map()` must be **deterministic**. It was not once (unsorted glob, no sort
 tiebreak) and the resulting map order changed the output, so `relink` never converged: two
 consecutive whole-wiki runs both reported hundreds of changes.
