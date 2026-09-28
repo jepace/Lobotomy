@@ -69,6 +69,27 @@ exists to notice items that have just been wikified, so a cache would break the 
 serves. `tests/test_inbox_listing.py` counts reads rather than timing them, because the
 complexity is what regressed and wall-clock is flaky on someone else's disk.
 
+**A reading-list row is identified by its filename, never by its position.** Clicking
+Wikify on the second item started wikification on the first. Rows were addressed as
+`item-<n>`/`wikify-<n>`/`progress-<n>`, numbered by Jinja's `loop.index` at render time —
+and the poll above **prepends** newly-arrived rows, numbering them against the *fresh* list,
+so a new arrival and the original first row both became `wikify-1`. `getElementById` returns
+the first in document order, which is the prepended one, so what you see as item #2 drove
+item #1. Mostly that was confusing rather than harmful, because every server call already
+sends the filename: the right article was ingested, archived and deleted throughout.
+**`saveEdit` was the exception and it lost data** — it read `edit-body-<n>`, resolved to
+another row's textarea, and POSTed that content under the right filename, overwriting one
+`raw/` file with a different row's box. `rowFor(name)`/`partFor(name, sel)` scope every
+lookup to the row carrying that `data-name`, and the positional ids are gone so two of each
+cannot coexist again; `dataset.name` is compared directly rather than through a CSS
+attribute selector, because a filename can carry quotes and brackets that would need
+escaping. `tests/test_inbox_row_identity.py` has both halves — a structural assertion that
+no lookup is positional, and Playwright driving the real helpers (lifted out of the template
+by regex, so they cannot drift from what ships) against a document holding the duplicate-row
+condition. It launches whatever chromium is on disk by `executable_path`, since the pinned
+playwright build and the installed browser build drift apart and the default launch then
+tells you to download one.
+
 **`tools/wiki.py`** — CLI wrapper around the same agent tools. An interactive REPL or one-shot runner; no Flask dependency.
 
 **`tools/config.py`** — reads `config.json`. Use `cfg_get(section, key, default)` throughout. Config is never hardcoded.
