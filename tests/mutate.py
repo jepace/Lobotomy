@@ -422,6 +422,15 @@ MUTATIONS = [
      '    bleeds = [r for r in keep if r["type"] not in ("concept", "?")]',
      '    bleeds = keep',
      'tools/bleeding_titles.py'),
+    # rename_page's messages, which are the only guidance its callers get.
+    ('rename: a bad slug is refused with the corrected one',
+     '    _fix = re.sub(r"[^a-z0-9]+", "-", dst.stem.lower()).strip("-")',
+     '    _fix = ""',
+     'tools/rename_page.py'),
+    ('rename: says when the title is left unchanged',
+     'if not NEW_TITLE and not DRY:',
+     'if False:',
+     'tools/rename_page.py'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',

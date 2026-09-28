@@ -97,6 +97,53 @@ class RenamePageCliTest(unittest.TestCase):
         self.assertIn("A rival of United.", body, body)
         self.assertNotIn("](united.md)", body)
 
+
+    # -- refusals and warnings must name a move that works (principle 4) ----------
+
+    def _raw(self, dest, *extra):
+        return subprocess.run(
+            [sys.executable, str(self.root / "tools" / "rename_page.py"),
+             str(self.w / "entities" / "united.md"), str(self.w / "entities" / dest),
+             *extra],
+            capture_output=True, text=True)
+
+    def test_an_invalid_slug_is_refused_with_the_corrected_one(self):
+        """Observed: `wiki/concepts/will_and_testament.md` was refused with nothing but
+        "not a valid slug". Underscores are the obvious thing to try when the convention is
+        not in front of you, and the correction is mechanical, so there is no reason to make
+        the caller guess it."""
+        r = self._raw("united_airlines.md", "--title", "United Airlines")
+        self.assertNotEqual(r.returncode, 0)
+        out = r.stdout + r.stderr
+        self.assertIn("not a valid slug", out)
+        self.assertIn("lowercase-hyphenated", out)
+        self.assertIn("united-airlines.md", out, "the corrected slug is not offered")
+
+    def test_the_suggested_command_actually_works(self):
+        """The only version of this assertion that proves anything: follow the refusal's
+        own instructions and require that they succeed."""
+        out = self._raw("united_airlines.md", "--title", "United Airlines")
+        line = next(l.strip() for l in (out.stdout + out.stderr).splitlines()
+                    if "rename_page.py" in l and "--title" in l)
+        parts = line.split()
+        dest = parts[3]
+        self.assertTrue(dest.endswith("united-airlines.md"), dest)
+        r = self._raw(Path(dest).name, "--title", "United Airlines")
+        self.assertEqual(r.returncode, 0, r.stderr or r.stdout)
+
+    def test_renaming_without_a_title_says_the_title_is_unchanged(self):
+        """The filename is the part that looks like the name, but the autolinker matches
+        title: — so renaming the file alone changes nothing about what gets linked. Measured:
+        after renaming concepts/will.md and relinking, the modal verb "will" was linked
+        again, merely to the new path."""
+        out = self._raw("united-airlines.md").stdout
+        self.assertIn("title: is unchanged", out)
+        self.assertIn("matches the TITLE", out)
+        self.assertIn("--title", out)
+
+    def test_no_such_note_when_a_title_was_given(self):
+        self.assertNotIn("title: is unchanged", self._rename())
+
     def test_a_dry_run_writes_nothing(self):
         before = {p: p.read_bytes() for p in self.w.rglob("*.md")}
         out = self._rename("--dry-run")
