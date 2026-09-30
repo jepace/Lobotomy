@@ -2461,6 +2461,54 @@ def _update_section(args: dict) -> str:
         #
         # Names only, no sizes or previews — the body is already in this reply, and the
         # point is to show that somewhere better might exist, not to re-serve the page.
+        # If the page is small enough that read_file would have handed over the WHOLE
+        # thing, hand over the whole thing. The refusal was stingier than the tool it is
+        # standing in for: same session, same page, one answer from read_file and a
+        # narrower one from here.
+        #
+        # This adds no context the agent could not already have. A diligent model calls
+        # read_file, receives the entire page, and only then calls update_section — the
+        # same bytes, plus a round. Handing the page back makes the correct path free
+        # rather than making the guess cheap.
+        #
+        # And it is what stops the SAME page being refused once per section. An observed
+        # 58-page ingest paid one refusal per page — guess Overview, be refused, resend
+        # Overview — and a page needing three sections paid three. Full coverage is
+        # credited here, so every later write to this page goes straight through, and
+        # update_file becomes legitimately reachable: the agent really has seen all of it.
+        #
+        # The threshold is _WIKI_READ_LIMIT and not a new constant, so there is one rule
+        # rather than two that can disagree: over the limit read_file gives an outline and
+        # read_section gives one section, and this refusal matches that.
+        if _full_len <= _WIKI_READ_LIMIT:
+            _whole = _strip_system_fm_fields(content)
+            # Drop the auto-generated ## Sources section. It is rendered from the
+            # sources: frontmatter that is in this same payload, LOBOTOMY.md forbids
+            # writing it by hand, and on a small page it can be half the bytes. Coverage
+            # is still credited in full: _inject_sources_section rewrites that section on
+            # every write, so nothing the agent has not seen can be lost by it.
+            _whole = re.split(r"^##[ \t]+Sources[ \t]*$", _whole, maxsplit=1,
+                              flags=re.MULTILINE)[0].rstrip() + "\n"
+            _cov = _ctx()._session_read_coverage
+            _cov[wiki_rel] = max(_cov.get(wiki_rel, 0), _full_len)
+            _ctx()._session_read_pages.add(wiki_rel)
+            _ctx()._session_stale_pages.discard(wiki_rel)
+            _ctx()._session_read_sections.update(
+                (wiki_rel, n.lower())
+                for _lvl, n in _page_section_names(body, _fm_title(frontmatter)))
+            log.info("update_section: %s '%s' unread — page is %d chars, handing back the "
+                     "whole page and crediting full read coverage", path, section, _full_len)
+            return (
+                f"Error: update_section refused — you had not read '{section}' in {path} "
+                f"this session, so your rewrite would discard what is there.\n\n"
+                f"The WHOLE PAGE is below and is now marked as read — every section of it, "
+                f"not just '{section}'. Put your material in the section it actually "
+                f"belongs to, which may not be the one you guessed, then call "
+                f"update_section again — do NOT call read_file or read_section first. "
+                f"Further writes to this page will not be refused.\n\n"
+                f'<file path="{path}">\n{_whole}</file>'
+            )
+
         _others = [n for _lvl, n in _page_section_names(body, _fm_title(frontmatter))
                    if _norm_heading(n) != _norm_heading(section)]
         _elsewhere = (

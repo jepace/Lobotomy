@@ -464,6 +464,31 @@ filename. The suite touched neither of serve's two tag readers, so the same mist
 the `/wiki/tags` path undetected. Add the name to the import list, and when a helper is
 shared across the two modules, test that `serve.x is agent.x`.
 
+**A short page is handed back whole; a long one is handed back a section.** The
+unread-section refusal used to return the guessed section plus the other sections' NAMES at
+any page size, which made it stingier than the tool it stands in for: under
+`_WIKI_READ_LIMIT` a plain `read_file` returns the entire page, so one session got two
+different answers about how much to show. It now returns the whole page below that limit —
+`## Sources` stripped, since it is rendered from the `sources:` frontmatter in the same
+payload — and **credits full read coverage**.
+
+Two reasons, and the second is the expensive one. It adds no context the agent could not
+already have: the diligent path is `read_file` then `update_section`, which costs the same
+bytes plus a round, so this makes the correct path free rather than the guess cheap. And
+crediting coverage is what stops the SAME page being refused once per section — an observed
+58-page ingest paid one refusal per page, and a page needing three sections paid three.
+`update_file` becomes legitimately reachable on that page too, which is a real loosening of
+a read-before-write guard, justified because the agent has genuinely seen all of it.
+
+The threshold is `_WIKI_READ_LIMIT` rather than a new constant, so there is one rule instead
+of two that can drift. **This superseded an explicit earlier decision** — a test named
+`test_the_section_body_is_handed_back_not_the_whole_page` asserted the opposite — so the
+replacement says so where that test used to be. Watch the branch split when changing either
+path: `tests/test_handback_refusals.py` uses a short fixture and therefore exercises only
+the whole-page branch, and the long-page branch's "do NOT re-read" clause lost its coverage
+that way; `mutate.py` reported it MISSED, and `tests/test_unread_section_handback.py` now
+covers both.
+
 ### Reading a large page
 
 `_read_file` on a wiki page over `_WIKI_READ_LIMIT` (20,000 chars) returns an **outline** —

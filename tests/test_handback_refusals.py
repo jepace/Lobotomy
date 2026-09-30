@@ -115,7 +115,7 @@ class HandbackRefusalTest(TempWikiTestCase):
         # is already holding — observed on update_section, which was the one missing it.
         for name, fn in self._all().items():
             with self.subTest(name):
-                self.assertRegex(fn(), r"do NOT call read_(file|section) first", name)
+                self.assertRegex(fn(), r"do NOT call read_\w+( or read_\w+)? first", name)
 
     def test_each_one_delimits_what_it_hands_over(self):
         # A bare body blends into the prose of the refusal; the model cannot see where the
@@ -136,11 +136,18 @@ class HandbackRefusalTest(TempWikiTestCase):
         self.assertFalse(second.startswith("Error:"), second)
         self.assertIn("GLP-1", self.w.disk("entities/hms-a.md"))
 
-    def test_the_section_body_is_handed_back_not_the_whole_page(self):
+    def test_a_short_page_is_handed_back_whole(self):
+        """This test used to assert the opposite — "not the whole page" — and that was the
+        deliberate decision at the time. It is superseded: under _WIKI_READ_LIMIT a plain
+        read_file returns the entire page, so handing back only the guessed section made
+        the refusal stingier than the tool it stands in for, and cost one refusal per
+        section of the same page. See tests/test_unread_section_handback.py.
+
+        Scoping still applies above the limit, and that is asserted there."""
         r = self._update_section_unread()
         self.assertIn("## Overview", r)
-        self.assertNotIn("Founded in 1782", r,
-                         "update_section handed back a section it was not asked about")
+        self.assertIn("Founded in 1782", r,
+                      "a short page should come back whole, other sections included")
 
 
 if __name__ == "__main__":

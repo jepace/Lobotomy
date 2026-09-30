@@ -63,23 +63,22 @@ class UpdateSectionSeesTheWholePageTest(TempWikiTestCase):
 
     def test_it_still_hands_back_the_section_body(self):
         # The list is an addition, not a replacement — the whole point of the refusal is
-        # that the retry needs no extra read.
+        # that the retry needs no extra read. On a page this size the handback is now the
+        # WHOLE page, so the guessed section's body arrives inside it.
         r = self._guess_overview()
         self.assertIn("A South American state.", r)
-        self.assertIn("do NOT call read_section first", r)
+        self.assertRegex(r, r"do NOT call read_\w+( or read_\w+)? first")
 
     def test_the_named_alternative_is_a_call_that_works(self):
-        # Principle 4: follow the refusal's advice and the edit goes through.
+        # Principle 4: follow the refusal's advice and the edit goes through. It now goes
+        # through on the FIRST try — the handback covered the whole page, so the better
+        # destination is no longer refused for being unread. That was one refusal per
+        # section before.
         self._guess_overview()
         r = agent.TOOL_FNS["update_section"]({
             "path": "wiki/entities/venezuela.md", "section": "Sanctions and the Oil Sector",
             "content": "US sanctions since 2019, tightened again in 2026.\n"})
-        # That section has not been read either, so it refuses once and hands it over.
-        self.assertIn("US sanctions since 2019", r)
-        r2 = agent.TOOL_FNS["update_section"]({
-            "path": "wiki/entities/venezuela.md", "section": "Sanctions and the Oil Sector",
-            "content": "US sanctions since 2019, tightened again in 2026.\n"})
-        self.assertFalse(r2.startswith("Error:"), r2)
+        self.assertFalse(r.startswith("Error:"), r)
         self.assertIn("tightened again in 2026", self.w.disk("entities/venezuela.md"))
 
     def test_a_page_with_only_that_section_says_nothing_extra(self):

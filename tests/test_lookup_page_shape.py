@@ -118,10 +118,21 @@ class TheRefusalStillCarriesTheListTest(TempWikiTestCase):
     """Belt and braces: the earlier fix stays. A page whose shape the agent did not look up
     still gets told what else is there when the guard fires."""
 
-    def test_the_refusal_names_the_other_sections(self):
+    def test_the_refusal_still_reveals_the_other_sections(self):
+        """However it does it. On a short page the whole page comes back, so the other
+        sections arrive with their CONTENT; over _WIKI_READ_LIMIT they arrive as names.
+        Either way the agent cannot come away believing Overview is all there is."""
         self.w.page("entities/x.md", title="X", type="entity",
                     body="# X\n\n## Overview\n\nx\n\n## Sanctions and the Oil Sector\n\ny\n")
         r = agent._update_section({"path": "wiki/entities/x.md", "section": "Overview",
+                                   "content": "new"})
+        self.assertIn("Sanctions and the Oil Sector", r)
+
+    def test_a_long_page_still_gets_the_names_list(self):
+        big = "# B\n\n## Overview\n\n" + ("word " * 4000) + \
+              "\n\n## Sanctions and the Oil Sector\n\n" + ("word " * 2000) + "\n"
+        self.w.page("entities/big.md", title="B", type="entity", body=big)
+        r = agent._update_section({"path": "wiki/entities/big.md", "section": "Overview",
                                    "content": "new"})
         self.assertIn("other sections", r)
         self.assertIn("Sanctions and the Oil Sector", r)

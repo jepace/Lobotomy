@@ -431,6 +431,14 @@ MUTATIONS = [
      'if not NEW_TITLE and not DRY:',
      'if False:',
      'tools/rename_page.py'),
+    # A short page is handed back whole, which also stops the same page being
+    # refused once per section.
+    ('handback: a short page comes back whole',
+     '        if _full_len <= _WIKI_READ_LIMIT:',
+     '        if False:'),
+    ('handback: full read coverage is credited',
+     '            _cov[wiki_rel] = max(_cov.get(wiki_rel, 0), _full_len)',
+     '            pass'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',
