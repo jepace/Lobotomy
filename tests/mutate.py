@@ -242,10 +242,8 @@ MUTATIONS = [
     ("repeat links: section resets the first mention",
      # Without the reset a title links once per PAGE. On a 136KB page that leaves
      # everything below the first section with no navigation at all.
-     '            if is_heading[i]:\n'
-     '                _seen[0] = False                # a new section gets its own first mention',
-     '            if is_heading[i]:\n'
-     '                pass'),
+     '        _sec_of.append(_sec_n)',
+     '        _sec_of.append(0)'),
     ("repeat links: lookup rows always link",
      # A source page's ## Entities and a Timeline are lookup tables read out of order.
      '    is_listish = [_is_lookup_row(ln) for ln in lines]',
@@ -253,10 +251,8 @@ MUTATIONS = [
     ("repeat links: existing repeats are unlinked",
      # Without this the rule applies only to newly written text, and the ~9,000 pages
      # written under the old rule keep every repeat forever.
-     '                if _seen[0]:\n'
-     '                    return inner.group(1)       # a repeat in prose — unlink it',
-     '                if False:\n'
-     '                    return inner.group(1)'),
+     '                if _seen_key[0] in _linked_here:',
+     '                if False:'),
     ("repeat links: only unlink what the autolinker wrote",
      # Drop the display-text check and a hand-written alias link,
      # "[the disease](../concepts/measles.md)", gets stripped to plain text.
@@ -460,6 +456,11 @@ MUTATIONS = [
     ('sort: heal_pages orders lists already on disk',
      '                _sorted = sort_lookup_lists(new)',
      '                _sorted = new'),
+    # The once-per-section budget belongs to the PAGE, not the name. Key it by
+    # title and every alias buys the same page another link in the same section.
+    ('autolink: one mention per PAGE, not per name',
+     '            _seen_key[0] = (_page_key, _sec_of[i])',
+     '            _seen_key[0] = (title, _sec_of[i])'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',

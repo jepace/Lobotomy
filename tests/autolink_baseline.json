@@ -44,8 +44,12 @@
     "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[PG&E](../entities/pg-e.md) and [C++](../entities/c.md) and [AT&T](../entities/at-t.md) were named. PG&E again.\n"
   },
   "aliases": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nPG&E did it. [Pacific Gas and Electric Company](../entities/pacific-gas-and-electric-company.md) confirmed. the utility agreed.\n"
+  },
+  "aliases_one_per_section": {
     "message": "Autolinked 3 title(s) in alwiki/entities/target-page.md.",
-    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[PG&E](../entities/pacific-gas-and-electric-company.md) did it. [Pacific Gas and Electric Company](../entities/pacific-gas-and-electric-company.md) confirmed. [the utility](../entities/pacific-gas-and-electric-company.md) agreed.\n"
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n## One\n\n[PG&E](../entities/pacific-gas-and-electric-company.md) did it.\n\n## Two\n\n[Pacific Gas and Electric Company](../entities/pacific-gas-and-electric-company.md) confirmed.\n\n## Three\n\n[the utility](../entities/pacific-gas-and-electric-company.md) agreed.\n"
   },
   "no_autolink_excluded": {
     "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",

@@ -231,5 +231,90 @@ class LookupRowVersusProseBulletTest(TempWikiTestCase):
         self.assertEqual(out.count("](../entities/california.md)"), 2, out)
 
 
+class TheBudgetBelongsToThePageTest(TempWikiTestCase):
+    """An alias is a different NAME, not a different subject.
+
+    Observed on a real source page:
+
+        President [Donald Trump](../entities/donald-trump.md)'s brand is deteriorating.
+        Anderson contends that [Trump](../entities/donald-trump.md) and the party ...
+
+    Two links to one page in one section's prose. `_seen` was a fresh cell per title, and
+    every alias is its own entry in the title map, so donald-trump.md got one first mention
+    as "Donald Trump" and another as "Trump". The reader does not care which of a page's
+    names was used; the record is keyed by (target page, section) now.
+    """
+
+    def _wiki(self, aliases=("Trump",)):
+        self.w.page("entities/donald-trump.md", title="Donald Trump", type="entity",
+                    aliases=list(aliases),
+                    body="# Donald Trump\n\n## Overview\n\nA politician.\n")
+
+    def _src(self, body):
+        self.w.page("sources/s.md", title="S", type="source", body=body)
+        agent._autolink({"path": "wiki/sources/s.md"})
+        return self.w.disk("sources/s.md")
+
+    def test_a_title_and_its_alias_share_one_mention(self):
+        self._wiki()
+        out = self._src("# S\n\n## Summary\n\nPresident Donald Trump's brand is "
+                        "deteriorating. Anderson contends that Trump faces headwinds.\n")
+        self.assertEqual(out.count("](../entities/donald-trump.md)"), 1, out)
+
+    def test_the_fuller_name_takes_it(self):
+        """The title map is sorted longest-first, so the better display text wins."""
+        self._wiki()
+        out = self._src("# S\n\n## Summary\n\nPresident Donald Trump's brand. "
+                        "Anderson contends that Trump faces headwinds.\n")
+        self.assertIn("[Donald Trump](../entities/donald-trump.md)", out)
+        self.assertNotIn("[Trump](", out)
+
+    def test_a_repeat_already_on_disk_is_unlinked(self):
+        """The retroactive half — the reported page was already in this state."""
+        self._wiki()
+        out = self._src("# S\n\n## Summary\n\nPresident "
+                        "[Donald Trump](../entities/donald-trump.md)'s brand. Anderson "
+                        "contends that [Trump](../entities/donald-trump.md) faces "
+                        "headwinds.\n")
+        self.assertEqual(out.count("](../entities/donald-trump.md)"), 1, out)
+        self.assertIn("that Trump faces", out)
+
+    def test_each_section_still_gets_its_own(self):
+        self._wiki()
+        out = self._src("# S\n\n## Summary\n\nDonald Trump spoke.\n\n"
+                        "## Claims\n\nTrump said more.\n")
+        self.assertEqual(out.count("](../entities/donald-trump.md)"), 2, out)
+
+    def test_a_lookup_row_still_always_links(self):
+        self._wiki()
+        out = self._src("# S\n\n## Summary\n\nDonald Trump spoke.\n\n"
+                        "## Entities\n\n- Trump\n")
+        self.assertEqual(out.count("](../entities/donald-trump.md)"), 2, out)
+
+    def test_two_different_pages_are_not_confused(self):
+        """The record is keyed by target page; a second subject keeps its own mention."""
+        self._wiki()
+        self.w.page("entities/republican-party.md", title="Republican Party",
+                    type="entity", body="# Republican Party\n\n## Overview\n\nA party.\n")
+        out = self._src("# S\n\n## Summary\n\nDonald Trump and the Republican Party "
+                        "face headwinds.\n")
+        self.assertEqual(out.count("](../entities/donald-trump.md)"), 1, out)
+        self.assertEqual(out.count("](../entities/republican-party.md)"), 1, out)
+
+    def test_several_aliases_still_collapse_to_one(self):
+        self._wiki(aliases=("Trump", "the president"))
+        out = self._src("# S\n\n## Summary\n\nDonald Trump spoke. Trump repeated it. "
+                        "the president insisted.\n")
+        self.assertEqual(out.count("](../entities/donald-trump.md)"), 1, out)
+
+    def test_it_converges(self):
+        self._wiki()
+        self._src("# S\n\n## Summary\n\nDonald Trump spoke, and Trump spoke again.\n")
+        once = self.w.disk("sources/s.md")
+        for _ in range(3):
+            agent._autolink({"path": "wiki/sources/s.md"})
+        self.assertEqual(self.w.disk("sources/s.md"), once)
+
+
 if __name__ == "__main__":
     unittest.main()

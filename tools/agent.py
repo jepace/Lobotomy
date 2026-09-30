@@ -5427,6 +5427,37 @@ def _autolink(args: dict) -> str:
     # of pages and the key carries each page's own ../ prefix, so a module-level cache
     # would grow without bound for no reuse.
     _resolve_memo: dict = {}
+
+    # The once-per-section budget belongs to the PAGE, not to the name used for it.
+    # It used to be a fresh `_seen` cell per title, and every alias is a separate entry in
+    # the title map — so donald-trump.md got one first mention as "Donald Trump" and
+    # another as "Trump", and a paragraph came out carrying both:
+    #
+    #   President [Donald Trump](../entities/donald-trump.md)'s brand is deteriorating.
+    #   Anderson contends that [Trump](../entities/donald-trump.md) and the party ...
+    #
+    # Two links to one page in one section's prose, which is exactly the repetition the
+    # rule exists to stop; the reader does not care which of the page's names was used.
+    # Keyed by (target page, section ordinal) and shared across every pass, so whichever
+    # name gets there first spends the section's mention and the rest go bare.
+    #
+    # It fixes the unlinking half for free. A repeat already on disk is met by the pass
+    # for the name it was written under — the alias's own pass, whose token test matches
+    # it — and that pass now sees the mention as already spent, so it strips the link.
+    #
+    # The title map is sorted longest-first, so where both a title and its alias appear
+    # the LONGER name wins the mention and the better display text. One wrinkle worth
+    # knowing: if the alias appears earlier in the section than the full name, the link
+    # lands on the later, fuller mention rather than the first one. Wikipedia would link
+    # the first. Correcting that means walking the section by position rather than by
+    # title, which is a different loop; the section still gets exactly one link either way.
+    _linked_here: set = set()
+    _sec_of, _sec_n = [], 0
+    for _i in range(len(lines)):
+        if is_heading[_i]:
+            _sec_n += 1
+        _sec_of.append(_sec_n)
+
     for title, link_path in title_map:
         needed = _title_tokens_cache.get(title)
         if needed is None:
@@ -5459,7 +5490,11 @@ def _autolink(args: dict) -> str:
         # link at the very top leaves the rest of it with no navigation at all. A section
         # here is about what an article is there.
         _title_toks = needed
-        _seen = [False]        # linked already in the section being walked
+        # The page this title points at, as the shared record keys it. Resolved once per
+        # title rather than per line: every name for one page must land on the same key,
+        # or the sharing does nothing.
+        _page_key = link_path.rsplit("/", 1)[-1]
+        _seen_key = [None]     # (page, section) for the line being walked
         # The title's longest word, lowercased. A necessary condition for this title to
         # match anything on a line, and the single biggest saving in the whole loop: the
         # token prefilter above only says the title's words are somewhere in the BODY, so
@@ -5519,24 +5554,24 @@ def _autolink(args: dict) -> str:
                     return m.group(1)
                 if _always:
                     return m.group(1)           # a list row always keeps its link
-                if _seen[0]:
+                if _seen_key[0] in _linked_here:
                     return inner.group(1)       # a repeat in prose — unlink it
-                _seen[0] = True
+                _linked_here.add(_seen_key[0])
                 return m.group(1)
             display = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", m.group(2))
-            if not _always and _seen[0]:
+            if not _always and _seen_key[0] in _linked_here:
                 return display                  # already linked in this section
             if not _always:
-                _seen[0] = True
+                _linked_here.add(_seen_key[0])
             return f"[{display}]({_lp})"
 
         changed = False
         for i, line in enumerate(lines):
             if is_heading[i]:
-                _seen[0] = False                # a new section gets its own first mention
-                continue
+                continue                        # section ordinal comes from _sec_of
             if not line or _probe not in lines_lower[i]:
                 continue
+            _seen_key[0] = (_page_key, _sec_of[i])
             _always = is_listish[i]
             # Upgrade first: a shorter title already linked inside this one's phrase. Only
             # on lines that carry a link at all, which is a cheap substring test and skips

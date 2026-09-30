@@ -138,6 +138,28 @@ the letter of it, both forced by the shape of these pages:
   table rows and Timeline bullets are exempted explicitly, since a dated entry is a lookup
   row however long it runs.
 
+**The once-per-section budget belongs to the PAGE, not to the name.** It was a fresh
+`_seen` cell per title, and every alias is its own entry in the title map — so
+`donald-trump.md` got one first mention as "Donald Trump" and another as "Trump", and a
+real paragraph came out carrying both:
+
+    President [Donald Trump](../entities/donald-trump.md)'s brand is deteriorating.
+    Anderson contends that [Trump](../entities/donald-trump.md) and the party ...
+
+Two links to one page in one section's prose, which is the repetition the rule exists to
+stop; a reader does not care which of a page's names was used. The record is now keyed by
+`(target page, section ordinal)` and shared across every pass. That fixes the unlinking
+half for free: a repeat already on disk is met by the pass for the name it was written
+under — the alias's own pass, whose token test matches it — and that pass now sees the
+mention as spent, so it strips the link. The golden corpus had the bug recorded as correct
+(`aliases` linked all three of PG&E / Pacific Gas and Electric Company / the utility in one
+sentence); that case now expects one link, and `aliases_one_per_section` was added to keep
+proving the aliases still MATCH, which one link no longer shows. Longest-first means the
+fuller name takes the mention — **but if the alias appears earlier in the section than the
+full name, the link lands on the later, fuller mention rather than the first one.**
+Wikipedia links the first; fixing that means walking a section by position rather than by
+title, which is a different loop.
+
 The half that is easy to miss: the rule must also **unlink** repeats already on disk, or it
 applies only to newly written text while ~9,000 pages keep every repeat. Unlinking is
 scoped to links the autolinker itself would have written — same target page *and* display

@@ -42,9 +42,20 @@ CASES = [
                              ("AT&T", [], False)], "entities",
      "PG&E and C++ and AT&T were named. PG&E again."),
 
+    # Three names for one page in ONE section now yields ONE link: the once-per-section
+    # budget belongs to the page, not to the name, so an alias cannot spend a second
+    # mention. Longest-first means the fullest name takes it.
     ("aliases", [("Pacific Gas and Electric Company", ["PG&E", "the utility"], False)],
      "entities",
      "PG&E did it. Pacific Gas and Electric Company confirmed. the utility agreed."),
+
+    # ...which is why this one exists: the case above no longer shows that the aliases
+    # MATCH at all, only that they do not double-link. One alias per section restores that
+    # coverage — all three link, because each section gets its own mention.
+    ("aliases_one_per_section",
+     [("Pacific Gas and Electric Company", ["PG&E", "the utility"], False)], "entities",
+     "## One\n\nPG&E did it.\n\n## Two\n\nPacific Gas and Electric Company "
+     "confirmed.\n\n## Three\n\nthe utility agreed."),
 
     ("no_autolink_excluded", [("Meta", [], True), ("Canada", [], False)], "entities",
      "Meta and Canada were mentioned."),
