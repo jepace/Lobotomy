@@ -3813,10 +3813,37 @@ def _done(args: dict) -> str:
             ctx._done_progress_mark = _handled
             _parts = []
             if _to_update:
+                # Name the route per page, the way lookup_titles does. This used to say
+                # "read_section the section you are changing" for every page at any size,
+                # and the agent obeyed it: an observed ingest followed lookup_titles'
+                # "reads whole — read_file first" for its first two pages, hit this
+                # refusal, and then read_section'd all four remaining ones. One of those
+                # four it had ALREADY read in full nine rounds earlier — coverage was
+                # credited, update_section would have gone straight through — so the round
+                # was spent fetching what it was holding.
+                #
+                # This is the moment the agent re-plans, so it is the moment the routing
+                # has to be right. Three cases, and only the last is a plain read_section.
+                _rows = []
+                for name, rel in _to_update[:15]:
+                    _full_p = WIKI_DIR / rel
+                    try:
+                        _n = len(_strip_system_fm_fields(
+                            _full_p.read_text(encoding="utf-8", errors="replace")))
+                    except OSError:
+                        _n = 0
+                    if ctx._session_read_coverage.get(rel, 0) >= _n and _n:
+                        _how = ("already read in full this session — call update_section "
+                                "directly, do NOT read it again")
+                    elif _n and _n <= _WIKI_READ_LIMIT:
+                        _how = "reads whole — read_file first, then update_section"
+                    else:
+                        _how = "too large to read whole — read_section, then update_section"
+                    _rows.append(f"  - {name} → wiki/{rel} [{_how}]")
                 _parts.append(
-                    "These already have a page you did not update — read_section the section "
-                    "you are changing, then update_section with this source merged in:\n"
-                    + "\n".join(f"  - {name} → wiki/{rel}" for name, rel in _to_update[:15]))
+                    "These already have a page you did not update. Each says how to reach "
+                    "it; fold this source into the section it belongs in:\n"
+                    + "\n".join(_rows))
             if _to_create:
                 _parts.append(
                     "These have no page yet — create_file one for each:\n"

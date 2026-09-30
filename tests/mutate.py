@@ -461,6 +461,11 @@ MUTATIONS = [
     ('autolink: one mention per PAGE, not per name',
      '            _seen_key[0] = (_page_key, _sec_of[i])',
      '            _seen_key[0] = (title, _sec_of[i])'),
+    # done()'s refusal is where the agent re-plans, so its routing must know what
+    # the session already read — or it sends it to re-fetch a page it holds.
+    ('done: the refusal knows what was already read in full',
+     '                    if ctx._session_read_coverage.get(rel, 0) >= _n and _n:',
+     '                    if False:'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',

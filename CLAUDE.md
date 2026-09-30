@@ -498,6 +498,20 @@ alternatives. A sunk draft beats a list of names. On a long page the calculus fl
 `read_file` returns only an outline and costs a round. The agent cannot tell the cases
 apart from section names, so `_page_shape` states the size and the route.
 
+**`done()`'s refusal is where the agent re-plans, so it carries the routing too.** It used
+to say "read_section the section you are changing" for every unhandled page at any size —
+true when written, stale once `lookup_titles` started marking pages `reads whole` /
+`outline only`. Observed in a 20-round ingest: the agent followed the route for its first
+two pages, called `done()` early, met this refusal, and then `read_section`'d all four
+remaining pages. It did what it was told. One of those four it had already read IN FULL
+nine rounds earlier, with coverage credited, so `update_section` would have gone straight
+through — the round was spent fetching what it was holding. The other three cost the same
+rounds as `read_file` would have but showed one section instead of the page. Each row now
+names one of three routes, and the "already read in full this session" case reads the
+session's own coverage. **The pattern to watch: any reply that gives procedural advice has
+to track the tools underneath it, and there are now three such places** —
+`lookup_titles`' UPDATE header, the `read_file` outline, and this.
+
 **A short page is handed back whole; a long one is handed back a section.** The
 unread-section refusal used to return the guessed section plus the other sections' NAMES at
 any page size, which made it stingier than the tool it stands in for: under
