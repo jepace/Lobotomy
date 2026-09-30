@@ -501,6 +501,27 @@ the whole-page branch, and the long-page branch's "do NOT re-read" clause lost i
 that way; `mutate.py` reported it MISSED, and `tests/test_unread_section_handback.py` now
 covers both.
 
+**Hover cards** (`/api/wiki/<path>/preview` + the IIFE in `wiki.html`). Hovering a wiki
+link for 300ms shows title, type, blurb and — only above four — a section count. The blurb
+comes from `first_desc_line`, which was **hoisted out of `_rebuild_index`** for this, so a
+page's index entry and the card you get hovering a link to it cannot say different things.
+Armed on keyboard focus as well as hover, skipped entirely under `(hover: none)`, and the
+card is `pointer-events:none` so it can never swallow the click it describes. One fetch per
+DISTINCT href, cached for the page's life, because a wiki page carries a hundred links to a
+dozen targets. `tests/test_hovercards.py` drives the real script AND the real CSS, both
+lifted from the template by regex; it serves the fixture from a **real origin** rather than
+`set_content`, because on `about:blank` a relative `fetch('/api/…')` has no base, throws,
+and every assertion then fails for a reason unrelated to the code.
+
+**A source page's `## Entities` / `## Concepts` are sorted** (`sort_lookup_lists`), in
+`create_file` and in `heal_pages` — the latter because a source page is immutable to the
+LLM once written, so an existing one can be ordered nowhere else. They are lookup tables,
+which is what `_is_lookup_row` already treats them as. **`## Claims` and `## Timeline` are
+deliberately not sorted**: the first is prose in bullet form that reads top to bottom, the
+second is chronological and belongs to `normalize_timeline`. The key is the row's text with
+links flattened and case folded, since on disk these rows are already autolinked and raw
+text would sort by `[` and then by target path.
+
 ### Reading a large page
 
 `_read_file` on a wiki page over `_WIKI_READ_LIMIT` (20,000 chars) returns an **outline** —
@@ -733,6 +754,16 @@ mutation is applied**, not just at the end — without that, mutations in differ
 stack, and a guard whose removal nothing notices is reported CAUGHT on the strength of the
 previous mutation's failures. That shipped briefly and inflated one result; a mutation
 runner that lies about coverage is worse than not having one.
+
+**Never run two `mutate.py` processes at once, and never edit a tool file while one is
+running.** Each run snapshots every file it will touch at startup and restores from that
+snapshot — so a second run, or your own edit, is silently reverted, and worse, one run's
+restore can leave the *other* run's injected mutation applied. Observed: an interleaved
+pair left `_WIKI_READ_LIMIT = 20_000_000` sitting in the working tree. Nothing failed
+loudly; `read_file` simply stopped returning outlines and `update_file`'s coverage check
+passed trivially, and the suite went from green to eleven failures with no edit to blame.
+`git diff` on the tool files before committing is the check that catches it — the residue
+is always a one-line change you did not write.
 
 `rename_page.py` is the one maintenance tool whose logic is not in `agent.py`, so nothing
 in-process can reach it — which is exactly how its copy of the generated-pages bug went

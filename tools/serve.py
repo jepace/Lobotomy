@@ -154,7 +154,8 @@ from config import (cfg_get, cfg_bool, cfg_int, validate_config,
                     cfg_active_provider, cfg_provider, cfg_available_models,
                     cfg_all_providers, cfg_write_llm)
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title, _H1_RE,
-                   fm_scalar, parse_tags_line,
+                   fm_scalar, parse_tags_line, first_desc_line,
+                   _page_section_names,
                    write_reason, page_history,
                    get_client_and_model, orientation_message,
                    stream_agent_turn, run_agent_turn, system_prompt,
@@ -1744,6 +1745,29 @@ def wiki_history_diff(page_path, rev):
                            revisions=None, rev=rev, diff=diff, old_text=old,
                            view=view, old_html=render_md_text(old, p),
                            identical=(old == new))
+
+
+@app.route("/api/wiki/<path:page_path>/preview")
+@require_login
+def wiki_preview(page_path):
+    """Title, type, blurb and section names for one page — what a hover card shows.
+
+    Read-only and deliberately cheap: one file read, no markdown rendering, no link
+    rewriting. The blurb comes from agent.first_desc_line, the same function that writes
+    the wiki index, so the index entry for a page and the card you get hovering a link to
+    it cannot say different things.
+    """
+    p = _resolve_wiki_page_or_404(page_path)
+    text = p.read_text(encoding="utf-8", errors="replace")
+    meta, body = _parse_frontmatter(text)
+    names = [n for _lvl, n in _page_section_names(body, meta.get("title", ""))]
+    return {
+        "title":    page_display_title(text, p.stem),
+        "type":     str(meta.get("type", "")).strip(),
+        "snippet":  first_desc_line(text),
+        "sections": names,
+        "url":      "/wiki/" + str(p.relative_to(WIKI_DIR)).replace("\\", "/")[:-3],
+    }
 
 
 @app.route("/api/wiki/<path:page_path>/revert/<rev>", methods=["POST"])

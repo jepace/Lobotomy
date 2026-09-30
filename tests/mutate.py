@@ -91,8 +91,8 @@ MUTATIONS = [
      # The blurb is another page's prose, so its links are relative to THAT page. Copied
      # into wiki/index.md they resolve outside the wiki: 5,900 of them, regenerated on
      # every ingest, so no repair pass could ever win.
-     '                return _MD_LINK_RE.sub(r"\\1", s)[:120]',
-     '                return s[:120]'),
+     '            return _MD_LINK_RE.sub(r"\\1", s)[:120]',
+     '            return s[:120]'),
     ("repair passes leave generated files alone",
      # index.md is rewritten by _rebuild_index and log.md is append-only, and
      # _snapshot_version skips both by name — so a write to either cannot be reverted.
@@ -279,8 +279,8 @@ MUTATIONS = [
      '    rendered = _render_timeline(_tl_dedupe(entries))',
      '    rendered = _render_timeline(entries)'),
     ("timeline: every write path normalizes",
-     '    content = normalize_timeline(content)\n    content = _inject_sources_section(content, p)\n    _mkdir_inheriting(p.parent)',
-     '    content = _inject_sources_section(content, p)\n    _mkdir_inheriting(p.parent)'),
+     '    content = normalize_timeline(content)\n    # A source page is written once and is immutable afterwards, so its lookup lists are\n    # ordered here or never. (heal_pages covers the ones written before this existed.)\n    content = sort_lookup_lists(content)\n    content = _inject_sources_section(content, p)',
+     '    # A source page is written once and is immutable afterwards, so its lookup lists are\n    # ordered here or never. (heal_pages covers the ones written before this existed.)\n    content = sort_lookup_lists(content)\n    content = _inject_sources_section(content, p)'),
     ("timeline: a fuller wording replaces the restatement it absorbs",
      '    if [(d, t) for d, t, _ in _merged] == [(d, t) for d, t, _ in _kept]:',
      '    if len(_merged) == len(_kept):'),
@@ -446,6 +446,20 @@ MUTATIONS = [
     ('lookup: the read route matches the page size',
      '    _route = ("reads whole — read_file first" if _full <= _WIKI_READ_LIMIT',
      '    _route = "reads whole — read_file first"'),
+    # The hover card's blurb comes from the index's own helper, so a page's index
+    # entry and its card cannot say different things.
+    ('preview: the blurb is the index blurb',
+     '        "snippet":  first_desc_line(text),',
+     '        "snippet":  "",',
+     'tools/serve.py'),
+    # A source page's lookup lists are sorted; Claims and Timeline are NOT — the
+    # first is prose in bullet form, the second is chronological.
+    ('sort: only Entities and Concepts are sorted',
+     '        if not m or _norm_heading(m.group(1)) not in _LOOKUP_LIST_SECTIONS:',
+     '        if not m:'),
+    ('sort: heal_pages orders lists already on disk',
+     '                _sorted = sort_lookup_lists(new)',
+     '                _sorted = new'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',

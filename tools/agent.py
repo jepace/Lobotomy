@@ -1710,6 +1710,7 @@ def _update_file(path: str, content: str, allow_shrink: bool = False) -> str:
         if _t:
             content = _fm_m.group(1) + ensure_h1(content[_fm_m.end():], _t)
     content = normalize_timeline(content)
+    content = sort_lookup_lists(content)
     content = _inject_sources_section(content, p)
     _atomic_write(p, content)
     _autolink_now(p)
@@ -2917,6 +2918,61 @@ def _tl_dedupe(entries: "list[tuple]") -> "list[tuple]":
     return kept
 
 
+_LOOKUP_LIST_SECTIONS = ("entities", "concepts")
+
+
+def sort_lookup_lists(content: str) -> str:
+    """Alphabetize the bullet rows under a source page's `## Entities` / `## Concepts`.
+
+    These two are lookup tables — CLAUDE.md calls them that, and `_is_lookup_row` gives
+    them their own autolinking rule for the same reason: a reader arrives at a row out of
+    order, looking for a name. An unordered lookup table makes them scan the whole thing,
+    and these run to dozens of rows.
+
+    Deliberately NOT applied to `## Claims`, which is prose in bullet form and reads top to
+    bottom, nor to `## Timeline`, which is chronological and belongs to
+    `normalize_timeline`. Sorting either would destroy meaning rather than impose order.
+
+    The sort key is the row's text with link syntax flattened and case folded: on disk
+    these rows are already autolinked, so sorting raw text would order by `[` and then by
+    target path. Only a contiguous run of bullets directly under the heading is touched, so
+    a paragraph introducing the list stays where it is.
+
+    Idempotent by construction — sorting a sorted list is a no-op — which matters because
+    `heal_pages` runs at startup and after every ingest, and a normalizer that rewrote on
+    every pass would fill page history with empty revisions forever.
+    """
+    lines = content.splitlines(keepends=True)
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        m = re.match(r"^##[ \t]+(\S.*?)[ \t]*$", line.rstrip("\n"))
+        out.append(line)
+        i += 1
+        if not m or _norm_heading(m.group(1)) not in _LOOKUP_LIST_SECTIONS:
+            continue
+        while i < len(lines) and not re.match(r"^[-*+][ \t]", lines[i]):
+            if re.match(r"^#{1,6}[ \t]", lines[i]):
+                break
+            out.append(lines[i])
+            i += 1
+        start = i
+        while i < len(lines) and re.match(r"^[-*+][ \t]", lines[i]):
+            i += 1
+        rows = lines[start:i]
+        if len(rows) > 1:
+            def _key(r):
+                t = re.sub(r"^[-*+][ \t]+", "", r.rstrip("\n"))
+                return _MD_LINK_RE.sub(r"\1", t).strip().casefold()
+            had_final_newline = rows[-1].endswith("\n")
+            rows = sorted(rows, key=_key)
+            rows = [r if r.endswith("\n") else r + "\n" for r in rows]
+            if not had_final_newline:
+                rows[-1] = rows[-1].rstrip("\n")
+        out.extend(rows)
+    return "".join(out)
+
+
 def normalize_timeline(content: str) -> str:
     """Canonicalize a page's ## Timeline: one format, chronological, no restatements.
 
@@ -3838,6 +3894,39 @@ def _index_inputs_fingerprint() -> tuple:
     return count, newest
 
 
+def first_desc_line(text: str) -> str:
+    """The page's first line of prose, links flattened, truncated to 120 chars.
+
+    Shared by _rebuild_index and the /api/wiki/.../preview endpoint behind the
+    hover cards, so an entry in the index and the card you get hovering a link to
+    the same page cannot say different things.
+    """
+    in_fm, fm_done = False, False
+    for line in text.splitlines():
+        if line.strip() == "---":
+            if not in_fm:
+                in_fm = True
+            elif not fm_done:
+                fm_done = True
+            continue
+        if not fm_done:
+            continue
+        s = line.strip()
+        if s and not s.startswith("#"):
+            # Flatten links to their text, then truncate. The line is lifted verbatim
+            # from a page's prose, where the autolinker wrote every link relative to
+            # THAT page's directory — `../entities/cnn.md` from wiki/entities/. Copied
+            # into wiki/index.md those resolve outside the wiki entirely, and there
+            # were 5,900 of them on the real wiki, regenerated on every ingest, so no
+            # repair pass could ever win. Truncating first made it worse: 120
+            # characters routinely lands inside a URL and leaves `[White House](../ent`
+            # on the page as literal text.
+            # Nothing is lost — the entry already links to the page itself, and a
+            # one-line blurb is not where cross-references belong.
+            return _MD_LINK_RE.sub(r"\1", s)[:120]
+    return ""
+
+
 def _rebuild_index(args: dict) -> str:
     """Rebuild wiki/index.md, subdirectory indexes, and raw/index.md.
 
@@ -3875,32 +3964,6 @@ def _rebuild_index(args: dict) -> str:
                 elif line.startswith("updated:") and not updated:
                     updated = line.split(":", 1)[1].strip().strip('"')
         return title, updated
-
-    def first_desc_line(text: str) -> str:
-        in_fm, fm_done = False, False
-        for line in text.splitlines():
-            if line.strip() == "---":
-                if not in_fm:
-                    in_fm = True
-                elif not fm_done:
-                    fm_done = True
-                continue
-            if not fm_done:
-                continue
-            s = line.strip()
-            if s and not s.startswith("#"):
-                # Flatten links to their text, then truncate. The line is lifted verbatim
-                # from a page's prose, where the autolinker wrote every link relative to
-                # THAT page's directory — `../entities/cnn.md` from wiki/entities/. Copied
-                # into wiki/index.md those resolve outside the wiki entirely, and there
-                # were 5,900 of them on the real wiki, regenerated on every ingest, so no
-                # repair pass could ever win. Truncating first made it worse: 120
-                # characters routinely lands inside a URL and leaves `[White House](../ent`
-                # on the page as literal text.
-                # Nothing is lost — the entry already links to the page itself, and a
-                # one-line blurb is not where cross-references belong.
-                return _MD_LINK_RE.sub(r"\1", s)[:120]
-        return ""
 
     sections = [("Sources", "sources"), ("Entities", "entities"),
                 ("Concepts", "concepts"), ("Synthesis", "synthesis")]
@@ -4584,6 +4647,16 @@ def _heal_pages_impl(dry_run: bool = False) -> dict:
                 # underneath it. Mechanically fixable — one format, sorted, restatements
                 # folded — so it is fixed here rather than reported, and every page
                 # written before the loose parser existed heals on the next startup.
+                # Source pages are immutable to the LLM after creation, so an existing
+                # page's lookup lists can only be ordered here. Sorting is idempotent, so
+                # this settles on the first pass and never writes again.
+                _sorted = sort_lookup_lists(new)
+                if _sorted != new:
+                    log.info("heal_pages: %s had unsorted Entities/Concepts — alphabetized",
+                             rel)
+                    new = _sorted
+                    n_fm += 1
+
                 _tl = normalize_timeline(new)
                 if _tl != new:
                     log.info("heal_pages: %s had a mixed or duplicated Timeline — normalized", rel)
@@ -6206,6 +6279,9 @@ def _create_file(args: dict) -> str:
                      + body_text)
     content = frontmatter + _strip_broken_wiki_links(body_text, p)
     content = normalize_timeline(content)
+    # A source page is written once and is immutable afterwards, so its lookup lists are
+    # ordered here or never. (heal_pages covers the ones written before this existed.)
+    content = sort_lookup_lists(content)
     content = _inject_sources_section(content, p)
     _mkdir_inheriting(p.parent)
     assert not p.exists(), f"create_file invariant violated: {path} must not exist before write"

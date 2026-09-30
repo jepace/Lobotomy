@@ -215,6 +215,12 @@ an alias is exactly what someone adds after a disambiguating rename leaves a pag
 Read-only, no LLM, no API cost. It prints the `rename_page.py` command for each page it
 flags.
 
+`heal_pages` (run at server startup and after every ingest, no CLI needed) also now
+alphabetizes a source page's `## Entities` / `## Concepts` lists. Those are lookup
+tables and a source page is immutable to the LLM once written, so this is the only
+route for one written before the rule existed. `## Claims` and `## Timeline` are left
+alone — prose in bullet form, and chronological, respectively.
+
 ### `what_was_lost.py` — did a write remove material, or only shorten prose?
 The history row says a write cut 2,461 words and added 479. It cannot say which of those
 two things happened, and that is the only question you have: collapsing duplication you
