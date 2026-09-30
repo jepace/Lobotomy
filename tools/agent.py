@@ -5083,12 +5083,26 @@ def _page_shape(rel: str, limit: int = 14) -> str:
     # H1). A second copy of that rule was dead code — mutate.py reported it MISSED, which
     # is what a redundant "guard" looks like — and two places deciding what counts as a
     # section is exactly how they come to disagree.
+    # Whether read_file will return this page WHOLE or only an outline, which decides the
+    # cheaper route and which the agent cannot otherwise know.
+    #
+    # Short page: read_file first is free and strictly better — 2 rounds either way, but it
+    # composes ONCE with every section's text in front of it. Going straight to
+    # update_section means composing blind and then re-deciding while holding a draft aimed
+    # at the section it guessed; an observed 58-page ingest did exactly that and resent
+    # Overview after a refusal that had named the alternatives.
+    # Long page: read_file returns only an outline and costs a round, so straight to
+    # update_section is right — 2 rounds against 3.
+    _full = len(_strip_system_fm_fields(text))
+    _route = ("reads whole — read_file first" if _full <= _WIKI_READ_LIMIT
+              else "outline only — go straight to update_section")
+    _size = f" [{_full // 1000}KB, {_route}]" if _full >= 1000 else f" [{_route}]"
     names = [n for _lvl, n in _page_section_names(text, _fm_title(text))]
     if not names:
-        return ""
+        return _size
     shown = names[:limit]
     more = f", +{len(names) - len(shown)} more" if len(names) > len(shown) else ""
-    return f" — sections: {', '.join(shown)}{more}"
+    return f"{_size} sections: {', '.join(shown)}{more}"
 
 
 def _lookup_titles(args: dict) -> str:
@@ -5150,10 +5164,23 @@ def _lookup_titles(args: dict) -> str:
     # where the names are.
     lines = [f"Looked up {len(names)} name(s) against {len(by_key)} wiki page titles and aliases."]
     if found:
+        # "read the page, then fold this source in" was true when it was written and is
+        # not the cheapest route any more: update_section's refusal hands the content
+        # back, so going straight there costs 2 rounds whether the page is short or long,
+        # while reading first costs 2 on a short page and 3 on a long one. The agent
+        # cannot tell which it is facing — this reply lists section names, not sizes — so
+        # the one instruction that is never worse is the one to give.
         lines += ["", f"UPDATE ({len(found)}) — these already have a page. Do NOT call "
-                      f"create_file for any of them; read the page, then fold this source "
-                      f"in with update_section. **Each page's existing sections are listed "
-                      f"after it — put your material in the one it actually belongs to.** "
+                      f"create_file for any of them.\n"
+                      f"Each one says how to read it and what sections it already has.\n"
+                      f"  * 'reads whole' — call read_file on it FIRST. It costs no extra "
+                      f"round and you then write once, knowing what every section already "
+                      f"says, instead of guessing a section and being handed the page back "
+                      f"after you have written for the wrong one.\n"
+                      f"  * 'outline only' — the page is too big to read; go straight to "
+                      f"update_section. Reading it would give you an outline and cost a "
+                      f"round; the refusal hands back the section you name.\n"
+                      f"**Put your material in the section it actually belongs to.** "
                       f"Overview is a summary of the page, not the place everything goes; "
                       f"a page with a section for this subject already has its answer:"]
         lines += found

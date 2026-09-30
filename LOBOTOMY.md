@@ -535,15 +535,19 @@ For each entity (person, organization, product, project) on that list:
   whenever the page comes back in one piece — you lose the ability to spot duplication
   otherwise — and use `read_section` past that point.
 
-  **You do not have to read first.** Call `update_section` on the section you believe your
-  material belongs in. If you have not read it the call is refused, and the refusal hands
-  the content straight back — so guessing costs one round and never costs the page. On a
-  page short enough to arrive whole, the refusal returns the **entire page**, every section
-  with its text, and marks the whole page read: choose the right destination from what you
-  see, and nothing you write to that page afterwards is refused for being unread. On a
-  longer page it returns the one section plus the names of the others. Either way, never
-  follow a refusal with `read_file` or `read_section` — you are already holding what they
-  would return.
+  **Let the page's size choose the route.** `lookup_titles` marks every existing page
+  either `reads whole` or `outline only`.
+
+  * `reads whole` — call `read_file` on it **first**. It costs no extra round, and you then
+    write once knowing what every section already says, rather than composing for a section
+    you guessed and being handed the page back afterwards.
+  * `outline only` — the page is too large to read. Go straight to `update_section`:
+    reading would return an outline and cost a round, while the refusal hands back the
+    section you named plus the names of the others.
+
+  Either way a wrong guess is cheap and never costs the page — an unread section is refused
+  with its content attached. And never follow a refusal with `read_file` or `read_section`:
+  you are already holding what they would return.
 
   **Choosing which section.** Default to one that already exists — the templates in
   Section 3 cover most material, and merging into an existing section is what makes the page
@@ -653,15 +657,19 @@ For each concept, technique, framework, or term on that list:
   whenever the page comes back in one piece — you lose the ability to spot duplication
   otherwise — and use `read_section` past that point.
 
-  **You do not have to read first.** Call `update_section` on the section you believe your
-  material belongs in. If you have not read it the call is refused, and the refusal hands
-  the content straight back — so guessing costs one round and never costs the page. On a
-  page short enough to arrive whole, the refusal returns the **entire page**, every section
-  with its text, and marks the whole page read: choose the right destination from what you
-  see, and nothing you write to that page afterwards is refused for being unread. On a
-  longer page it returns the one section plus the names of the others. Either way, never
-  follow a refusal with `read_file` or `read_section` — you are already holding what they
-  would return.
+  **Let the page's size choose the route.** `lookup_titles` marks every existing page
+  either `reads whole` or `outline only`.
+
+  * `reads whole` — call `read_file` on it **first**. It costs no extra round, and you then
+    write once knowing what every section already says, rather than composing for a section
+    you guessed and being handed the page back afterwards.
+  * `outline only` — the page is too large to read. Go straight to `update_section`:
+    reading would return an outline and cost a round, while the refusal hands back the
+    section you named plus the names of the others.
+
+  Either way a wrong guess is cheap and never costs the page — an unread section is refused
+  with its content attached. And never follow a refusal with `read_file` or `read_section`:
+  you are already holding what they would return.
 
   **Choosing which section.** Default to one that already exists — the templates in
   Section 3 cover most material, and merging into an existing section is what makes the page

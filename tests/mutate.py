@@ -439,6 +439,13 @@ MUTATIONS = [
     ('handback: full read coverage is credited',
      '            _cov[wiki_rel] = max(_cov.get(wiki_rel, 0), _full_len)',
      '            pass'),
+    # lookup_titles must not send the agent off to read first: that is never
+    # cheaper and is a round dearer on a long page.
+    # The marker that decides the route. Wrong for a long page it sends the
+    # agent to read_file for an outline it cannot use, and costs a round.
+    ('lookup: the read route matches the page size',
+     '    _route = ("reads whole — read_file first" if _full <= _WIKI_READ_LIMIT',
+     '    _route = "reads whole — read_file first"'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',

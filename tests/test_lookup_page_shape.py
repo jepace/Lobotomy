@@ -76,6 +76,41 @@ class PageShapeTest(TempWikiTestCase):
         self.assertIn("+6 more", out)
         self.assertIn("Section 0", out)
 
+    def test_each_page_says_which_read_route_it_supports(self):
+        """The datum the agent cannot otherwise have, and the one that decides the route.
+
+        Short page: read_file first is free and STRICTLY better — 2 rounds either way, but
+        it composes once with every section's text in front of it. Straight to
+        update_section means composing blind and then re-deciding while holding a draft
+        aimed at the guessed section; an observed 58-page ingest did exactly that and
+        resent Overview after a refusal that had named the alternatives.
+        Long page: read_file returns an outline and costs a round, so straight to
+        update_section is right — 2 rounds against 3.
+        """
+        self._newsom()
+        big = "# Big\n\n" + "".join(f"## S{i}\n\n" + ("word " * 900) + "\n\n"
+                                     for i in range(8))
+        self.w.page("entities/big.md", title="Big", type="entity", body=big)
+        agent._title_map_cache = None
+        out = agent._lookup_titles({"names": ["Gavin Newsom", "Big"]})
+        newsom = next(l for l in out.splitlines() if "gavin-newsom" in l)
+        big_l = next(l for l in out.splitlines() if "entities/big.md" in l)
+        self.assertIn("reads whole — read_file first", newsom)
+        self.assertIn("outline only — go straight to update_section", big_l)
+        # And both routes are explained, not just marked.
+        self.assertIn("costs no extra round", out)
+        self.assertIn("would give you an outline and cost a round", out)
+
+    def test_the_marker_agrees_with_what_read_file_actually_does(self):
+        """The marker is a promise about another tool; if they disagree it is worse than
+        saying nothing."""
+        self._newsom()
+        out = agent._lookup_titles({"names": ["Gavin Newsom"]})
+        said_whole = "reads whole" in out
+        agent.init_session()
+        got_whole = "[OUTLINE" not in agent._read_file("wiki/entities/gavin-newsom.md")
+        self.assertEqual(said_whole, got_whole)
+
     def test_the_instruction_names_the_mistake(self):
         """Overview is a summary of the page, not the place everything goes."""
         self._newsom()

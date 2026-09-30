@@ -464,6 +464,18 @@ filename. The suite touched neither of serve's two tag readers, so the same mist
 the `/wiki/tags` path undetected. Add the name to the import list, and when a helper is
 shared across the two modules, test that `serve.x is agent.x`.
 
+**`lookup_titles` marks each page `reads whole` or `outline only`, and the route follows
+from that.** Round count alone says go straight to `update_section` — 2 rounds at any size,
+against 2 for a short page read first and 3 for a long one — and that is the wrong
+conclusion, because it counts rounds and not COMPOSITIONS. On a short page, reading first
+is free and strictly better: the same two rounds, but the agent writes ONCE with every
+section's text in front of it. Going straight means composing blind, then re-deciding
+while holding a draft aimed at the section it guessed — and an observed 58-page ingest did
+precisely that, resending Overview after a refusal that had already named the
+alternatives. A sunk draft beats a list of names. On a long page the calculus flips, since
+`read_file` returns only an outline and costs a round. The agent cannot tell the cases
+apart from section names, so `_page_shape` states the size and the route.
+
 **A short page is handed back whole; a long one is handed back a section.** The
 unread-section refusal used to return the guessed section plus the other sections' NAMES at
 any page size, which made it stingier than the tool it stands in for: under
