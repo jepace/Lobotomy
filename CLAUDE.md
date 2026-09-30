@@ -498,6 +498,17 @@ alternatives. A sunk draft beats a list of names. On a long page the calculus fl
 `read_file` returns only an outline and costs a round. The agent cannot tell the cases
 apart from section names, so `_page_shape` states the size and the route.
 
+**Creating a source page hands back the lookup for its own `## Entities` / `## Concepts`
+lists.** Not merely to save the round — **a lookup taken before the source page exists is
+over the wrong set by construction.** From a log: the agent called `lookup_titles` first
+with SEVEN names and was told outright that "Patrick Lennox" had no page and not to
+`read_file` it. Two rounds later it did. In between it wrote a source page listing TEN
+names, so the lookup covered a guess; when the agent went back to work the list it worked
+the page's list, which the earlier answer did not correspond to. The handback is over the
+committed list, produced in the message that brings that list into existence, and it comes
+from `_lookup_titles` itself so the two cannot disagree — read route included, which is
+what makes the CREATE group say "there is no file there to read".
+
 **`done()`'s refusal is where the agent re-plans, so it carries the routing too.** It used
 to say "read_section the section you are changing" for every unhandled page at any size —
 true when written, stale once `lookup_titles` started marking pages `reads whole` /

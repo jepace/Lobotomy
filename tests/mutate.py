@@ -466,6 +466,12 @@ MUTATIONS = [
     ('done: the refusal knows what was already read in full',
      '                    if ctx._session_read_coverage.get(rel, 0) >= _n and _n:',
      '                    if False:'),
+    # A lookup taken before the source page exists is over a guessed list: one log
+    # showed 7 names looked up against 10 committed. This hands back a lookup over
+    # the committed list, in the message that creates it.
+    ('create_file: a source page hands back its worklist lookup',
+     '            _next = ("\\n\\nThe names this source page lists are your worklist — done() "',
+     '            _next = ""'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',

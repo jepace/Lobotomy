@@ -6369,12 +6369,40 @@ def _create_file(args: dict) -> str:
     _ctx()._session_read_sections.update(
         (wiki_rel, h) for h in _sections_fully_shown(_final, True))
 
-    if _subdir == "sources":
-        _ctx()._current_source_page = str(p.relative_to(WIKI_DIR))
-
     action = "Created"
     suffix = " — WARNING: no sources cited, update sources: frontmatter before calling done()" if _missing_sources else ""
-    return f"{action} {path} ({len(content)} bytes){suffix}"
+    _next = ""
+    if _subdir == "sources":
+        _ctx()._current_source_page = str(p.relative_to(WIKI_DIR))
+        # Hand back the lookup for this page's own ## Entities / ## Concepts lists.
+        #
+        # Those names are the ingest's committed worklist — done() refuses until every one
+        # has a page — and looking them up is unavoidably the next step, so charging a
+        # round for it buys nothing.
+        #
+        # The sharper reason, from a real log: an agent DID call lookup_titles first, with
+        # seven names, and was told in so many words that "Patrick Lennox" had no page and
+        # not to read_file it. Two rounds later it read_file'd it anyway. The source page
+        # it wrote in between listed TEN names — the lookup had been taken before the page
+        # existed, so it covered a guess, and when the agent went back to work the list it
+        # worked the page's list, which the lookup did not correspond to.
+        #
+        # So an early lookup is over the wrong set by construction. This one is over the
+        # committed list, produced at the moment that list comes into existence, in the
+        # same message. That is a different thing from saving a round, though it saves one
+        # too.
+        #
+        # This is the same content lookup_titles would return, from the same function, so
+        # the two cannot disagree — including the per-page read route, which is what stops
+        # the blind read_file. About 1.6KB for ten names, and it is context the agent would
+        # have fetched on the next round regardless.
+        _names = _listed_names(_ctx())
+        if _names:
+            _next = ("\n\nThe names this source page lists are your worklist — done() "
+                     "refuses until each one has a page. Looked up for you, so you do not "
+                     "need to call lookup_titles for them:\n\n"
+                     + _lookup_titles({"names": _names}))
+    return f"{action} {path} ({len(content)} bytes){suffix}{_next}"
 
 
 def _validate_ingest(args: dict) -> str:
