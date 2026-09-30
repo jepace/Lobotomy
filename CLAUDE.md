@@ -498,6 +498,25 @@ alternatives. A sunk draft beats a list of names. On a long page the calculus fl
 `read_file` returns only an outline and costs a round. The agent cannot tell the cases
 apart from section names, so `_page_shape` states the size and the route.
 
+**A `fetch_failed` raw file deadlocked `done()`.** Nothing was fetched, so there was no
+article text — and a fetch-failed ingest has exactly the shape the completeness guards look
+for: no source page, no entity pages, no listed names. The agent called `done()` saying so
+and was refused with *"this ingest created a source page but no entity or concept pages"* — a
+source page it had not created and could not create. It called `done()` again, got the same
+answer, and only the refusal cap released it. **No move satisfied the guard**, which is
+principle 4's worst case: work demanded that cannot be performed.
+
+`fetch_failed` was already recognised in two other places — `serve.py`'s `on_done` refuses
+to mark such an article wikified, and `done()`'s `ingested` derivation reports 0 — so the
+gap was only in the completeness checks. `_inbox_fetch_failed()` is checked before them now.
+**Absence is not evidence:** an unreadable or missing raw file does NOT count as
+fetch-failed, or a path bug would open the gate on every ingest.
+
+The same refusal also claimed "created a source page" unconditionally and then pointed at
+that page's lists for the next move, so an ingest that had written nothing was told about a
+page it did not have. It now describes what the session actually did, and names
+`create_file` when there is no source page yet.
+
 **Creating a source page hands back the lookup for its own `## Entities` / `## Concepts`
 lists.** Not merely to save the round — **a lookup taken before the source page exists is
 over the wrong set by construction.** From a log: the agent called `lookup_titles` first

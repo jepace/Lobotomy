@@ -3739,13 +3739,52 @@ def _unhandled_listed_pages(ctx) -> tuple:
     return to_update, to_create
 
 
+def _inbox_fetch_failed(ctx) -> bool:
+    """True if this ingest's raw file is marked fetch_failed — there is nothing to ingest.
+
+    serve.py's on_done already refuses to mark such an article wikified, and done()'s
+    `ingested` derivation already reports 0 for it. The COMPLETENESS guards did not know
+    about it, so a fetch-failed article deadlocked: nothing to read means no source page
+    and no entity pages, which is exactly the shape "you did no work" is looking for.
+
+    Observed: the agent called done() saying the raw file had fetch_failed, was refused
+    with "this ingest created a source page but no entity or concept pages" — a source
+    page it had not created and could not create — and called done() again, to the same
+    answer. Two rounds spent, and the refusal was making a false statement about what the
+    session had done. There is no move that satisfies it, which is principle 4's worst
+    case: a guard demanding work that cannot be performed.
+    """
+    if not ctx._current_inbox_path:
+        return False
+    raw = RAW_DIR / Path(ctx._current_inbox_path).name
+    try:
+        text = raw.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+    if not m:
+        return False
+    for line in m.group(1).splitlines():
+        if line.startswith("fetch_failed:"):
+            return line.split(":", 1)[1].strip().strip('"\'').lower() in ("true", "yes", "1")
+    return False
+
+
 def _done(args: dict) -> str:
     ctx = _ctx()
 
     # An ingest that produced only a source page did not do the job: Steps 5-7 build
     # the entity/concept pages that make the knowledge cross-linked and findable.
     # Instructions alone do not reliably enforce this, so refuse done() here.
-    if ctx._current_inbox_path:
+    # Nothing was fetched, so there is nothing to ingest and no work to demand. Checked
+    # before the completeness guards below, all of which are looking for the shape this
+    # legitimately has: no source page, no entity pages, no listed names.
+    _fetch_failed = _inbox_fetch_failed(ctx)
+    if _fetch_failed:
+        log.info("done(): %s has fetch_failed — nothing to ingest, accepting",
+                 ctx._current_inbox_path)
+
+    if ctx._current_inbox_path and not _fetch_failed:
         touched = [p for p in (ctx._session_entity_pages + ctx._session_updated_pages)
                    if not p.startswith("sources/")]
 
@@ -3769,12 +3808,23 @@ def _done(args: dict) -> str:
             ctx._done_refusals += 1
             log.warning("done() refused (%d/%d): ingest touched no entity/concept pages",
                         ctx._done_refusals, _DONE_REFUSAL_LIMIT)
+            # Say what the session actually did. This claimed "created a source page"
+            # unconditionally, so an ingest that had created nothing at all was told about
+            # a page it had not written — and pointed at that page's lists for its next
+            # move. A refusal that misdescribes the session cannot be acted on.
+            _did = ("created a source page but no entity or concept pages"
+                    if ctx._current_source_page else
+                    "created no pages at all — no source page, no entity or concept pages")
+            _where = ("the '## Entities' and '## Concepts' lists in the source page you "
+                      "just created" if ctx._current_source_page else
+                      "the raw file and write the source page first (create_file, "
+                      "wiki/sources/...), whose '## Entities' and '## Concepts' lists then "
+                      "name the pages to make")
             return (
-                "Error: done() refused — this ingest created a source page but no entity or "
-                "concept pages. An ingest is not complete until Steps 5 and 6 are done.\n\n"
-                "Go back to the '## Entities' and '## Concepts' lists in the source page you "
-                "just created. You already applied the page-worthiness test when you wrote "
-                "those lists, so every name on them gets a page. For EACH name:\n"
+                f"Error: done() refused — this ingest {_did}. An ingest is not complete "
+                f"until Steps 5 and 6 are done.\n\n"
+                f"Go back to {_where}. You already applied the page-worthiness test when "
+                "you wrote those lists, so every name on them gets a page. For EACH name:\n"
                 "  1. Call lookup_titles to see whether it already has a page.\n"
                 "  2. If it does, read that page and update_file it to incorporate this source.\n"
                 "  3. If it does not, create_file a new page for it.\n\n"

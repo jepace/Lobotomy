@@ -472,6 +472,14 @@ MUTATIONS = [
     ('create_file: a source page hands back its worklist lookup',
      '            _next = ("\\n\\nThe names this source page lists are your worklist — done() "',
      '            _next = ""'),
+    # A fetch-failed article has exactly the shape the completeness guards look
+    # for, and no move satisfies them — the deadlock cost two rounds.
+    ('done: a fetch-failed raw file has nothing to ingest',
+     '    if ctx._current_inbox_path and not _fetch_failed:',
+     '    if ctx._current_inbox_path:'),
+    ('done: the refusal describes what the session actually did',
+     '                    "created no pages at all — no source page, no entity or concept pages")',
+     '                    "created a source page but no entity or concept pages")'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',
