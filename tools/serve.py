@@ -219,14 +219,49 @@ def handle_preflight():
 # Auth helpers
 # ---------------------------------------------------------------------------
 
+def _wants_json() -> bool:
+    """True when this request came from fetch() and expects a JSON reply.
+
+    A logged-out POST used to be answered with a 302 to the login page, and `fetch` follows
+    a redirect transparently — so the browser received the login page's HTML with status
+    200, and `await resp.json()` died on the `<` of `<!DOCTYPE`. What the user saw was
+    "Save failed: JSON.parse: unexpected character at line 1 column 1", which names neither
+    the cause (the session had expired) nor the move (log in again), and the article they
+    had just pasted was still unsaved in the textarea.
+
+    Three independent signals, because a request need only match one: an explicit JSON body
+    (every POST here sends one), an Accept header preferring JSON over HTML, and the
+    fetch-marker header the helper in base.html sets. A browser NAVIGATION matches none of
+    them and still gets the redirect, which is what makes the login flow work.
+    """
+    if request.headers.get("X-Requested-With") == "fetch":
+        return True
+    if request.is_json:
+        return True
+    acc = request.accept_mimetypes
+    return bool(acc["application/json"] and acc["application/json"] >= acc["text/html"])
+
+
+def _auth_required_response(setup: bool = False):
+    """401 for a fetch, a redirect for a navigation. Principle 4: name the move."""
+    if _wants_json():
+        where = url_for("setup") if setup else url_for("auth_login")
+        return {"error": ("This server needs setting up first." if setup else
+                          "Your session has expired — sign in again to continue."),
+                "login_required": True, "login_url": where}, 401
+    if setup:
+        return redirect(url_for("setup"))
+    next_url = request.full_path.rstrip("?")
+    return redirect(url_for("auth_login", next=next_url))
+
+
 def require_login(f):
     @functools.wraps(f)
     def decorated(*args, **kwargs):
         if not user_exists():
-            return redirect(url_for("setup"))
+            return _auth_required_response(setup=True)
         if not session.get("logged_in"):
-            next_url = request.full_path.rstrip("?")
-            return redirect(url_for("auth_login", next=next_url))
+            return _auth_required_response()
         return f(*args, **kwargs)
     return decorated
 

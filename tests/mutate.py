@@ -447,6 +447,27 @@ MUTATIONS = [
      '    elif size:'),
     # The legend quotes the per-page phrases rather than restating them, so a route cannot
     # be marked on a row with nothing explaining it.
+    # A fetch gets JSON back even when refused. A 302 to the login page is followed
+    # transparently by fetch, so resp.json() met <!DOCTYPE and the user saw
+    # "JSON.parse: unexpected character at line 1 column 1" with their article unsaved.
+    ('auth: a fetch is answered with JSON, not a redirect',
+     '    if _wants_json():\n        where = url_for("setup") if setup else url_for("auth_login")',
+     '    if False:\n        where = url_for("setup") if setup else url_for("auth_login")',
+     'tools/serve.py'),
+    # ...and a browser NAVIGATION must still redirect, or nobody can log in.
+    ('auth: a navigation still redirects to the login page',
+     '    if request.headers.get("X-Requested-With") == "fetch":\n        return True',
+     '    if True:\n        return True',
+     'tools/serve.py'),
+    ('auth: the client recognises an HTML page instead of parsing it',
+     "      if (/^\\s*<(!doctype|html)/i.test(body)) {",
+     "      if (false) {",
+     'tools/templates/base.html'),
+    # An empty textarea reads as an empty file, and saving it wrote the article away.
+    ('inbox: a textarea that was never loaded cannot be saved',
+     "  if (textarea.dataset.loaded !== '1') {",
+     "  if (false) {",
+     'tools/templates/inbox.html'),
     ('route: the legend quotes the phrase it explains',
      "    f\"  * '{_route_head(_ROUTE_WHOLE)}' — call read_file on it FIRST.",
      "    f\"  * 'short' — call read_file on it FIRST."),

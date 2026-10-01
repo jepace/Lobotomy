@@ -90,6 +90,46 @@ condition. It launches whatever chromium is on disk by `executable_path`, since 
 playwright build and the installed browser build drift apart and the default launch then
 tells you to download one.
 
+**A `fetch` must get JSON back even when it is refused** (`_wants_json`,
+`_auth_required_response`, `apiFetch` in `base.html`). Reported as *"I copied and pasted an
+article and can't save it"*, with the message `Save failed: JSON.parse: unexpected
+character at line 1 column 1 of the JSON data`. The session had expired, `require_login`
+answered **302 to the login page**, and **`fetch` follows a redirect transparently** — so
+the browser got the login page's HTML with status **200**, and `await resp.json()` died on
+the `<` of `<!DOCTYPE`. The user's pasted article was still unsaved in the textarea, and
+the only thing the message told them to do was nothing.
+
+`require_login` now answers **401 JSON to a fetch and keeps redirecting a navigation**,
+which is not a detail — drop the redirect and nobody can log in, so both sides are pinned
+by tests. Three independent signals say "this is a fetch" (`X-Requested-With`, a JSON
+body, an Accept header preferring JSON), because a request need only match one.
+
+**This fixed all 52 protected routes at once**, including the ~30 `resp.json()` call sites
+nobody touched: a parseable 401 reaches their existing `data.error` branch, so "Archive
+failed: Unknown" became "Archive failed: Your session has expired — sign in again." That is
+the argument for fixing the shared refusal rather than the call sites. `apiFetch` is still
+needed for what the server *cannot* make JSON — a proxy's HTML 502, a dropped connection,
+an abort — and the paths that can lose data go through it.
+
+Two more defects fell out of looking at the save path, and the second is worse than the
+reported one:
+
+- **An unsaved edit lived only in the textarea**, and the commonest failure (an expired
+  session) is fixed by LEAVING the page. `stashDraft`/`loadDraft`/`clearDraft` keep it in
+  `localStorage` until the save lands; every access is wrapped, since storage can be absent
+  or throw and a draft is a convenience — the file on disk is the record.
+- **`editItem` swallowed its load error and left the textarea EMPTY**, which presents a
+  failed load as an empty file. Saving that box would have written the article away to
+  nothing. It closes the editor now, and `saveEdit` refuses a textarea that was never
+  filled from disk.
+
+`tests/test_api_auth_responses.py` has all three: the server's two answers, a structural
+half over the templates, and Playwright running the real lifted `apiFetch` against the
+exact responses — HTML-200, 401-JSON, 502-page, good JSON. It serves from a **real origin**,
+not `set_content`, for the same reason the hovercard tests do: on `about:blank` a relative
+`fetch('/api-test')` has no base and throws, and the first run of this module failed that
+way for a reason unrelated to the code.
+
 **`tools/wiki.py`** — CLI wrapper around the same agent tools. An interactive REPL or one-shot runner; no Flask dependency.
 
 **`tools/config.py`** — reads `config.json`. Use `cfg_get(section, key, default)` throughout. Config is never hardcoded.

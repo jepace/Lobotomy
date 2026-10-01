@@ -267,6 +267,51 @@
   </nav>
   <script>
   (function() {
+    // One place that turns an HTTP response into either JSON or a readable error.
+    //
+    // Every fetch in these templates used to do `await resp.json()` with no status check,
+    // so ANY non-JSON reply surfaced as "JSON.parse: unexpected character at line 1
+    // column 1" — a message that names neither what went wrong nor what to do. Observed
+    // while saving a pasted article: the session had expired, require_login answered 302,
+    // fetch followed it transparently, and resp.json() met the login page's `<!DOCTYPE`.
+    // The server now answers 401 JSON to a fetch; this is the half that reads it, and it
+    // also covers the cases the server cannot make JSON — a proxy's 502 page, a dropped
+    // connection, a timeout.
+    //
+    // The X-Requested-With header is what lets the server tell this apart from a browser
+    // navigation, which must still redirect or the login flow breaks.
+    window.apiFetch = async function(url, opts) {
+      opts = Object.assign({}, opts);
+      opts.headers = Object.assign({'X-Requested-With': 'fetch'}, opts.headers || {});
+      let resp;
+      try {
+        resp = await fetch(url, opts);
+      } catch (e) {
+        if (e.name === 'AbortError') throw new Error('The server did not answer in time. It may still be working — reload to check before trying again.');
+        throw new Error('Could not reach the server. Check your connection and try again.');
+      }
+      const body = await resp.text();
+      let data = null;
+      try { data = JSON.parse(body); } catch (e) { /* not JSON — handled below */ }
+      if (data && data.login_required) {
+        const err = new Error(data.error || 'Your session has expired — sign in again.');
+        err.loginRequired = true;
+        err.loginUrl = data.login_url || '/auth/login';
+        throw err;
+      }
+      if (data) {
+        if (!resp.ok) throw new Error(data.error || ('The server returned ' + resp.status + '.'));
+        return data;
+      }
+      // Not JSON. Say which page we got rather than quoting its first character.
+      if (/^\s*<(!doctype|html)/i.test(body)) {
+        throw new Error('The server sent a web page instead of an answer (HTTP ' + resp.status +
+                        '). You may have been signed out — reload the page and sign in.');
+      }
+      throw new Error('The server returned ' + resp.status + ' ' + (resp.statusText || '') +
+                      (body ? ': ' + body.slice(0, 200) : '.'));
+    };
+
     // Theme
     function applyTheme(t) {
       if (t === 'dark')       document.documentElement.setAttribute('data-theme', 'dark');

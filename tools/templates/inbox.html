@@ -605,6 +605,26 @@ async function deleteItem(name) {
   rowFor(name)?.remove();
 }
 
+// An unsaved edit lives only in its textarea, so a failed save with no rescue loses it —
+// and the commonest cause (an expired session) is fixed by LEAVING the page. These keep it
+// in this browser until the save lands. Per-browser and per-item; every access is wrapped,
+// since storage can be absent or throw in a private window and a draft is a convenience,
+// never the record. The file on disk is the record.
+function _draftKey(name) { return 'inbox-draft:' + name; }
+
+function stashDraft(name, content) {
+  try { localStorage.setItem(_draftKey(name), content); return true; }
+  catch (e) { return false; }
+}
+
+function loadDraft(name) {
+  try { return localStorage.getItem(_draftKey(name)); } catch (e) { return null; }
+}
+
+function clearDraft(name) {
+  try { localStorage.removeItem(_draftKey(name)); } catch (e) {}
+}
+
 async function editItem(name) {
   const editDiv = partFor(name, '.item-edit');
   if (!editDiv) return;
@@ -614,20 +634,37 @@ async function editItem(name) {
   }
   const textarea = editDiv.querySelector('textarea');
   textarea.value = 'Loading…';
+  textarea.dataset.loaded = '';
   editDiv.classList.add('open');
   const ctrl = new AbortController();
   const tid = setTimeout(() => ctrl.abort(), 8000);
+  let data;
   try {
-    const resp = await fetch('/inbox/view/' + encodeURIComponent(name), {signal: ctrl.signal});
+    data = await apiFetch('/inbox/view/' + encodeURIComponent(name), {signal: ctrl.signal});
     clearTimeout(tid);
-    const data = await resp.json();
-    textarea.value = data.content || '';
-    textarea.focus();
   } catch(e) {
     clearTimeout(tid);
-    textarea.value = '';
-    textarea.focus();
+    // This used to blank the textarea and focus it, which presents a FAILED LOAD as an
+    // empty file — and saving that box would overwrite the article with nothing. Close the
+    // editor instead: nothing was read, so there is nothing safe to edit.
+    cancelEdit(name);
+    alert('Could not open this item for editing: ' + e.message);
+    if (e.loginRequired) window.open(e.loginUrl, '_blank');
+    return;
   }
+  textarea.value = data.content || '';
+  textarea.dataset.loaded = '1';
+  const draft = loadDraft(name);
+  if (draft !== null && draft !== textarea.value) {
+    if (confirm('You have an unsaved edit of this item from earlier, kept after a failed '
+              + 'save. Restore it?\n\nOK restores your text; Cancel keeps what is on disk '
+              + 'and discards the draft.')) {
+      textarea.value = draft;
+    } else {
+      clearDraft(name);
+    }
+  }
+  textarea.focus();
 }
 
 function cancelEdit(name) {
@@ -639,23 +676,38 @@ async function saveEdit(name) {
   // resolve to another row's textarea, and then save that text under THIS filename.
   const textarea = partFor(name, '.item-edit textarea');
   if (!textarea) return;
+  // Never save a box that was never filled from disk. editItem used to leave an empty
+  // textarea behind when the load failed, and saving that would have replaced the
+  // article with nothing.
+  if (textarea.dataset.loaded !== '1') {
+    alert('This item was never loaded, so there is nothing to save. Close the editor and '
+        + 'open it again.');
+    return;
+  }
   const content  = textarea.value;
   const ctrl = new AbortController();
   const tid = setTimeout(() => ctrl.abort(), 15000);
   let data;
   try {
-    const resp = await fetch('/inbox/edit', {
+    data = await apiFetch('/inbox/edit', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({filename: name, content}),
       signal: ctrl.signal,
     });
     clearTimeout(tid);
-    data = await resp.json();
   } catch(e) {
     clearTimeout(tid);
-    alert('Save failed: ' + e.message);
+    // The text only exists in this textarea, and the commonest failure here is an expired
+    // session — which means the fix is to leave the page, which throws the paste away.
+    // Observed on a long pasted article. Stash it first, then say so.
+    const kept = stashDraft(name, content);
+    alert('Save failed: ' + e.message +
+          (kept ? '\n\nYour text has been kept in this browser and will come back when you'
+                + ' reopen this item — it is safe to reload and sign in.' : ''));
+    if (e.loginRequired && kept) window.open(e.loginUrl, '_blank');
     return;
   }
+  clearDraft(name);
   if (data.ok) {
     if (data.filename && data.filename !== name) {
       // File was renamed (e.g. .url promoted to .md) — reload to reflect new state
