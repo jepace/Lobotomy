@@ -468,6 +468,18 @@ MUTATIONS = [
      "  if (textarea.dataset.loaded !== '1') {",
      "  if (false) {",
      'tools/templates/inbox.html'),
+    # The log could not say which route went out — the tool result is truncated there and
+    # the routes are the part that is cut — so "did it follow the route" was unanswerable
+    # from a production log.
+    ('route: the handed-out route is recorded',
+     '    _ctx()._routes_given[rel] = (key, size)',
+     '    pass'),
+    ('route: a read that ignores the route is logged',
+     '    log.warning("route not taken: %s is %d chars, routed to %s, but %s was called",',
+     '    log.debug("x",'),
+    ('route: following the route logs nothing',
+     '    if want == tool:\n        return',
+     '    if False:\n        return'),
     ('route: the legend quotes the phrase it explains',
      "    f\"  * '{_route_head(_ROUTE_WHOLE)}' — call read_file on it FIRST.",
      "    f\"  * 'short' — call read_file on it FIRST."),

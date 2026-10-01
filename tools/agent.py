@@ -548,6 +548,7 @@ def _read_file(path: str, offset: int = -1) -> "str | list":
 
     try:
         wiki_rel = str(p.resolve().relative_to(WIKI_DIR.resolve()))
+        _note_route_taken(wiki_rel, "read_file")
         _ctx()._session_read_pages.add(wiki_rel)
         # Track the furthest point actually seen, not just "read at least once" — a page
         # over _WIKI_READ_LIMIT needs more than one read_file call to see it all, and
@@ -2174,6 +2175,7 @@ def _read_section(args: dict) -> str:
                 f"sections are above.")
     heading, start, end = found
     wiki_rel = str(p.relative_to(WIKI_DIR))
+    _note_route_taken(wiki_rel, "read_section")
     _ctx()._session_read_sections.add((wiki_rel, section.strip().lower()))
 
     # Also hand back the page's outline. Without it the agent is choosing a section blind
@@ -3250,6 +3252,7 @@ def _ctx():
         t._session_snapshotted = set()
         t._session_stale_pages = set()
         t._session_progress_last = None
+        t._routes_given = {}
     return t
 
 
@@ -3274,6 +3277,7 @@ def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
     t._session_snapshotted = set()
     t._session_stale_pages = set()
     t._session_progress_last = None
+    t._routes_given = {}
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:
@@ -5270,6 +5274,12 @@ def _route_head(key: str) -> str:
     return _ROUTE_PHRASES[key].split("—")[0].strip()
 
 
+# One word per route, for a log line. Deliberately the tool name rather than the marker,
+# because the question a log reader has is "which call should it have made".
+_ROUTE_LABELS = {_ROUTE_WHOLE: "read_file", _ROUTE_SECTION: "read_section",
+                 _ROUTE_READ: "already-read"}
+
+
 ROUTE_LEGEND = (
     f"  * '{_route_head(_ROUTE_WHOLE)}' — call read_file on it FIRST. It costs no extra round and you "
     f"then write once, knowing what every section already says, instead of guessing a "
@@ -5307,7 +5317,34 @@ def _write_route(rel: str, size: int = -1) -> tuple:
         key = _ROUTE_WHOLE
     else:
         key = _ROUTE_SECTION
+    # Record it, because every caller of this is HANDING the route to the model, and the
+    # log otherwise cannot say whether the advice was taken. Asked how we knew a page was
+    # too large to read whole, the honest answer was that we did not — the tool result is
+    # truncated in the log, so the route was invisible and the only evidence was the call
+    # the model then made, which is circular: a model ignoring the route leaves a log that
+    # looks the same as one obeying it. `_note_route_taken` closes that.
+    _ctx()._routes_given[rel] = (key, size)
     return key, _ROUTE_PHRASES[key]
+
+
+def _note_route_taken(rel: str, tool: str) -> None:
+    """Log when a read tool is not the one the page's route named.
+
+    Not a guard — nothing is refused, and a deviation is often harmless (the model may be
+    doing something the route did not anticipate). It is instrumentation: the routing
+    advice is spread across three replies and has gone stale twice, and the only way to
+    notice that from a production log is to see it being ignored.
+    """
+    given = _ctx()._routes_given.get(rel)
+    if not given:
+        return                                 # never routed — nothing to compare against
+    key, size = given
+    want = {_ROUTE_WHOLE: "read_file", _ROUTE_SECTION: "read_section",
+            _ROUTE_READ: "neither"}[key]
+    if want == tool:
+        return
+    log.warning("route not taken: %s is %d chars, routed to %s, but %s was called",
+                rel, size, want, tool)
 
 
 def _page_shape(rel: str, limit: int = 14) -> str:
@@ -5372,7 +5409,7 @@ def _lookup_titles(args: dict) -> str:
     for t, rel in title_map:
         by_norm.setdefault(_norm_title_key(t), []).append((t, rel))
 
-    found, missing, near, retired = [], [], False, []
+    found, missing, near, retired, _routed = [], [], False, [], []
     for n in names:
         rel = _resolve_page(n, by_key)
         if rel and _is_deprecated(rel):
@@ -5389,6 +5426,7 @@ def _lookup_titles(args: dict) -> str:
                 note = (" (found by filename or by normalizing the name — the page's "
                         "title: is written differently. Update this page; do not make a second one)")
             found.append(f"  - {n} → wiki/{rel}{note}{_page_shape(rel)}")
+            _routed.append(rel)
             continue
         cands = [(t, r) for t, r in by_norm.get(_norm_title_key(n), [])
                  if t.lower() != n.lower()]
@@ -5406,6 +5444,19 @@ def _lookup_titles(args: dict) -> str:
     # told two rounds earlier already existed. Saying what to DO at the head of each group,
     # and forbidding create_file inside the group where it is wrong, puts the instruction
     # where the names are.
+    # Say in the LOG which routes went out, because the tool result is truncated there and
+    # the routes are the part that gets cut. Without this the only way to tell whether a
+    # page was routed to read_section is to watch what the model did next, which proves
+    # nothing — that is the same call a model ignoring the route would make.
+    if found:
+        _counts = {}
+        for _rel in _routed:
+            _k = _ctx()._routes_given.get(_rel, ("?", 0))[0]
+            _counts[_k] = _counts.get(_k, 0) + 1
+        log.info("lookup_titles: %d found, routes — %s", len(found),
+                 ", ".join(f"{_ROUTE_LABELS.get(k, k)}: {n}"
+                           for k, n in sorted(_counts.items())) or "none")
+
     lines = [f"Looked up {len(names)} name(s) against {len(by_key)} wiki page titles and aliases."]
     if found:
         # The per-page routes and this legend both come from _write_route / ROUTE_LEGEND.
