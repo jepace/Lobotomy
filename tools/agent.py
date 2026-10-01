@@ -2222,6 +2222,66 @@ _BARE_URL = r"(?:https?|ftp)://[^\s<>()\[\]]+"
 # "../sources/backgammon-wikipedia.md", and a bare filename is how prose usually
 # names a page. The lookbehind keeps it from starting mid-token.
 _BARE_PATH = r"(?<![\w/.\-])(?:\.{1,2}/)*(?:[\w.\-]+/)*[\w.\-]+\.md"
+# An inline code span is a literal — a command, a filename, an identifier — not prose.
+# Reported: `container.exe` became `[container](../concepts/container.md).exe`, inside the
+# backticks. _BARE_PATH could not help, since it covers only `.md`; the general rule is
+# that nothing inside code is prose, whatever the extension.
+#
+# Longest run of backticks first, because CommonMark closes a span only on a run of the
+# SAME length — ``a ` b`` is one span containing a backtick, and matching the single first
+# would end it at the wrong place. Kept on one line (no DOTALL): a span does not span a
+# blank line, and the scanner is per-line anyway.
+#
+# <code> and <pre> too. render_md passes HTML through, so a page can carry them, and they
+# were being linked inside exactly like the backtick form.
+# A span opened with N backticks closes on a run of N, and may CONTAIN shorter runs:
+# ``docker ` ps`` is one span holding a backtick. Written out per length rather than with a
+# backreference, because this goes inside group 1 of the combined regex and a capture group
+# there would renumber the title group. The first version used `[^`\n]*` for all three
+# lengths, which cannot hold the inner tick — so the two-tick span never matched and the
+# golden corpus recorded `` ``[docker](…) ` ps`` `` as correct, which is the baseline-
+# enshrines-the-bug trap this corpus exists to catch.
+_CODE_SPAN = (r"```(?:[^`\n]|`(?!``))*```"
+              r"|``(?:[^`\n]|`(?!`))*``"
+              r"|`[^`\n]*`"
+              r"|<code\b[^>]*>.*?</code>|<pre\b[^>]*>.*?</pre>")
+_CODE_SPAN_RE = re.compile(_CODE_SPAN, re.DOTALL)
+# Prevention alone freezes the damage, which is the lesson _MANGLED_URL_RE already paid
+# for: once a link is inside a code span, group 1 protects it, so the very mechanism that
+# stops new ones from appearing is what keeps the existing ones forever. The pages already
+# carry these, so they are flattened back to text on the next write or relink.
+#
+# Scoped to links the autolinker itself would have written — a relative path ending .md —
+# so a page DOCUMENTING markdown, with `[text](url)` in a code span as an example, is left
+# exactly as its author wrote it.
+_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(((?:\.{1,2}/)*(?:[\w.\-]+/)*[\w.\-]+\.md)\)")
+
+
+def _unlink_in_code(text: str) -> tuple:
+    """Flatten wiki links written inside code spans and fenced blocks. (text, n_healed)."""
+    n = 0
+
+    def _flatten(s):
+        nonlocal n
+        s2, k = _CODE_LINK_RE.subn(r"\1", s)
+        n += k
+        return s2
+
+    lines, out, fence = text.split("\n"), [], ""
+    for ln in lines:
+        m = re.match(r"^\s{0,3}(`{3,}|~{3,})", ln)
+        if fence:
+            # Inside a block: the whole line is code, including the closing fence line.
+            out.append(_flatten(ln))
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
+                fence = ""
+            continue
+        if m:
+            fence = m.group(1)
+            out.append(_flatten(ln))
+            continue
+        out.append(_CODE_SPAN_RE.sub(lambda mm: _flatten(mm.group(0)), ln))
+    return "\n".join(out), n
 # The same thing after the damage is done: a URL with markdown links embedded in it.
 # Healed rather than merely prevented, because the pages already carry them and the
 # autolinker's own group 1 would otherwise protect the damage forever.
@@ -5581,12 +5641,48 @@ def _autolink(args: dict) -> str:
         log.info("autolink: %s — unwrapped %d link(s) written inside a URL",
                  target_str, _healed)
 
+    # Before anything else reads the text, for the same reason as the line above: group 1
+    # would otherwise protect the damage forever.
+    body, _code_healed = _unlink_in_code(body)
+    if _code_healed:
+        log.info("autolink: %s — unlinked %d link(s) written inside code",
+                 target_str, _code_healed)
+
     lines = body.split("\n")
     # Kept in step with `lines` on every substitution. The upgrade pass needs a per-line
     # case-insensitive probe, and lowercasing each line once per title is O(titles x
     # lines) — the same shape of cost the token prefilter exists to avoid.
     lines_lower = [ln.lower() for ln in lines]
     is_heading = [bool(re.match(r"^#{1,6}\s", ln)) for ln in lines]
+    # A fenced code block is not prose, and linking inside it corrupts the code.
+    #
+    # Reported as `container.exe` coming out as `[container](../concepts/container.md).exe`
+    # inside backticks. Reproducing it found the inline case was the mild one: a page about
+    # software carries shell commands, and `docker run --rm python:3` in a ```sh block came
+    # out with TWO links in it. That is not a cosmetic fault — the reader copies that line
+    # into a terminal. Nothing protected any of it: headings, existing links, bare URLs and
+    # bare paths were all covered, and code was not.
+    #
+    # Line-ranged, like is_heading, because a fence spans lines. Both ``` and ~~~, three or
+    # more marks, and a fence closes only on the SAME character — a ~~~ inside a ``` block
+    # is content, and treating it as a close would resume linking inside the block.
+    is_fenced, _fence = [], ""
+    for ln in lines:
+        m = re.match(r"^\s{0,3}(`{3,}|~{3,})", ln)
+        if _fence:
+            is_fenced.append(True)               # the closing line is still the block
+            if m and m.group(1)[0] == _fence[0] and len(m.group(1)) >= len(_fence):
+                _fence = ""
+        elif m:
+            _fence = m.group(1)
+            is_fenced.append(True)
+        else:
+            is_fenced.append(False)
+    # A `#` inside a fence is a shell comment, not a heading — and counting it as one
+    # advanced the section ordinal, so the once-per-section budget reset mid-section and
+    # the rest of the section could link a title again. Same reasoning as demote_stray_h1s
+    # skipping fenced blocks.
+    is_heading = [h and not f for h, f in zip(is_heading, is_fenced)]
     # A list row or table row always links, however many times the title has appeared
     # already. This is Wikipedia's own carve-out from "link once" (MOS:REPEATLINK relinks
     # in infoboxes, tables, captions, footnotes and lists) and it is load-bearing here: a
@@ -5688,7 +5784,8 @@ def _autolink(args: dict) -> str:
         combined = _title_regex_cache.get(title)
         if combined is None:
             combined = re.compile(
-                r"(" + _LINK_G1 + r"|" + _BARE_URL + r"|" + _BARE_PATH + r")"
+                r"(" + _LINK_G1 + r"|" + _BARE_URL + r"|" + _BARE_PATH
+                + r"|" + _CODE_SPAN + r")"
                 r"|(?<!\w)(" + _title_alts(title) + r")(?!\w)",
                 re.IGNORECASE,
             )
@@ -5780,7 +5877,7 @@ def _autolink(args: dict) -> str:
 
         changed = False
         for i, line in enumerate(lines):
-            if is_heading[i]:
+            if is_heading[i] or is_fenced[i]:
                 continue                        # section ordinal comes from _sec_of
             if not line or _probe not in lines_lower[i]:
                 continue

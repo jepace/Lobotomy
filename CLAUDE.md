@@ -292,6 +292,39 @@ own links look like one, so prose that names a file gets mangled. `_BARE_PATH` c
 with two plausible links**, so it reads fine on the page and only `/wiki/lint` ever
 notices. Do not conclude from a clean-looking page that link syntax is intact.
 
+**Code is not prose, and none of it was protected** (`_CODE_SPAN`, `is_fenced`,
+`_unlink_in_code`). Reported from a live page: `` `container.exe` `` came out as
+`` `[container](../concepts/container.md).exe` ``, because a page titled "Container"
+existed and `\b` is satisfied by the dot. `_BARE_PATH` covers `.md` only, and the general
+rule it is a special case of was missing. Reproducing it showed the inline case was the
+mild one — a fenced ```` ```sh ```` block came out as
+`[docker](…) run --rm [python](…):3`, and **the reader copies that line into a terminal**.
+`<code>` and `<pre>` too, since `render_md` passes HTML through.
+
+Fenced blocks are line-ranged like `is_heading`; a fence closes only on a run of its OWN
+character at least as long, or a `~~~` inside a ```` ``` ```` block would resume linking
+mid-block. A `#` inside a fence is a shell comment, so it is cleared from `is_heading` —
+it was advancing the section ordinal and resetting the once-per-section budget mid-section.
+
+**Prevention alone freezes the damage** — the `_MANGLED_URL_RE` lesson exactly: once a link
+is inside a span, group 1 protects it, so the mechanism that stops new ones is what keeps
+the old ones forever. `_unlink_in_code` runs at the top of `_autolink`, scoped to links the
+autolinker itself would have written (relative, ending `.md`), so a page documenting
+markdown keeps `` `[label](https://example.com)` `` exactly as written.
+
+Two traps. A span opened with N backticks closes on a run of N and may CONTAIN shorter
+runs, so ``` ``docker ` ps`` ``` is one span — the first pattern used `` `[^`\n]*` `` for
+every length, the two-tick span never matched, and **the golden corpus recorded the link
+inside it as correct**, which is the baseline-enshrines-the-bug trap the corpus exists to
+catch. And the alternation sits inside group 1 of the combined regex, so it must stay
+capture-free or the title group renumbers; that is why the lengths are written out rather
+than matched with a backreference.
+
+**Known gap, stated rather than half-handled:** a 4-space *indented* code block is not
+protected. Telling one from a lazy continuation under a bullet needs list state, and
+getting that wrong would silently stop linking inside ordinary nested lists — a worse
+failure than the one it fixes.
+
 `repair_links._repair_nested` used to make this permanent. When it could recover no target
 from inside the mangled URL it truncated at the first `[`, turning
 `[Backgammon](../sources/[backgammon].md)` into `[Backgammon](../sources)` — a link to a

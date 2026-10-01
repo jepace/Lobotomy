@@ -122,5 +122,45 @@
   "apostrophe_title": {
     "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
     "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\n[Moody's](../entities/moody-s.md) downgraded it. Moody's again.\n"
+  },
+  "inline_code_span": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nNative CLI (`wslc.exe` / `container.exe`) ships. A [container](../entities/container.md) is a thing.\n"
+  },
+  "fenced_block": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nInstall it.\n\n```sh\ndocker run --rm python:3\n```\n\nThen [docker](../entities/docker.md) works.\n"
+  },
+  "tilde_fence": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nInstall.\n\n~~~sh\ndocker run\n~~~\n\nThen [docker](../entities/docker.md) works.\n"
+  },
+  "backticks_inside_a_fence_do_not_close_it": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nTry:\n\n~~~\ndocker ` tick\ndocker again\n~~~\n\nAnd [docker](../entities/docker.md) after.\n"
+  },
+  "hash_in_a_fence_is_not_a_heading": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nSteps:\n\n```sh\n# install docker\ndocker run\n```\n\nThen [docker](../entities/docker.md) once.\n"
+  },
+  "html_code_tag": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nA <code>python</code> tag, then [python](../entities/python.md) in prose.\n"
+  },
+  "heals_link_inside_code_span": {
+    "message": "Autolinked 0 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nCLI (`container.exe`) ships.\n"
+  },
+  "heals_link_inside_fence": {
+    "message": "Autolinked 0 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nRun:\n\n```sh\ndocker run --rm\n```\n\n"
+  },
+  "markdown_example_in_code_is_left_alone": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nWrite `[label](https://example.com)` for a link. An [Example](../entities/example.md) follows.\n"
+  },
+  "double_backtick_span": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nUse ``docker ` ps`` carefully. Then [docker](../entities/docker.md) in prose.\n"
   }
 }

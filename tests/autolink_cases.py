@@ -110,4 +110,39 @@ CASES = [
 
     ("apostrophe_title", [("Moody's", [], False)], "entities",
      "Moody's downgraded it. Moody's again."),
+
+    # Code is not prose. Reported as `container.exe` coming out as
+    # `[container](../concepts/container.md).exe` inside the backticks.
+    ("inline_code_span", [("Container", [], False)], "entities",
+     "Native CLI (`wslc.exe` / `container.exe`) ships. A container is a thing."),
+
+    ("fenced_block", [("Docker", [], False), ("Python", [], False)], "entities",
+     "Install it.\n\n```sh\ndocker run --rm python:3\n```\n\nThen docker works."),
+
+    ("tilde_fence", [("Docker", [], False)], "entities",
+     "Install.\n\n~~~sh\ndocker run\n~~~\n\nThen docker works."),
+
+    ("backticks_inside_a_fence_do_not_close_it", [("Docker", [], False)], "entities",
+     "Try:\n\n~~~\ndocker ` tick\ndocker again\n~~~\n\nAnd docker after."),
+
+    ("hash_in_a_fence_is_not_a_heading", [("Docker", [], False)], "entities",
+     "Steps:\n\n```sh\n# install docker\ndocker run\n```\n\nThen docker once."),
+
+    ("html_code_tag", [("Python", [], False)], "entities",
+     "A <code>python</code> tag, then python in prose."),
+
+    # Already on disk: prevention alone freezes it, since group 1 protects a link once it
+    # is inside a span. These flatten back to text.
+    ("heals_link_inside_code_span", [("Container", [], False)], "entities",
+     "CLI (`[container](../concepts/container.md).exe`) ships."),
+
+    ("heals_link_inside_fence", [("Docker", [], False)], "entities",
+     "Run:\n\n```sh\n[docker](../concepts/docker.md) run --rm\n```\n"),
+
+    # ...but a page documenting markdown keeps its example exactly as written.
+    ("markdown_example_in_code_is_left_alone", [("Example", [], False)], "entities",
+     "Write `[label](https://example.com)` for a link. An Example follows."),
+
+    ("double_backtick_span", [("Docker", [], False)], "entities",
+     "Use ``docker ` ps`` carefully. Then docker in prose."),
 ]

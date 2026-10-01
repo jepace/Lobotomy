@@ -473,6 +473,28 @@ MUTATIONS = [
     # from a production log.
     # A 500 is not an expired session, and telling the user to sign in again is a move
     # that cannot fix it (principle 4, in the UI).
+    # Code is not prose. `container.exe` came out as `[container](…).exe`, and a ```sh
+    # block came out with links in a command the reader copies into a terminal.
+    ('autolink: a code span is protected like a link',
+     '                + r"|" + _CODE_SPAN + r")"',
+     '                + r")"'),
+    ('autolink: a fenced block is skipped',
+     '            if is_heading[i] or is_fenced[i]:',
+     '            if is_heading[i]:'),
+    ('autolink: a fence closes only on its own character',
+     "            if m and m.group(1)[0] == _fence[0] and len(m.group(1)) >= len(_fence):",
+     "            if m:"),
+    ('autolink: a hash inside a fence is not a heading',
+     '    is_heading = [h and not f for h, f in zip(is_heading, is_fenced)]',
+     '    is_heading = list(is_heading)'),
+    # Prevention alone freezes the damage: group 1 protects a link once it is in a span.
+    ('autolink: links already written inside code are flattened',
+     '    body, _code_healed = _unlink_in_code(body)',
+     '    body, _code_healed = (body, 0)'),
+    # ...but only the autolinker's own shape, so a markdown example in a code span lives.
+    ('autolink: healing code spans spares a real markdown example',
+     r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(((?:\.{1,2}/)*(?:[\w.\-]+/)*[\w.\-]+\.md)\)")',
+     r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)]*)\)")'),
     ('client: a 5xx is not reported as a sign-out',
      "      if (/^\\s*<(!doctype|html)/i.test(body) || resp.status >= 500) {\n        if (resp.status >= 500) {",
      "      if (/^\\s*<(!doctype|html)/i.test(body) || resp.status >= 500) {\n        if (false) {",
