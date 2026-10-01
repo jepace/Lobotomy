@@ -267,6 +267,31 @@ class BrowserTest(unittest.TestCase):
         self.assertNotIn("JSON.parse", err["message"])
         page.close()
 
+    def test_a_500_is_not_reported_as_a_sign_out(self):
+        """The second report. The first version of this helper guessed 'you may have been
+        signed out' for ANY html body, and then said exactly that about a real HTTP 500
+        from /inbox/edit — locally correct about what it saw, wrong about the move, since
+        signing in again cannot fix a server fault. Principle 4, in the UI."""
+        page = self._page(500, "<!DOCTYPE html><title>Internal Server Error</title>")
+        msg = self._err(page)["message"]
+        self.assertNotIn("signed out", msg)
+        self.assertNotIn("sign in", msg.replace("signing in again will not help", ""))
+        self.assertIn("500", msg)
+        page.close()
+
+    def test_a_500_says_where_to_look(self):
+        """It is the server's fault, so the move is reading the server log."""
+        page = self._page(500, "<!DOCTYPE html><title>Internal Server Error</title>")
+        msg = self._err(page)["message"]
+        self.assertIn("server log", msg)
+        page.close()
+
+    def test_a_401_login_page_still_says_sign_in(self):
+        """The distinction has to cut both ways, or the first bug comes back."""
+        page = self._page(200, "<!DOCTYPE html><title>Sign in</title>")
+        self.assertIn("signed out", self._err(page)["message"])
+        page.close()
+
     def test_a_json_error_reply_is_quoted(self):
         page = self._page(400, '{"error":"No filename"}', content_type="application/json")
         self.assertIn("No filename", self._err(page)["message"])

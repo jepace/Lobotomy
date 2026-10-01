@@ -471,6 +471,30 @@ MUTATIONS = [
     # The log could not say which route went out — the tool result is truncated there and
     # the routes are the part that is cut — so "did it follow the route" was unanswerable
     # from a production log.
+    # A 500 is not an expired session, and telling the user to sign in again is a move
+    # that cannot fix it (principle 4, in the UI).
+    ('client: a 5xx is not reported as a sign-out',
+     "      if (/^\\s*<(!doctype|html)/i.test(body) || resp.status >= 500) {\n        if (resp.status >= 500) {",
+     "      if (/^\\s*<(!doctype|html)/i.test(body) || resp.status >= 500) {\n        if (false) {",
+     'tools/templates/base.html'),
+    # raw/ writes bypass _atomic_write, so a root-owned file surfaces as a bare 500 with
+    # the cause only in the traceback.
+    ('inbox_edit: a write that fails names the file and the reason',
+     '        return _inbox_edit_write(p, content)\n    except OSError as e:',
+     '        return _inbox_edit_write(p, content)\n    except _NeverRaised as e:',
+     'tools/serve.py'),
+    ('serve: an unhandled crash answers a fetch in JSON',
+     '    log.exception("unhandled error serving %s %s", request.method, request.path)',
+     '    log.debug("x")',
+     'tools/serve.py'),
+    ('serve: an HTTPException is not reported as a crash',
+     '    if isinstance(e, HTTPException):\n        return e',
+     '    if False:\n        return e',
+     'tools/serve.py'),
+    ('serve: a promoted .url title is escaped, not interpolated',
+     "        fm = f'---\\ntitle: {fm_quote(title)}\\n'",
+     "        fm = f'---\\ntitle: \"{title}\"\\n'",
+     'tools/serve.py'),
     ('route: the handed-out route is recorded',
      '    _ctx()._routes_given[rel] = (key, size)',
      '    pass'),

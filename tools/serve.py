@@ -154,7 +154,7 @@ from config import (cfg_get, cfg_bool, cfg_int, validate_config,
                     cfg_active_provider, cfg_provider, cfg_available_models,
                     cfg_all_providers, cfg_write_llm)
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title, _H1_RE,
-                   fm_scalar, parse_tags_line, first_desc_line,
+                   fm_scalar, fm_quote, parse_tags_line, first_desc_line,
                    _page_section_names,
                    write_reason, page_history,
                    get_client_and_model, orientation_message,
@@ -253,6 +253,30 @@ def _auth_required_response(setup: bool = False):
         return redirect(url_for("setup"))
     next_url = request.full_path.rstrip("?")
     return redirect(url_for("auth_login", next=next_url))
+
+
+@app.errorhandler(Exception)
+def _unhandled(e):
+    """A crash answers a fetch in JSON, and always lands in OUR log.
+
+    Flask's default is an HTML 500 page, which `fetch` hands to `resp.json()` — the same
+    shape as the expired-session bug, and the client can only guess at the cause. Observed
+    once that guess was in place: a real HTTP 500 from /inbox/edit was reported to the user
+    as "you may have been signed out", a move that could not fix it.
+
+    It also logs to `lobotomy.serve` rather than only to Flask's own `app.logger`, so the
+    traceback is in the same file as everything else when someone goes looking.
+    """
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e                                   # 404s and friends are not crashes
+    log.exception("unhandled error serving %s %s", request.method, request.path)
+    if _wants_json():
+        return {"error": (f"The server hit an error handling this request "
+                          f"({type(e).__name__}). It is a fault on the server — the "
+                          f"traceback is in the server log."),
+                "detail": str(e)[:300]}, 500
+    raise e
 
 
 def require_login(f):
@@ -3280,6 +3304,24 @@ def inbox_edit():
         return {"error": "Invalid path"}, 400
     if not p.exists():
         return {"error": "File not found"}, 404
+    try:
+        return _inbox_edit_write(p, content)
+    except OSError as e:
+        # These writes do NOT go through agent._atomic_write — raw/ is outside the wiki —
+        # so they get none of its ownership handling, and this project's standing hazard is
+        # a file left root-owned by a maintenance tool run beside a server running as
+        # another user. That surfaces as a bare 500 with the cause only in the traceback.
+        # Name the file, the errno and the likeliest fix, since the user can act on all
+        # three and "the server hit an error" tells them nothing.
+        log.error("inbox_edit: cannot write %s: %s", p, e)
+        return {"error": (f"Could not write raw/{p.name}: {e.strerror or e}. The server "
+                          f"process may not own that file — check its owner and mode "
+                          f"against the user the server runs as, which is the usual cause "
+                          f"after a maintenance tool was run as root."),
+                "path": f"raw/{p.name}", "errno": e.errno}, 500
+
+
+def _inbox_edit_write(p, content):
     if p.suffix == ".md":
         existing = p.read_text(encoding="utf-8", errors="replace")
         # Preserve the frontmatter block, replace only the body
@@ -3303,7 +3345,11 @@ def inbox_edit():
         today = datetime.date.today().isoformat()
         md_name = p.stem + ".md"
         md_path = p.parent / md_name
-        fm = f'---\ntitle: "{title}"\n'
+        # Through fm_quote, not interpolated into "{...}". A headline carrying a
+        # quote — and news headlines do — otherwise writes invalid YAML, which the
+        # frontmatter readers then disagree about: the documented create_file defect,
+        # in a second place.
+        fm = f'---\ntitle: {fm_quote(title)}\n'
         if url_val:
             fm += f'url: {url_val}\n'
         fm += f'saved: {today}\n---\n\n'
