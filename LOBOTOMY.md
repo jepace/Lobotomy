@@ -535,15 +535,20 @@ For each entity (person, organization, product, project) on that list:
   whenever the page comes back in one piece — you lose the ability to spot duplication
   otherwise — and use `read_section` past that point.
 
-  **Let the page's size choose the route.** `lookup_titles` marks every existing page
-  either `reads whole` or `outline only`.
+  **Let the page's size choose the route — and it has already been chosen for you.** Every
+  page `lookup_titles` reports as existing carries the route in brackets, and `done()`'s
+  refusal repeats it if you get there with pages outstanding. There are three, and the words
+  below are the words you will see:
 
-  * `reads whole` — call `read_file` on it **first**. It costs no extra round, and you then
-    write once knowing what every section already says, rather than composing for a section
-    you guessed and being handed the page back afterwards.
-  * `outline only` — the page is too large to read. Go straight to `update_section`:
-    reading would return an outline and cost a round, while the refusal hands back the
-    section you named plus the names of the others.
+  * `reads whole — read_file first, then update_section` — call `read_file` on it **first**.
+    It costs no extra round, and you then write once knowing what every section already
+    says, rather than composing for a section you guessed and being handed the page back
+    afterwards.
+  * `too large to read whole — read_section it, then update_section` — `read_file` would
+    return only an outline and cost a round. Call `read_section` for the section you mean —
+    the reply listed the page's section names — and write once with its text in front of you.
+  * `already read in full this session — call update_section directly, do NOT read it again`
+    — you are holding the page. Reading it again spends a round on text you already have.
 
   Either way a wrong guess is cheap and never costs the page — an unread section is refused
   with its content attached. And never follow a refusal with `read_file` or `read_section`:
@@ -599,106 +604,13 @@ For each concept, technique, framework, or term on that list:
   immediately and treat as new. Do NOT search again. Do NOT try capitalization variants. Do NOT
   add scope modifiers as additional attempts. The server enforces this limit and will refuse the
   third call.
-- **If a document exists**, fold the new source into it — do not rebuild it from scratch,
-  and do not merely tack a paragraph onto the end. The page should read as one synthesis
-  that happens to be informed by many sources, not as a pile of per-source additions.
-
-  **Read the whole page, then write section by section:**
-  1. `read_file` the page. Seeing all of it is what lets you place new information well, and
-     notice when it is already covered somewhere else on the page — so read the whole thing
-     whenever the page comes back in one piece.
-
-     **If it comes back `[OUTLINE …]`, the page was too large to quote** — you are given
-     its frontmatter, every section name, each section's size, and the opening of each one.
-     That is enough to decide where new information belongs and to see what is already
-     covered. Call `read_section(path, section)` for the section you are changing; it
-     returns that one in full. Do not call `read_file` again with an offset: reading is not
-     free — every chunk you pull in stays in the conversation and is re-sent on every round
-     for the rest of this ingest, so paging through a 60K page costs that page several
-     times over before the ingest ends. A page that large is one where sections are
-     self-contained enough to edit on their own.
-  2. Decide where each piece of new information belongs.
-  3. For each section that changes, call `update_section` with **that section's body and
-     nothing else** — the text under its heading, without the heading line, without any
-     other section, and without `## Sources`. Sending the whole page here is the common
-     mistake: the content is placed *under* the heading that is already there, so a page
-     arrives back inside its own Overview. What you send is the new
-     information *merged into* the existing prose, extending a sentence, qualifying a claim,
-     adding a detail where it fits. Preserve everything the source does not contradict.
-
-     **One section per call.** If you have written text for two sections, that is two
-     calls — the second one's text does not belong in the first one's body, and putting
-     it there is worse than leaving it out. If the section you want does not exist yet,
-     `append_section(path, section, text)` creates it; do not smuggle a new heading into
-     another section's content and do not settle for dropping the material into Overview.
-     Most sources change one or two sections.
-
-  **On a short page, rewriting the whole thing with `update_file` is fine** — often better,
-  since it lets you reorganize across sections rather than editing them in isolation. What
-  makes that impossible is size: `update_file` must re-emit every character, and past a
-  point the page no longer fits in one response. You do not have to judge that yourself —
-  `read_file` tells you when a page is too large and to use `update_section` instead. Follow
-  that when you see it; otherwise either tool is reasonable.
-
-  **If a section is itself too long to re-emit, use `replace_text`.** `update_section`
-  requires you to reproduce the whole section, and a rewrite that drops more than a third
-  of it is refused as content loss — so on a very long section, paraphrasing instead of
-  reproducing leaves no call that succeeds. Quote the sentence or bullet you are changing
-  in `old_text`, send it with your new information merged in as `new_text`, and nothing
-  else on the page is touched. The quote has to match exactly one place: read the section
-  first and copy from what it returns. Whitespace and links are ignored when matching, so
-  you need not reproduce `[the](../links.md)`. This still merges in place — prefer it over
-  `append_section`, which only ever adds to the end.
-
-  Both reading and writing are bounded, in different ways. `update_section` sends only one
-  section, so writing works at any page size. Reading is bounded by the conversation: what
-  you read is re-sent on every later round, so a full read is worth its cost on a page that
-  arrives whole and is not worth it on one that arrives truncated. Prefer the full read
-  whenever the page comes back in one piece — you lose the ability to spot duplication
-  otherwise — and use `read_section` past that point.
-
-  **Let the page's size choose the route.** `lookup_titles` marks every existing page
-  either `reads whole` or `outline only`.
-
-  * `reads whole` — call `read_file` on it **first**. It costs no extra round, and you then
-    write once knowing what every section already says, rather than composing for a section
-    you guessed and being handed the page back afterwards.
-  * `outline only` — the page is too large to read. Go straight to `update_section`:
-    reading would return an outline and cost a round, while the refusal hands back the
-    section you named plus the names of the others.
-
-  Either way a wrong guess is cheap and never costs the page — an unread section is refused
-  with its content attached. And never follow a refusal with `read_file` or `read_section`:
-  you are already holding what they would return.
-
-  **Choosing which section.** Default to one that already exists — the templates in
-  Section 3 cover most material, and merging into an existing section is what makes the page
-  a synthesis instead of a pile. If `read_section` reports the section is absent, it lists
-  the page's real sections; pick the closest fit from those before inventing one.
-
-  Create a new section only when the material is a **recurring theme with enough substance
-  to stand on its own** and fits none of the existing ones — "Legal Proceedings" on a
-  much-litigated figure, "Technical Characteristics" on a device. **Never name a section
-  after a source, a date, or a single event** — "2026 Tariff Announcement", "Wired Article
-  Findings", "August Update". That is a changelog wearing a heading, and it fails for the
-  same reason appending paragraphs does: the page stops being a synthesis. A one-off fact
-  belongs *inside* a thematic section, not in a section of its own.
-
-  **The exception is an unfolding event**, where the dated material is the point. Those
-  pages carry a `## Timeline`, and each new source adds one entry to it with
-  `add_timeline_entry` — which sorts the entry into place, so an out-of-order ingest still
-  produces a correct timeline. Revise `## Overview` in the same visit so the top of the
-  page still reads as the current state of the story.
-
-  `update_file` (whole page at once) is fine on a short page and is what the Regenerate
-  Workflow uses, but on a large page it forces re-emitting every character and will be
-  refused. `append_section` only adds, so reach for it only when creating a section that
-  passes the test above — never as a way to avoid merging.
-
-  Do not set `sources:` or `created:` — both are managed automatically.
-  **Do not read the pages listed in `sources:`, and do not search for more sources.** Their
-  content is already reflected in the page you just read. Re-deriving the page from all of its
-  sources is the Regenerate Workflow (Section 6), which runs only when the user asks for it.
+- **If a document exists**, update it exactly as Step 5 describes for an entity page:
+  fold the source in rather than rebuilding or appending, read the page by the route
+  `lookup_titles` named for it, write section by section with `update_section`, and obey the
+  same rules about headings, dates, `sources:` and not re-reading the pages it cites. The
+  procedure is identical for a concept page — it is written out once, under Step 5, so that
+  the two cannot drift apart. Re-read it there if you are unsure; do not improvise a
+  different one here.
 - **If no document exists**, use `create_file` for
   `wiki/concepts/{slug}.md`, written from this source. Every name on the list gets a page —
   whether it "warrants" one was decided in Step 3, and re-deciding it here is what leaves

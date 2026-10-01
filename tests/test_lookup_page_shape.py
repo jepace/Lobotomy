@@ -84,8 +84,11 @@ class PageShapeTest(TempWikiTestCase):
         update_section means composing blind and then re-deciding while holding a draft
         aimed at the guessed section; an observed 58-page ingest did exactly that and
         resent Overview after a refusal that had named the alternatives.
-        Long page: read_file returns an outline and costs a round, so straight to
-        update_section is right — 2 rounds against 3.
+        Long page: read_file returns an outline and costs a round, so the route is a direct
+        read_section for the section named in this very reply — also 2 rounds, and it
+        composes once for the same reason the short-page case does. This reply used to say
+        "go straight to update_section" here while done()'s refusal said read_section; both
+        now come from `_write_route`, which resolved it this way.
         """
         self._newsom()
         big = "# Big\n\n" + "".join(f"## S{i}\n\n" + ("word " * 900) + "\n\n"
@@ -96,10 +99,30 @@ class PageShapeTest(TempWikiTestCase):
         newsom = next(l for l in out.splitlines() if "gavin-newsom" in l)
         big_l = next(l for l in out.splitlines() if "entities/big.md" in l)
         self.assertIn("reads whole — read_file first", newsom)
-        self.assertIn("outline only — go straight to update_section", big_l)
+        self.assertIn("too large to read whole — read_section", big_l)
         # And both routes are explained, not just marked.
         self.assertIn("costs no extra round", out)
-        self.assertIn("would give you an outline and cost a round", out)
+        self.assertIn("read_file would return only an outline", out)
+
+    def test_the_route_is_the_one_done_would_give_for_the_same_page(self):
+        """The consolidation itself. Two replies giving one page two different routes means
+        the agent does one of them at random, and the round it spends is real either way."""
+        self._newsom()
+        rel = "entities/gavin-newsom.md"
+        out = agent._lookup_titles({"names": ["Gavin Newsom"]})
+        row = next(l for l in out.splitlines() if rel in l)
+        self.assertIn(agent._write_route(rel)[1], row)
+
+    def test_a_page_already_read_in_full_is_not_sent_back_to_read_it(self):
+        """_page_shape had no coverage case, so lookup_titles told the agent to read_file a
+        page it was already holding. done()'s copy of the advice did have it."""
+        self._newsom()
+        rel = "entities/gavin-newsom.md"
+        agent._read_file(f"wiki/{rel}")
+        out = agent._lookup_titles({"names": ["Gavin Newsom"]})
+        row = next(l for l in out.splitlines() if rel in l)
+        self.assertIn("already read in full this session", row)
+        self.assertNotIn("read_file first", row)
 
     def test_the_marker_agrees_with_what_read_file_actually_does(self):
         """The marker is a promise about another tool; if they disagree it is worse than

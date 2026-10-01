@@ -486,17 +486,46 @@ filename. The suite touched neither of serve's two tag readers, so the same mist
 the `/wiki/tags` path undetected. Add the name to the import list, and when a helper is
 shared across the two modules, test that `serve.x is agent.x`.
 
-**`lookup_titles` marks each page `reads whole` or `outline only`, and the route follows
-from that.** Round count alone says go straight to `update_section` — 2 rounds at any size,
-against 2 for a short page read first and 3 for a long one — and that is the wrong
-conclusion, because it counts rounds and not COMPOSITIONS. On a short page, reading first
-is free and strictly better: the same two rounds, but the agent writes ONCE with every
-section's text in front of it. Going straight means composing blind, then re-deciding
-while holding a draft aimed at the section it guessed — and an observed 58-page ingest did
-precisely that, resending Overview after a refusal that had already named the
-alternatives. A sunk draft beats a list of names. On a long page the calculus flips, since
-`read_file` returns only an outline and costs a round. The agent cannot tell the cases
-apart from section names, so `_page_shape` states the size and the route.
+**How to reach a page you are about to write to is ONE answer, in `_write_route`.** Three
+replies hand the agent that advice — `lookup_titles`' UPDATE group (which `create_file`'s
+worklist handback goes through as well), `done()`'s refusal, and LOBOTOMY.md's Step 5 — and
+each used to carry its own copy of the reasoning. **The copies disagreed**: on a page over
+`_WIKI_READ_LIMIT`, `lookup_titles` said *go straight to `update_section`* while `done()`'s
+refusal said *`read_section` first*. An agent told two things does one of them at random,
+and the round it spends is real either way. Worse, `_page_shape` had no coverage case at
+all, so `lookup_titles` sent the agent to `read_file` a page it was already holding — the
+exact waste `done()`'s copy had been fixed to avoid.
+
+The resolution is composition, not round count. Round count alone says go straight to
+`update_section` — 2 rounds at any size — and that is wrong because it counts rounds and not
+COMPOSITIONS. Reading first is the same two rounds (`update_section`'s refusal hands the
+text back, so the blind route costs a round too) but the agent writes ONCE with the text in
+front of it, instead of composing blind and then re-deciding while holding a draft aimed at
+the section it guessed; an observed 58-page ingest did precisely that, resending Overview
+after a refusal that had already named the alternatives. A sunk draft beats a list of names.
+That argument does not change at the read limit — only the call does, since `read_file`
+returns an outline there — which is why the large-page case is `read_section`, and why
+`lookup_titles` listing section names is what makes it reachable. Three routes:
+
+| condition | route |
+|---|---|
+| session has full read coverage | `update_section` directly, do not read again |
+| ≤ `_WIKI_READ_LIMIT` | `read_file` first, then `update_section` |
+| larger | `read_section` the named section, then `update_section` |
+
+`ROUTE_LEGEND` is built by quoting the per-page phrases, so a marker cannot appear on a row
+with nothing explaining it. The `read_file` outline is deliberately **not** folded in: it
+answers a different question — per-section edit vs whole-page rewrite, keyed on the output
+budget rather than the read limit — and merging two decisions into one helper is how a
+shared answer starts being wrong for one of its callers.
+
+**LOBOTOMY.md had the same advice twice because it had the whole procedure twice.** Step 5
+(entities) and Step 6 (concepts) carried 100 identical lines, so the stale wording had to be
+fixed in two places and only ever got fixed in one. Step 6 now points at Step 5.
+`tests/test_schema_no_duplicate_blocks.py` fails on any repeated run of six-plus non-blank
+lines in either LOBOTOMY.md or this file — the schema is prepended to every request of every
+round, so a duplicated half-page is paid thousands of times a day, and two copies of a
+procedure drift. A repeated bullet or sentence is fine and is not reported.
 
 **A `fetch_failed` raw file deadlocked `done()`.** Nothing was fetched, so there was no
 article text — and a fetch-failed ingest has exactly the shape the completeness guards look
@@ -530,17 +559,15 @@ what makes the CREATE group say "there is no file there to read".
 
 **`done()`'s refusal is where the agent re-plans, so it carries the routing too.** It used
 to say "read_section the section you are changing" for every unhandled page at any size —
-true when written, stale once `lookup_titles` started marking pages `reads whole` /
-`outline only`. Observed in a 20-round ingest: the agent followed the route for its first
-two pages, called `done()` early, met this refusal, and then `read_section`'d all four
-remaining pages. It did what it was told. One of those four it had already read IN FULL
-nine rounds earlier, with coverage credited, so `update_section` would have gone straight
-through — the round was spent fetching what it was holding. The other three cost the same
-rounds as `read_file` would have but showed one section instead of the page. Each row now
-names one of three routes, and the "already read in full this session" case reads the
-session's own coverage. **The pattern to watch: any reply that gives procedural advice has
-to track the tools underneath it, and there are now three such places** —
-`lookup_titles`' UPDATE header, the `read_file` outline, and this.
+true when written, stale once `lookup_titles` started marking the route. Observed in a
+20-round ingest: the agent followed the route for its first two pages, called `done()`
+early, met this refusal, and then `read_section`'d all four remaining pages. It did what it
+was told. One of those four it had already read IN FULL nine rounds earlier, with coverage
+credited, so `update_section` would have gone straight through — the round was spent
+fetching what it was holding. Its rows now come from `_write_route` like everyone else's.
+**The pattern to watch: any reply that gives procedural advice has to track the tools
+underneath it.** That is what produced the duplication above, and the remaining places where
+it still applies independently are the `read_file` outline and the four handback refusals.
 
 **A short page is handed back whole; a long one is handed back a section.** The
 unread-section refusal used to return the guessed section plus the other sections' NAMES at

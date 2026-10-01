@@ -439,9 +439,26 @@ MUTATIONS = [
     # cheaper and is a round dearer on a long page.
     # The marker that decides the route. Wrong for a long page it sends the
     # agent to read_file for an outline it cannot use, and costs a round.
-    ('lookup: the read route matches the page size',
-     '    _route = ("reads whole — read_file first" if _full <= _WIKI_READ_LIMIT',
-     '    _route = "reads whole — read_file first"'),
+    # One answer for "how do I reach this page to write to it", shared by lookup_titles,
+    # create_file's worklist handback and done()'s refusal. They had three copies and the
+    # copies disagreed on a large page.
+    ('route: the read route matches the page size',
+     '    elif size and size <= _WIKI_READ_LIMIT:',
+     '    elif size:'),
+    # The legend quotes the per-page phrases rather than restating them, so a route cannot
+    # be marked on a row with nothing explaining it.
+    ('route: the legend quotes the phrase it explains',
+     "    f\"  * '{_route_head(_ROUTE_WHOLE)}' — call read_file on it FIRST.",
+     "    f\"  * 'short' — call read_file on it FIRST."),
+    # LOBOTOMY.md spells out the same three phrases, so the model reads the route in the
+    # schema instead of discovering it from a refusal. Changing one here must not silently
+    # leave the schema describing something else.
+    ('route: the schema is kept in step with the phrases',
+     '    _ROUTE_WHOLE:   "reads whole — read_file first, then update_section",',
+     '    _ROUTE_WHOLE:   "read it first",'),
+    ('route: a page already read in full is not read again',
+     '    if size and _ctx()._session_read_coverage.get(rel, 0) >= size:',
+     '    if False:'),
     # The hover card's blurb comes from the index's own helper, so a page's index
     # entry and its card cannot say different things.
     ('preview: the blurb is the index blurb',
@@ -463,9 +480,9 @@ MUTATIONS = [
      '            _seen_key[0] = (title, _sec_of[i])'),
     # done()'s refusal is where the agent re-plans, so its routing must know what
     # the session already read — or it sends it to re-fetch a page it holds.
-    ('done: the refusal knows what was already read in full',
-     '                    if ctx._session_read_coverage.get(rel, 0) >= _n and _n:',
-     '                    if False:'),
+    ('done: the refusal routes each page through the shared answer',
+     '                _rows = [f"  - {name} → wiki/{rel} [{_write_route(rel)[1]}]"',
+     '                _rows = [f"  - {name} → wiki/{rel} [read_section it]"'),
     # A lookup taken before the source page exists is over a guessed list: one log
     # showed 7 names looked up against 10 committed. This hands back a lookup over
     # the committed list, in the message that creates it.

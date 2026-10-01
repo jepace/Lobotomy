@@ -3898,37 +3898,21 @@ def _done(args: dict) -> str:
             ctx._done_progress_mark = _handled
             _parts = []
             if _to_update:
-                # Name the route per page, the way lookup_titles does. This used to say
-                # "read_section the section you are changing" for every page at any size,
-                # and the agent obeyed it: an observed ingest followed lookup_titles'
-                # "reads whole — read_file first" for its first two pages, hit this
-                # refusal, and then read_section'd all four remaining ones. One of those
-                # four it had ALREADY read in full nine rounds earlier — coverage was
-                # credited, update_section would have gone straight through — so the round
-                # was spent fetching what it was holding.
+                # This is the moment the agent re-plans, so it is the moment the routing has
+                # to be right — and it used to say "read_section the section you are
+                # changing" for every page at any size. An observed ingest followed
+                # lookup_titles' route for its first two pages, hit this refusal, and then
+                # read_section'd all four remaining ones; one of those it had ALREADY read in
+                # full nine rounds earlier, so the round was spent fetching what it held.
                 #
-                # This is the moment the agent re-plans, so it is the moment the routing
-                # has to be right. Three cases, and only the last is a plain read_section.
-                _rows = []
-                for name, rel in _to_update[:15]:
-                    _full_p = WIKI_DIR / rel
-                    try:
-                        _n = len(_strip_system_fm_fields(
-                            _full_p.read_text(encoding="utf-8", errors="replace")))
-                    except OSError:
-                        _n = 0
-                    if ctx._session_read_coverage.get(rel, 0) >= _n and _n:
-                        _how = ("already read in full this session — call update_section "
-                                "directly, do NOT read it again")
-                    elif _n and _n <= _WIKI_READ_LIMIT:
-                        _how = "reads whole — read_file first, then update_section"
-                    else:
-                        _how = "too large to read whole — read_section, then update_section"
-                    _rows.append(f"  - {name} → wiki/{rel} [{_how}]")
+                # The routing now comes from _write_route, which is the same answer
+                # lookup_titles gives, so following one reply cannot contradict the other.
+                _rows = [f"  - {name} → wiki/{rel} [{_write_route(rel)[1]}]"
+                         for name, rel in _to_update[:15]]
                 _parts.append(
                     "These already have a page you did not update. Each says how to reach "
                     "it; fold this source into the section it belongs in:\n"
-                    + "\n".join(_rows))
+                    + "\n".join(_rows) + f"\n\n{ROUTE_LEGEND}")
             if _to_create:
                 _parts.append(
                     "These have no page yet — create_file one for each:\n"
@@ -5243,6 +5227,89 @@ def _norm_title_key(name: str) -> str:
     return " ".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# How to reach a page you are about to write to — ONE answer, three callers
+# ---------------------------------------------------------------------------
+#
+# Three replies give the agent this same piece of procedural advice: lookup_titles' UPDATE
+# group (which create_file's worklist handback also goes through), done()'s refusal, and —
+# on a different axis — the read_file outline. Each had its own copy of the reasoning, and
+# the copies DID NOT AGREE. On a page over the read limit, lookup_titles said "go straight
+# to update_section" while done()'s refusal said "read_section first", so which advice an
+# ingest followed depended on which reply it happened to be reading. That is not a style
+# problem: an agent told two things does one of them at random, and the round it spends is
+# real either way.
+#
+# They are consolidated here, resolved in favour of read_section. The round counts are
+# equal — update_section-refused-then-resend is two rounds, read_section-then-update_section
+# is two rounds — so composition is the tiebreak, and it is the same tiebreak that already
+# decided the short-page case: write ONCE with the text in front of you, rather than
+# composing blind and then re-deciding while holding a draft aimed at the section you
+# guessed. lookup_titles now lists the page's section names, which is what makes a direct
+# read_section possible at all; the advice it carried predates that.
+#
+# The read_file outline is deliberately NOT folded in. It answers a different question —
+# per-section edit versus whole-page rewrite, keyed on the output budget rather than the
+# read limit — and merging two different decisions into one helper is how a shared answer
+# starts being wrong for one of its callers.
+_ROUTE_READ, _ROUTE_WHOLE, _ROUTE_SECTION = "read", "whole", "section"
+
+_ROUTE_PHRASES = {
+    _ROUTE_READ:    ("already read in full this session — call update_section directly, "
+                     "do NOT read it again"),
+    _ROUTE_WHOLE:   "reads whole — read_file first, then update_section",
+    # The phrase sits on every row, so it stays short and the legend carries the argument.
+    # The signature is spelled out there, not fifteen times here.
+    _ROUTE_SECTION: "too large to read whole — read_section it, then update_section",
+}
+
+# The legend, for a reply that lists several pages. Quoted from the per-page phrases
+# themselves — the text before the dash, which is the marker a reader actually sees on a row
+# — so a route cannot be named on a row and missing from the legend explaining the rows.
+def _route_head(key: str) -> str:
+    return _ROUTE_PHRASES[key].split("—")[0].strip()
+
+
+ROUTE_LEGEND = (
+    f"  * '{_route_head(_ROUTE_WHOLE)}' — call read_file on it FIRST. It costs no extra round and you "
+    f"then write once, knowing what every section already says, instead of guessing a "
+    f"section and being handed the page back after you have written for the wrong one.\n"
+    f"  * '{_route_head(_ROUTE_SECTION)}' — read_file would return only an outline. Call "
+    f"read_section for the section you mean (the names are listed below) and write once "
+    f"with its text in front of you.\n"
+    f"  * '{_route_head(_ROUTE_READ)}' — you are holding the page. Call "
+    f"update_section; reading it again spends a round on text you already have."
+)
+
+
+def _page_size(rel: str) -> int:
+    """Chars of `rel` as the read limit counts them, or 0 if it cannot be read."""
+    try:
+        return len(_strip_system_fm_fields(
+            (WIKI_DIR / rel).read_text(encoding="utf-8", errors="replace")))
+    except OSError:
+        return 0
+
+
+def _write_route(rel: str, size: int = -1) -> tuple:
+    """(route key, phrase) — how this session should reach `rel` in order to write to it.
+
+    Coverage is read from the session context, so a page this ingest has already read in
+    full is never told to read it again. `_page_shape` lacked that case and lookup_titles
+    therefore sent the agent back to a page it was holding; done()'s refusal had it, which
+    is how the divergence was found.
+    """
+    if size < 0:
+        size = _page_size(rel)
+    if size and _ctx()._session_read_coverage.get(rel, 0) >= size:
+        key = _ROUTE_READ
+    elif size and size <= _WIKI_READ_LIMIT:
+        key = _ROUTE_WHOLE
+    else:
+        key = _ROUTE_SECTION
+    return key, _ROUTE_PHRASES[key]
+
+
 def _page_shape(rel: str, limit: int = 14) -> str:
     """" — sections: A, B, C" for an existing page, or "" if it has none worth naming.
 
@@ -5268,19 +5335,11 @@ def _page_shape(rel: str, limit: int = 14) -> str:
     # H1). A second copy of that rule was dead code — mutate.py reported it MISSED, which
     # is what a redundant "guard" looks like — and two places deciding what counts as a
     # section is exactly how they come to disagree.
-    # Whether read_file will return this page WHOLE or only an outline, which decides the
-    # cheaper route and which the agent cannot otherwise know.
-    #
-    # Short page: read_file first is free and strictly better — 2 rounds either way, but it
-    # composes ONCE with every section's text in front of it. Going straight to
-    # update_section means composing blind and then re-deciding while holding a draft aimed
-    # at the section it guessed; an observed 58-page ingest did exactly that and resent
-    # Overview after a refusal that had named the alternatives.
-    # Long page: read_file returns only an outline and costs a round, so straight to
-    # update_section is right — 2 rounds against 3.
+    # How to reach the page, from the one place that decides that — see _write_route. The
+    # agent cannot work this out from a section list, and the choice is made HERE, while it
+    # is still deciding what to write and where.
     _full = len(_strip_system_fm_fields(text))
-    _route = ("reads whole — read_file first" if _full <= _WIKI_READ_LIMIT
-              else "outline only — go straight to update_section")
+    _route = _write_route(rel, _full)[1]
     _size = f" [{_full // 1000}KB, {_route}]" if _full >= 1000 else f" [{_route}]"
     names = [n for _lvl, n in _page_section_names(text, _fm_title(text))]
     if not names:
@@ -5349,22 +5408,13 @@ def _lookup_titles(args: dict) -> str:
     # where the names are.
     lines = [f"Looked up {len(names)} name(s) against {len(by_key)} wiki page titles and aliases."]
     if found:
-        # "read the page, then fold this source in" was true when it was written and is
-        # not the cheapest route any more: update_section's refusal hands the content
-        # back, so going straight there costs 2 rounds whether the page is short or long,
-        # while reading first costs 2 on a short page and 3 on a long one. The agent
-        # cannot tell which it is facing — this reply lists section names, not sizes — so
-        # the one instruction that is never worse is the one to give.
+        # The per-page routes and this legend both come from _write_route / ROUTE_LEGEND.
+        # They used to be written out here, and the wording drifted from done()'s copy of
+        # the same advice until the two contradicted each other on a large page.
         lines += ["", f"UPDATE ({len(found)}) — these already have a page. Do NOT call "
                       f"create_file for any of them.\n"
                       f"Each one says how to read it and what sections it already has.\n"
-                      f"  * 'reads whole' — call read_file on it FIRST. It costs no extra "
-                      f"round and you then write once, knowing what every section already "
-                      f"says, instead of guessing a section and being handed the page back "
-                      f"after you have written for the wrong one.\n"
-                      f"  * 'outline only' — the page is too big to read; go straight to "
-                      f"update_section. Reading it would give you an outline and cost a "
-                      f"round; the refusal hands back the section you name.\n"
+                      f"{ROUTE_LEGEND}\n"
                       f"**Put your material in the section it actually belongs to.** "
                       f"Overview is a summary of the page, not the place everything goes; "
                       f"a page with a section for this subject already has its answer:"]

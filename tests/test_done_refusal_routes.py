@@ -1,7 +1,7 @@
 """done()'s refusal names the route to each page, and knows what was already read.
 
-Observed in a 20-round ingest. `lookup_titles` marks each page "reads whole — read_file
-first" or "outline only", and the agent followed that for its first two pages. Then it
+Observed in a 20-round ingest. `lookup_titles` marks each page with how to reach it, and
+the agent followed that for its first two pages. Then it
 called done() early, the refusal landed, and it read_section'd all four remaining pages —
 because the refusal said, for every page at any size:
 
@@ -91,6 +91,55 @@ class DoneRefusalRouteTest(TempWikiTestCase):
         """The stale blanket instruction that produced the observed behaviour."""
         r = self._refusal()
         self.assertNotIn("read_section the section you are changing", r)
+
+    def test_it_gives_the_same_route_lookup_titles_gives(self):
+        """The consolidation. These two replies both answer "how do I reach this page", and
+        they used to answer it from separate copies of the reasoning — which drifted, so a
+        large page was told "go straight to update_section" by one and "read_section" by the
+        other. An agent told two things does one of them at random."""
+        r = self._refusal()
+        for slug, name in (("concepts/u-s-senate.md", "U.S. Senate"),
+                           ("concepts/legislation.md", "Legislation"),
+                           ("entities/nathan-fielder.md", "Nathan Fielder")):
+            lookup = agent._lookup_titles({"names": [name]})
+            lrow = next(l for l in lookup.splitlines() if slug in l)
+            drow = self._row(r, slug)
+            phrase = agent._write_route(slug)[1]
+            self.assertIn(phrase, lrow, slug)
+            self.assertIn(phrase, drow, slug)
+
+    def test_the_legend_explains_the_routes_it_uses(self):
+        """A marker nothing explains is a marker the agent has to guess at."""
+        r = self._refusal()
+        for phrase in ("read_file on it FIRST", "read_section for the section you mean",
+                       "you are holding the page"):
+            self.assertIn(phrase, r)
+
+    def test_every_route_the_helper_can_return_is_in_the_legend(self):
+        """Generated from one set of keys, so a route cannot be named per-page and left out
+        of the legend — which is how a reader meets a marker with no explanation."""
+        for key, phrase in agent._ROUTE_PHRASES.items():
+            head = phrase.split("—")[0].strip()
+            self.assertIn(head, agent.ROUTE_LEGEND, key)
+
+    def test_the_schema_spells_out_the_same_three_routes(self):
+        """LOBOTOMY.md is the sixth place this advice appeared, and the one the model reads
+        BEFORE any reply arrives — so discovering a route by meeting it in a refusal costs a
+        round that reading the schema costs nothing. It cannot be generated from the code
+        (it is prose, and the system prompt only appends the tool table), so this is the tie
+        that keeps the two in step: every phrase the code can emit is written there verbatim.
+        """
+        schema = (Path(__file__).resolve().parent.parent / "LOBOTOMY.md").read_text(
+            encoding="utf-8")
+        for key, phrase in agent._ROUTE_PHRASES.items():
+            self.assertIn(phrase, schema, f"{key} is not in LOBOTOMY.md")
+
+    def test_the_schema_does_not_say_the_old_contradictory_thing(self):
+        """It told the model to go straight to update_section on a large page while done()
+        told it to read_section. Both copies of the step 5/6 procedure said so."""
+        schema = (Path(__file__).resolve().parent.parent / "LOBOTOMY.md").read_text(
+            encoding="utf-8")
+        self.assertNotIn("outline only", schema)
 
     def test_every_unhandled_name_still_appears(self):
         r = self._refusal()
