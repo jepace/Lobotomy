@@ -26,6 +26,7 @@ import re
 import secrets
 import sys
 import threading
+import time
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -34,7 +35,7 @@ from pathlib import Path
 
 missing = []
 try:
-    from flask import (Flask, Response, abort, flash, redirect,
+    from flask import (Flask, Response, abort, flash, g, redirect,
                        render_template, request, session,
                        stream_with_context, url_for, send_file, make_response)
 except ImportError:
@@ -253,6 +254,47 @@ def _auth_required_response(setup: bool = False):
         return redirect(url_for("setup"))
     next_url = request.full_path.rstrip("?")
     return redirect(url_for("auth_login", next=next_url))
+
+
+_SLOW_REQUEST_MS = 2000
+# Polled every 8s by an open inbox tab, so logging them buries everything else.
+_QUIET_PATHS = ("/inbox/list", "/chat/status", "/chat/queue", "/static/")
+
+
+@app.after_request
+def _log_request(resp):
+    """One line per state-changing request: method, path, status, milliseconds.
+
+    Added because a failed save could not be diagnosed from the log at all. The browser
+    said "JSON.parse: unexpected character at line 1 column 1", which only means the reply
+    was not JSON, and the server said nothing whatsoever — so there was no way to tell
+    these three apart:
+
+      * the request never reached Flask (a proxy answered: 413, 502, 504, all HTML);
+      * it reached Flask and crashed (now also logged with a traceback by _unhandled);
+      * it reached Flask, succeeded, and something downstream mangled or truncated it.
+
+    They need opposite fixes, and guessing between them cost several rounds. A 200 in this
+    log against a parse error in the browser means the fault is downstream; no line at all
+    means the request never arrived. The duration is here because a proxy read timeout is
+    the likeliest downstream cause and it shows up as a request that ran long.
+    """
+    try:
+        if request.method != "GET" or resp.status_code >= 400:
+            if not request.path.startswith(_QUIET_PATHS):
+                ms = (time.monotonic() - g.get("_t0", time.monotonic())) * 1000
+                log.log(logging.WARNING if (resp.status_code >= 400 or ms > _SLOW_REQUEST_MS)
+                        else logging.INFO,
+                        "%s %s -> %d in %dms", request.method, request.path,
+                        resp.status_code, ms)
+    except Exception:           # logging must never break the response it describes
+        pass
+    return resp
+
+
+@app.before_request
+def _mark_request_start():
+    g._t0 = time.monotonic()
 
 
 @app.errorhandler(Exception)
@@ -946,14 +988,33 @@ def render_md_raw(text: str) -> str:
 # Inbox helpers
 # ---------------------------------------------------------------------------
 
-def _fetch_and_patch(dest: "pathlib.Path", url: str) -> None:
-    """Background thread: fetch url, rewrite dest with content, clear fetch_failed."""
+def _fetch_and_patch(dest: "pathlib.Path", url: str, expect_body: str = None) -> None:
+    """Background thread: fetch url, rewrite dest with content, clear fetch_failed.
+
+    **It must not overwrite what the user wrote while the fetch was in flight.** Saving a
+    URL returns immediately and fetches in the background, which is right — but the user
+    is then looking at a reading-list row they can open and paste the article into, and
+    seconds later this thread landed and replaced their text with the site's boilerplate.
+    Reproduced: paste, save, wait for the fetch, and the pasted story is gone. No error, no
+    history entry under raw/, nothing to say where it went. That is almost certainly the
+    "it won't let me add the story content" report — intermittent because it depends on
+    whether the fetch lands before or after the paste.
+
+    `expect_body` is the body this capture wrote. If the file no longer carries it, somebody
+    else has written since and the fetch result is stale by definition — drop it. Comparing
+    the body rather than an mtime or a flag keeps the test exact: a slow fetch that lands
+    after an edit is the only case it skips.
+    """
     import threading
     def _run():
         text, err = _clip_fetch(url)
         try:
             raw = dest.read_text(encoding="utf-8", errors="replace")
             fm, body = _parse_frontmatter(raw)
+            if expect_body is not None and body.strip() != expect_body.strip():
+                log.info("_fetch_and_patch: %s was edited while fetching — keeping the "
+                         "text that is there, discarding the fetch", dest.name)
+                return
             if text:
                 # Update title from content if still a URL-derived fallback
                 if not fm.get("title") or fm.get("title") == url:
@@ -975,7 +1036,8 @@ def _fetch_and_patch(dest: "pathlib.Path", url: str) -> None:
                 elif isinstance(v, list):
                     lines.append(f"{k}: {json.dumps(v)}")
                 else:
-                    lines.append(f'{k}: "{v}"' if k == "title" else f"{k}: {v}")
+                    lines.append(f"{k}: {fm_quote(str(v))}" if k == "title"
+                                 else f"{k}: {v}")
             lines += ["---", ""]
             _atomic_write(dest, "\n".join(lines) + (new_body or ""))
             log.info("_fetch_and_patch: %s fetched ok=%s", dest.name, bool(text))
@@ -2935,17 +2997,29 @@ def inbox_add():
         dest = RAW_DIR / base_name
         today = datetime.date.today().isoformat()
         now   = datetime.datetime.now().isoformat(timespec="seconds")
-        fm    = ["---", f'title: "{title}"', f"url: {url}", f"saved: {today}",
+        # fm_quote, not "{title}": the title comes from the URL's last path segment and a
+        # slug can carry a quote. Same defect as create_file's, in a third place.
+        fm    = ["---", f"title: {fm_quote(title)}", f"url: {url}", f"saved: {today}",
                  f"added: {now}", "wikified: false", "source: manual", "fetch_failed: true", "---", ""]
         _atomic_write(dest, "\n".join(fm))
-        _fetch_and_patch(dest, url)
+        # Hand the background fetch the body this capture wrote, so it can tell its own
+        # placeholder from something the user has pasted in the meantime and refuse to
+        # overwrite the latter.
+        _fetch_and_patch(dest, url, expect_body="")
         return {"ok": True, "filename": dest.name, "fetch_failed": True}
     if not name:
         slug = re.sub(r"[^a-z0-9]+", "-", content[:60].lower()).strip("-")
-        name = f"{slug}.txt"
+        # An empty slug made the filename ".txt" — a DOTFILE, which the listing skips, so
+        # the story saved successfully and then was nowhere to be seen. Content that opens
+        # with punctuation or a non-Latin script is enough to produce it.
+        # `now` above is bound only in the URL branch; this one needs its own.
+        _stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        name = f"{slug or 'note-' + _stamp}.txt"
     dest = RAW_DIR / name
-    dest.write_text(content, encoding="utf-8")
-    return {"ok": True, "filename": name}
+    # Through _atomic_write like every other write: raw/ sits beside a server running as
+    # another user, and a plain write_text here inherits none of the ownership handling.
+    _atomic_write(dest, content)
+    return {"ok": True, "filename": dest.name}
 
 
 @app.route("/inbox/delete", methods=["POST"])
