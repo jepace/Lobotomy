@@ -104,6 +104,29 @@ class _LLMError(Exception):
         self.rate_limited = rate_limited
 
 
+_QUOTA_ID_RE = re.compile(r'"quotaId"\s*:\s*"([^"]+)"')
+
+
+def _quota_id(raw_body: str) -> str:
+    """The quota a 429 body names, e.g. `GenerateRequestsPerDayPerProjectPerModel-FreeTier`.
+
+    The one fact the body supplies that nothing else in the log does. Everything around it
+    is already said: the HTTP line names the status, the next line names the model and its
+    cooldown, and the fallback warning names per-minute vs per-day. So this is extracted and
+    the rest of the body is dropped.
+
+    A body can carry several violations, and ALL of them are returned, comma-joined. The
+    `PerDay` test below is over this string, and a body naming a per-minute violation first
+    and a per-day one second must still take the long-backoff path — taking only the first
+    match would have made the coarse retry interval depend on the order Google listed them.
+    """
+    seen = []
+    for q in _QUOTA_ID_RE.findall(raw_body or ""):
+        if q not in seen:
+            seen.append(q)
+    return ", ".join(seen)
+
+
 def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
     """POST payload to an OpenAI-compatible chat/completions endpoint."""
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -146,7 +169,24 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
         except (TypeError, ValueError):
             pass
         code = e.code
-        log.warning("LLM HTTP %d: %s", code, msg)
+        if code == 429:
+            # One line, not the body. Everything a reader does with a 429 is already said
+            # elsewhere: the next log line names the model and how long it is skipped for,
+            # and whether that was a daily quota. The body's one unique contribution is
+            # WHICH quota was hit — per-minute requests, input tokens, or per-day — which
+            # is the only thing that distinguishes "throttle harder" from "send smaller
+            # requests" from "nothing you can do until it resets". So that is all that is
+            # kept. The full payload was 1,200 characters of nested JSON per occurrence,
+            # several times a minute on a free tier.
+            # `msg` is "Too Many Requests" on Gemini — the body is a LIST there, so the
+            # dict-shaped extraction above falls through to e.reason — but a provider that
+            # does return the error object hands back the whole multi-line quota blurb,
+            # URLs and all. First line, capped, or this becomes the dump it replaced.
+            _brief = msg.strip().splitlines()[0][:160] if msg else "rate limited"
+            log.warning("LLM HTTP 429: %s [%s, payload %dKB]",
+                        _brief, _quota_id(raw_body) or "quota unnamed", len(data) // 1024)
+        else:
+            log.warning("LLM HTTP %d: %s", code, msg)
         if code == 401:
             raise _LLMError("Authentication failed — check llm.api_key in config.json.")
         if code == 403:
@@ -158,11 +198,6 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
             detail = f"{msg}\n{raw_body}" if raw_body and raw_body != msg else msg
             raise _LLMError(f"Bad request: {detail}")
         if code == 429:
-            # The message is usually just "Too Many Requests"; the body names the actual
-            # quota (per-minute requests vs input tokens vs per-day), which is the only
-            # thing that says whether throttling or shrinking requests is the fix.
-            if raw_body and raw_body != msg:
-                log.warning("LLM 429 detail (payload was %dKB): %s", len(data) // 1024, raw_body[:1200])
             # A per-day quota won't clear on the normal retry ladder's timescale (seconds
             # to minutes) — it resets on its own schedule, hours away. A single-user queue
             # blocking on this is fine (every job would fail identically regardless of
@@ -170,7 +205,7 @@ def _llm_post(endpoint: str, api_key: str, payload: dict) -> dict:
             # up — just at a much coarser interval, so it self-heals once quota resets
             # without hammering the API every 60s for hours in the meantime (previously
             # observed: 226+ attempts, 3+ hours, before phase 1 would even exhaust).
-            if raw_body and re.search(r'"quotaId"\s*:\s*"[^"]*PerDay[^"]*"', raw_body):
+            if "PerDay" in _quota_id(raw_body):
                 raise _LLMError(
                     f"Daily API quota exhausted — will keep retrying at a slower interval "
                     f"until it resets. Detail: {msg}",

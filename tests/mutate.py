@@ -480,6 +480,21 @@ MUTATIONS = [
     ('done: the refusal describes what the session actually did',
      '                    "created no pages at all — no source page, no entity or concept pages")',
      '                    "created a source page but no entity or concept pages")'),
+    # The 429 log line keeps the quotaId and drops the 1,200-char body. The quotaId is
+    # the body's one unique contribution, so losing it makes the change a regression.
+    ('429 log: the line still names the quota',
+     '                        _brief, _quota_id(raw_body) or "quota unnamed", len(data) // 1024)',
+     '                        _brief, "", len(data) // 1024)'),
+    # All violations, not the first: a per-minute one listed ahead of a per-day one must
+    # still take the coarse retry interval.
+    ('429: every quotaId in the body is read, not just the first',
+     '    for q in _QUOTA_ID_RE.findall(raw_body or ""):',
+     '    for q in _QUOTA_ID_RE.findall(raw_body or "")[:1]:'),
+    # A provider that returns the error object hands back the whole multi-line quota
+    # blurb; uncapped, the "one short line" is the dump again.
+    ('429 log: a long provider message is capped to one line',
+     '            _brief = msg.strip().splitlines()[0][:160] if msg else "rate limited"',
+     '            _brief = msg'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',
