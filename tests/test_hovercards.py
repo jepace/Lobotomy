@@ -101,12 +101,23 @@ class PreviewEndpointTest(TempWikiTestCase):
 
 def _script():
     """The hovercard IIFE, lifted out of the real template so the test cannot drift from
-    what ships."""
+    what ships — together with `apiFetch`, which it now calls.
+
+    The card's fetch went through `apiFetch` when every bare `resp.json()` in the templates
+    was converted, and that helper lives in base.html. In the browser the page carries both,
+    because every template extends base; here the script is lifted on its own, so leaving
+    apiFetch behind made six of these tests fail with a ReferenceError that had nothing to
+    do with hovercards. A lifted script has to bring what it depends on.
+    """
     src = TEMPLATE.read_text(encoding="utf-8")
     start = src.index("// Hover cards:")
     start = src.rindex("(function () {", 0, src.index("const DWELL", start))
     end = src.index("})();", src.index("Escape", start)) + len("})();")
-    return src[start:end]
+
+    base = (TEMPLATE.parent / "base.html").read_text(encoding="utf-8")
+    bs = base.index("window.apiFetch = async function(url, opts)")
+    be = base.index("\n    };", bs) + len("\n    };")
+    return base[bs:be] + "\n" + src[start:end]
 
 
 def _styles():

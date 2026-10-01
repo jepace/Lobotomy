@@ -309,8 +309,7 @@ function patchItemStatus(item) {
 
 async function pollInbox() {
   try {
-    const resp = await fetch('/inbox/list');
-    const data = await resp.json();
+    const data = await apiFetch('/inbox/list');
     const items = data.items || [];
 
     // Patch status of existing items
@@ -464,11 +463,10 @@ async function saveToInbox() {
   const content  = document.getElementById('content').value.trim();
   const filename = document.getElementById('filename').value.trim();
   if (!content) { alert('Please paste some content first.'); return; }
-  const resp = await fetch('/inbox/add', {
+  const data = await apiFetch('/inbox/add', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({content, filename}),
   });
-  const data = await resp.json();
   if (data.ok) {
     document.getElementById('content').value  = '';
     document.getElementById('filename').value = '';
@@ -518,8 +516,7 @@ async function toggleItem(name) {
 
   if (isOpen && !loaded[name]) {
     try {
-      const resp = await fetch('/inbox/view/' + encodeURIComponent(name));
-      const data = await resp.json();
+      const data = await apiFetch('/inbox/view/' + encodeURIComponent(name));
       reader.innerHTML = '';
       if (data.url && !data.html) {
         reader.innerHTML =
@@ -560,8 +557,7 @@ function filterItems(q) {
   _searchTimer = setTimeout(async () => {
     try {
       const url = '/inbox/search?q=' + encodeURIComponent(term) + (SHOW_ARCHIVED ? '&archived=1' : '');
-      const resp = await fetch(url);
-      const data = await resp.json();
+      const data = await apiFetch(url);
       const matchedNames = new Set((data.results || []).map(r => r.name));
       document.querySelectorAll('.reading-item').forEach(el => {
         el.style.display = matchedNames.has(el.dataset.name) ? '' : 'none';
@@ -571,11 +567,10 @@ function filterItems(q) {
 }
 
 async function unarchiveItem(name) {
-  const resp = await fetch('/inbox/unarchive', {
+  const data = await apiFetch('/inbox/unarchive', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({filename: name}),
   });
-  const data = await resp.json();
   if (data.ok) {
     rowFor(name)?.remove();
   } else {
@@ -584,11 +579,10 @@ async function unarchiveItem(name) {
 }
 
 async function archiveItem(name) {
-  const resp = await fetch('/inbox/archive', {
+  const data = await apiFetch('/inbox/archive', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({filename: name}),
   });
-  const data = await resp.json();
   if (data.ok) {
     rowFor(name)?.remove();
   } else {
@@ -598,10 +592,15 @@ async function archiveItem(name) {
 
 async function deleteItem(name) {
   if (!confirm('Delete "' + name + '"?')) return;
-  await fetch('/inbox/delete', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({filename: name}),
-  });
+  try {
+    await apiFetch('/inbox/delete', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename: name}),
+    });
+  } catch (e) {
+    alert('Delete failed: ' + e.message);
+    return;                      // the file is still there; leave the row that names it
+  }
   rowFor(name)?.remove();
 }
 
@@ -747,18 +746,13 @@ async function wikifyItem(name) {
   progress.innerHTML = '<div class="prog-tool">Starting AI ingest…</div>';
 
   try {
-    const sendResp = await fetch('/chat/send', {
+    const job = await apiFetch('/chat/send', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       // raw/ is flat — raw/inbox/ was migrated away by _migrate_raw_subdirs(). Sending the
       // old path made every ingest spend its first round on a read_file that returned
       // "not found" before recovering via the path in the injected <file> block.
       body: JSON.stringify({message: 'Ingest raw/' + name, inbox_file: name}),
     });
-    if (!sendResp.ok) {
-      const err = await sendResp.json().catch(() => ({}));
-      throw new Error(err.error || 'HTTP ' + sendResp.status);
-    }
-    const job = await sendResp.json();
 
     // Poll for events instead of holding a long-lived streaming connection open.
     // A streaming connection occupies one of the browser's 6 per-host connection slots,
@@ -771,8 +765,7 @@ async function wikifyItem(name) {
     while (!done) {
       await new Promise(r => setTimeout(r, 2000));
       try {
-        const evResp = await fetch('/chat/events/' + job.job_id);
-        const evData = await evResp.json();
+        const evData = await apiFetch('/chat/events/' + job.job_id);
         done = evData.done;
         const allEvents = evData.events || [];
         for (let i = seenCount; i < allEvents.length; i++) {
@@ -804,11 +797,10 @@ async function wikifyItem(name) {
       return;
     }
     btn.textContent = 'Wikified ✓';
-    const wikiResp = await fetch('/inbox/mark-wikified', {
+    const wikiData = await apiFetch('/inbox/mark-wikified', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({filename: name}),
-    }).catch(() => null);
-    const wikiData = wikiResp ? await wikiResp.json().catch(() => {}) : {};
+    }).catch(() => ({}));
     const wikiHref = wikiData && wikiData.wiki_path ? `/wiki/${wikiData.wiki_path}` : '/wiki/sources/';
     progress.innerHTML += `<div class="prog-done">Done — <a href="${wikiHref}" style="color:inherit">view in wiki</a></div>`;
     if (navChat) navChat.classList.remove('ai-busy');

@@ -376,7 +376,7 @@
                  + 'the rest stay in the reading list and can be run again later.')) return;
       btn.disabled = true;
       try {
-        var d = await (await fetch('/chat/queue/drain', {method: 'POST'})).json();
+        var d = await apiFetch('/chat/queue/drain', {method: 'POST'});
         label.textContent = d.dropped + ' dropped — finishing the current one';
       } catch (e) {
         label.textContent = 'Could not clear the queue';
@@ -387,7 +387,7 @@
     document.body.appendChild(bar);
 
     function syncBusy() {
-      fetch('/chat/status').then(function(r){ return r.json(); }).then(function(s) {
+      apiFetch('/chat/status').then(function(s) {
         if (s.running) navChat.classList.add('ai-busy');
         else navChat.classList.remove('ai-busy');
         var n = s.pending || 0;

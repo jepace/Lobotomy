@@ -228,8 +228,7 @@ async function copyPlainText(btn) {
   const path = {{ current_path | tojson }};
   btn.disabled = true;
   try {
-    const r = await fetch(`/api/wiki/${path}/text`);
-    const d = await r.json();
+    const d = await apiFetch(`/api/wiki/${path}/text`);
     if (!d.ok) { toast(d.error || 'Failed to get text'); return; }
     try {
       await navigator.clipboard.writeText(d.text);
@@ -249,8 +248,7 @@ async function toggleShare(btn) {
   btn.disabled = true;
   try {
     if (shared) {
-      const r = await fetch(`/api/wiki/${path}/unshare`, {method: 'POST'});
-      const d = await r.json();
+      const d = await apiFetch(`/api/wiki/${path}/unshare`, {method: 'POST'});
       if (d.ok) {
         btn.dataset.shared = 'false';
         btn.textContent = 'Share';
@@ -259,8 +257,7 @@ async function toggleShare(btn) {
         toast(d.error || 'Failed to revoke');
       }
     } else {
-      const r = await fetch(`/api/wiki/${path}/share`, {method: 'POST'});
-      const d = await r.json();
+      const d = await apiFetch(`/api/wiki/${path}/share`, {method: 'POST'});
       if (d.ok) {
         btn.dataset.shared = 'true';
         btn.textContent = 'Unshare';
@@ -319,8 +316,7 @@ async function toggleShare(btn) {
 
   async function doSearch(q) {
     if (q.length < 2) { box.classList.remove('open'); return; }
-    const r = await fetch('/wiki/search?q=' + encodeURIComponent(q));
-    const data = await r.json();
+    const data = await apiFetch('/wiki/search?q=' + encodeURIComponent(q));
     if (inp.value.trim() !== q) return; // stale
     sel = -1;
     if (!data.results.length) {
@@ -455,8 +451,7 @@ async function toggleShare(btn) {
     const href = a.getAttribute('href');
     if (cache.has(href)) { if (current === href) render(cache.get(href), a); return; }
     try {
-      const resp = await fetch('/api/wiki' + href.replace(/^\/wiki/, '') + '.md/preview');
-      const d = resp.ok ? await resp.json() : null;
+      const d = await apiFetch('/api/wiki' + href.replace(/^\/wiki/, '') + '.md/preview');
       cache.set(href, d);
       if (current === href) render(d, a);
     } catch (e) {

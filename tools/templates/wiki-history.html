@@ -265,8 +265,7 @@ async function copyDiff(btn) {
 async function doRevert() {
   if (!confirm('Replace the current page with this saved version?')) return;
   try {
-    const r = await fetch('/api/wiki/{{ current_path }}/revert/{{ rev }}', {method: 'POST'});
-    const d = await r.json();
+    const d = await apiFetch('/api/wiki/{{ current_path }}/revert/{{ rev }}', {method: 'POST'});
     if (d.ok) location.href = '/wiki/{{ current_path }}';
     else alert(d.error || 'Revert failed');
   } catch (e) { alert('Network error'); }

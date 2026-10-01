@@ -155,7 +155,7 @@ function renderRelink(s) {
 
 async function pollRelink() {
   try {
-    const s = await (await fetch('/wiki/relink/status')).json();
+    const s = await apiFetch('/wiki/relink/status');
     renderRelink(s);
     if (s.running) {
       if (!relinkTimer) relinkTimer = setInterval(pollRelink, 2000);
@@ -167,17 +167,17 @@ async function pollRelink() {
 
 async function startRelink() {
   document.getElementById('relink-btn').disabled = true;
-  const r = await fetch('/wiki/relink', {method: 'POST'});
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({}));
-    document.getElementById('relink-status').textContent = d.error || 'Could not start';
+  try {
+    await apiFetch('/wiki/relink', {method: 'POST'});
+  } catch (e) {
+    document.getElementById('relink-status').textContent = e.message;
   }
   pollRelink();
 }
 
 async function stopRelink() {
   document.getElementById('relink-stop').disabled = true;
-  await fetch('/wiki/relink/stop', {method: 'POST'});
+  await apiFetch('/wiki/relink/stop', {method: 'POST'});
   setTimeout(() => { document.getElementById('relink-stop').disabled = false; }, 1000);
 }
 

@@ -269,11 +269,10 @@ async function changePassword() {
   if (!cur || !nw || !cf) { showMsg(msg, 'Fill in all fields', 'err'); return; }
   btn.disabled = true;
   try {
-    const r = await fetch('/settings/password', {
+    const d = await apiFetch('/settings/password', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({current: cur, new: nw, confirm: cf})
     });
-    const d = await r.json();
     if (d.ok) {
       showMsg(msg, 'Password changed ✓', 'ok');
       ['pw-current','pw-new','pw-confirm'].forEach(id => document.getElementById(id).value = '');
@@ -310,11 +309,10 @@ async function saveProfile() {
   const tz   = document.getElementById('timezone').value;
   const msg  = document.getElementById('profile-msg');
   try {
-    const r = await fetch('/settings/profile', {
+    const d = await apiFetch('/settings/profile', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({display_name: name, timezone: tz})
     });
-    const d = await r.json();
     if (d.ok) showMsg(msg, 'Saved ✓', 'ok');
     else showMsg(msg, d.error || 'Error', 'err');
   } catch(e) { showMsg(msg, 'Network error', 'err'); }
@@ -363,11 +361,10 @@ async function saveModel() {
   const model    = document.getElementById('ai-model').value;
   const msg = document.getElementById('model-msg');
   try {
-    const r = await fetch('/api/set-model', {
+    const d = await apiFetch('/api/set-model', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({provider, model})
     });
-    const d = await r.json();
     if (d.ok) showMsg(msg, 'Saved ✓', 'ok');
     else showMsg(msg, d.error || 'Error', 'err');
   } catch(e) { showMsg(msg, 'Network error', 'err'); }

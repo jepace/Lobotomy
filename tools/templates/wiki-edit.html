@@ -87,12 +87,11 @@ async function savePage() {
   status.textContent = 'Saving…';
 
   try {
-    const resp = await fetch('/api/wiki/' + PAGE_PATH + '/save', {
+    const data = await apiFetch('/api/wiki/' + PAGE_PATH + '/save', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({content: document.getElementById('editor').value}),
     });
-    const data = await resp.json();
     if (data.ok) {
       status.className = 'edit-status saved';
       status.textContent = 'Saved.';

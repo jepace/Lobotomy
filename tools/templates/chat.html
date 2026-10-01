@@ -342,8 +342,7 @@ async function readStream(streamResp, toolsEl, bubbleEl) {
 // ── Check for active job on page load ───────────────────────────────────
 async function checkActiveJob() {
   try {
-    var resp   = await fetch('/chat/status');
-    var status = await resp.json();
+    var status = await apiFetch('/chat/status');
     if (!status.running || !status.job_id) return;
     showBanner('AI is working in the background — reconnecting…');
     await reconnectToJob(status.job_id);
@@ -441,7 +440,7 @@ async function stopGeneration() {
   btn.disabled = true;
   if (activeJobId) {
     try {
-      await fetch('/chat/cancel', {
+      await apiFetch('/chat/cancel', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({job_id: activeJobId}),
@@ -514,16 +513,11 @@ async function sendMessage() {
   var fullText = '';
 
   try {
-    var sendResp = await fetch('/chat/send', {
+    var job = await apiFetch('/chat/send', {
       method:  'POST',
       headers: {'Content-Type': 'application/json'},
       body:    JSON.stringify({message: text}),
     });
-    if (!sendResp.ok) {
-      var err = await sendResp.json().catch(function(){ return {}; });
-      throw new Error(err.error || 'HTTP ' + sendResp.status);
-    }
-    var job = await sendResp.json();
     activeJobId = job.job_id;
 
     var resp = await fetch('/chat/stream/' + job.job_id);
@@ -557,7 +551,7 @@ async function sendMessage() {
 
 async function clearChat() {
   if (!confirm('Clear conversation history?')) return;
-  await fetch('/chat/clear', {method: 'POST'});
+  await apiFetch('/chat/clear', {method: 'POST'});
   location.reload();
 }
 

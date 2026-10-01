@@ -104,12 +104,36 @@ which is not a detail — drop the redirect and nobody can log in, so both sides
 by tests. Three independent signals say "this is a fetch" (`X-Requested-With`, a JSON
 body, an Accept header preferring JSON), because a request need only match one.
 
-**This fixed all 52 protected routes at once**, including the ~30 `resp.json()` call sites
-nobody touched: a parseable 401 reaches their existing `data.error` branch, so "Archive
-failed: Unknown" became "Archive failed: Your session has expired — sign in again." That is
-the argument for fixing the shared refusal rather than the call sites. `apiFetch` is still
-needed for what the server *cannot* make JSON — a proxy's HTML 502, a dropped connection,
-an abort — and the paths that can lose data go through it.
+That fixed the auth case on all 52 protected routes at once: a parseable 401 reaches each
+site's existing `data.error` branch, so "Archive failed: Unknown" became "Archive failed:
+Your session has expired — sign in again."
+
+**And then the same bug was reported a third time, from the wiki page editor, because
+that reasoning was only half right.** The entry here used to claim the server fix had
+covered the ~30 untouched `resp.json()` sites. It covered *authentication*. A reply can
+fail to be JSON for reasons the server never sees — a proxy's HTML 502 or 504, a request
+that never arrived, a response cut off mid-flight — and every one of those sites still
+turned that into "unexpected character at line 1 column 1". **Leaving a known-broken
+pattern in thirty places because the commonest cause is handled is how one bug gets
+reported three times.** All 28 live sites now go through `apiFetch`, and
+`tests/test_no_bare_json_parse.py` fails on a `.json()` call on any response in
+`tools/templates/`, and on a plain `fetch` anywhere but the two chat STREAMS, whose bodies
+are read with a reader and must not be buffered as text.
+
+Two things that fell out of the sweep. `deleteItem` removed the row whatever the server
+answered, so a refused delete looked like a successful one until the next poll put the row
+back. And `tests/test_hovercards.py` lifts the card script out of `wiki.html` to run it —
+once that script called `apiFetch`, the lift had to bring the helper too, or six tests fail
+with a `ReferenceError` that has nothing to do with hovercards.
+
+**The wiki page editor had no test at all** — 808 tests and `/api/wiki/<path>/save`, the
+route behind the Edit button on every page, was never once called by the suite.
+`tests/test_wiki_save_route.py` covers it now: the text reaches disk, the revision is
+labelled `user-edit` and holds the content from BEFORE the edit, the result is autolinked,
+a retitle is visible to the autolinker (which is why the route uses `_atomic_write` rather
+than `p.write_text`), bad paths and logged-out saves are refused, and a failure answers in
+JSON. Note the deliberate ordering it pins: `_atomic_write` runs BEFORE the autolink, so a
+linking error leaves the page saved — losing the user's text to a link would be worse.
 
 Two more defects fell out of looking at the save path, and the second is worse than the
 reported one:
