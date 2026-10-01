@@ -4869,6 +4869,18 @@ def heal_index_if_stale() -> None:
 # it while every other name in the same list linked. Same trap for quotes and dashes.
 _FLEX_GROUPS = ("'’‘ʼ", '"“”', "-–—")
 _FLEX_CHARS = {ch: "[" + re.escape(g) + "]" for g in _FLEX_GROUPS for ch in g}
+# A comma inside a title is optional in the text. Same class of silent miss as the
+# apostrophe above, and it fails WORSE than a miss: the page is "University of California,
+# Merced", an article writes "University of California Merced", the long title does not
+# match — and the SHORTER "University of California" then does, so the sentence about the
+# campus is linked to the whole system. A wrong link that resolves, which nothing reports.
+#
+# Only the direction that is safe. A comma in the TITLE may be absent from the text; a
+# space in the title is NOT allowed to match a comma in the text, because "attended by
+# Smith, Johnson and Lee" would then link "Smith, Johnson" to a page about one person of
+# that name. Titles carry the punctuation of a formal name; prose carries the punctuation
+# of a sentence, and only one of those is safe to relax.
+_FLEX_CHARS[","] = ",?"
 
 
 def _esc_flex(word: str) -> str:

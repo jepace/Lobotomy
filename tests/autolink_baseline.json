@@ -162,5 +162,25 @@
   "double_backtick_span": {
     "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
     "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nUse ``docker ` ps`` carefully. Then [docker](../entities/docker.md) in prose.\n"
+  },
+  "comma_in_title_optional_in_prose": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nResearchers at the [University of California Merced](../entities/university-of-california-merced.md) published it.\n"
+  },
+  "comma_in_title_matches_with_the_comma": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nResearchers at the [University of California, Merced](../entities/university-of-california-merced.md) published it.\n"
+  },
+  "parent_still_links_when_the_sentence_is_about_it": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nThe [University of California](../entities/university-of-california.md), which runs ten campuses, grew.\n"
+  },
+  "space_in_title_does_not_match_a_comma_in_prose": {
+    "message": "Autolink: no changes in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nAttended by Smith, Johnson and Lee.\n"
+  },
+  "campus_with_no_page_of_its_own": {
+    "message": "Autolinked 1 title(s) in alwiki/entities/target-page.md.",
+    "content": "---\ntitle: \"Target Page\"\ntype: entity\ntags: []\ncreated: 2026-01-01\nupdated: 2026-01-01\nsources: []\n---\n\nA grant went to the [University of California](../entities/university-of-california.md), Santa Cruz last year.\n"
   }
 }

@@ -145,4 +145,32 @@ CASES = [
 
     ("double_backtick_span", [("Docker", [], False)], "entities",
      "Use ``docker ` ps`` carefully. Then docker in prose."),
+
+    # A comma in a TITLE is optional in the text. The failure was not a missed link but a
+    # WRONG one: the long title did not match, so the shorter parent did, and a sentence
+    # about the campus linked to the whole system.
+    ("comma_in_title_optional_in_prose",
+     [("University of California", [], False),
+      ("University of California, Merced", [], False)], "entities",
+     "Researchers at the University of California Merced published it."),
+
+    ("comma_in_title_matches_with_the_comma",
+     [("University of California", [], False),
+      ("University of California, Merced", [], False)], "entities",
+     "Researchers at the University of California, Merced published it."),
+
+    ("parent_still_links_when_the_sentence_is_about_it",
+     [("University of California", [], False),
+      ("University of California, Merced", [], False)], "entities",
+     "The University of California, which runs ten campuses, grew."),
+
+    # The direction NOT taken: a space in a title must not match a comma in prose, or
+    # "attended by Smith, Johnson and Lee" links two names as one person.
+    ("space_in_title_does_not_match_a_comma_in_prose",
+     [("Smith Johnson", [], False)], "entities",
+     "Attended by Smith, Johnson and Lee."),
+
+    ("campus_with_no_page_of_its_own",
+     [("University of California", [], False)], "entities",
+     "A grant went to the University of California, Santa Cruz last year."),
 ]

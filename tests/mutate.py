@@ -475,6 +475,12 @@ MUTATIONS = [
     # that cannot fix it (principle 4, in the UI).
     # Code is not prose. `container.exe` came out as `[container](…).exe`, and a ```sh
     # block came out with links in a command the reader copies into a terminal.
+    # A comma in a title is optional in the text. Without it the long title missed and the
+    # shorter PARENT matched, so a sentence about a campus linked to the whole system — a
+    # wrong link that resolves, which nothing reports.
+    ('autolink: a comma in a title is optional in the text',
+     '_FLEX_CHARS[","] = ",?"',
+     '_FLEX_CHARS[","] = ","'),
     ('autolink: a code span is protected like a link',
      '                + r"|" + _CODE_SPAN + r")"',
      '                + r")"'),

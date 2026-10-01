@@ -345,6 +345,25 @@ test took 13.8s to 9.4s. The probe is the longest `\w+` **token**, not the longe
 whitespace-word, because `noah's` is never found in a line spelling it `noah’s` — it would
 reject the line before the flexible pattern could match.
 
+**A comma in a title is optional in the text** (`_FLEX_CHARS[","]`), and the failure it
+fixes is a WRONG link rather than a missing one. A wiki holding "University of California"
+beside "University of California, Merced" linked prose saying *University of California
+Merced* (no comma) to the parent: the long title did not match, so the shorter one did, and
+a sentence about the campus pointed at the whole system. The link resolves, so lint is
+silent and the page reads fine.
+
+**Only that direction is safe.** A space in a title must NOT match a comma in the text, or
+"attended by Smith, Johnson and Lee" links two people as one. A title carries the
+punctuation of a formal name; prose carries the punctuation of a sentence, and only one of
+those is safe to relax. Measured first: with both pages present and spelled alike, the
+comma was never the problem — longest-first already gave each campus its own link.
+
+Two limits that remain, stated so they are not mistaken for bugs: prose saying "UC Merced"
+still needs an `aliases:` entry, and a campus with no page of its own
+("University of California, Santa Cruz" where only the parent exists) links the parent and
+stops mid-name — declining that needs the linker to know ", Santa Cruz" continues a proper
+name, and "Monterey County, California" is the same shape with the opposite right answer.
+
 **Typographic variants are the same character for matching** (`_esc_flex`). An article
 writes "Noah’s Ark Scans" with a curly apostrophe, the page is created as "Noah's Ark
 Scans" with a straight one, and the autolinker — matching the title literally — silently
