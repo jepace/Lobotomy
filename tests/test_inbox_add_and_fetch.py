@@ -222,3 +222,26 @@ class WritePathTest(_Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AddNeverCrashesTest(_Base):
+    """Three inputs that made /inbox/add answer 500 and lose the story."""
+
+    def _add(self, body):
+        with mock.patch.object(self.serve, "_clip_fetch", return_value=(None, "x")):
+            return self.c.post("/inbox/add", json=body,
+                               headers={"X-Requested-With": "fetch"})
+
+    def test_a_lone_surrogate_in_pasted_text_still_saves(self):
+        r = self._add({"content": "half an emoji \ud800 in a story"})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        saved = (self.w.raw / r.get_json()["filename"]).read_text(encoding="utf-8")
+        self.assertIn("in a story", saved)
+
+    def test_an_overlong_filename_still_saves(self):
+        r = self._add({"content": "hi", "filename": "a" * 300 + ".txt"})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertTrue(r.get_json()["filename"].endswith(".txt"))
+
+    def test_non_string_content_is_not_a_crash(self):
+        self.assertEqual(self._add({"content": 123}).status_code, 200)

@@ -1377,7 +1377,11 @@ def _atomic_write(p: Path, content: str) -> None:
     _mkdir_inheriting(p.parent)
     fd, tmp_path = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        # errors="replace": pasted text can carry a lone UTF-16 surrogate (a half emoji from
+        # a truncated copy). JSON allows it, utf-8 refuses it, and the 500 that followed
+        # took the whole story with it. One '?' in place of a character that was already
+        # garbage beats losing the save, and this is the chokepoint every writer shares.
+        with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as f:
             f.write(content)
         # Carry the original's identity onto the replacement, before it becomes the file.
         if _old_stat is not None:

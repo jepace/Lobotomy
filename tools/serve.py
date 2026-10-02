@@ -2983,10 +2983,17 @@ def inbox_read(filename):
 @require_login
 def inbox_add():
     data    = request.get_json(silent=True) or {}
-    content = (data.get("content")  or "").strip()
-    name    = (data.get("filename") or "").strip()
+    content = str(data.get("content") or "").strip()
+    name    = str(data.get("filename") or "").strip()
     if not content:
         return {"error": "Empty content"}, 400
+    if name:
+        # A filename longer than the filesystem allows (255 bytes) made the write raise
+        # ENAMETOOLONG, which surfaced as a bare 500. Keep the extension, trim the stem.
+        stem, dot, ext = name.rpartition(".")
+        if not dot or len(ext) > 10:
+            stem, ext = name, ""
+        name = stem[:100] + ("." + ext if ext else "")
     # If the content is just a bare URL, save immediately and fetch in background
     is_url = content.startswith("http") and "\n" not in content and " " not in content.strip()
     if is_url:
