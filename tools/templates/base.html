@@ -300,7 +300,13 @@
         throw err;
       }
       if (data) {
-        if (!resp.ok) throw new Error(data.error || ('The server returned ' + resp.status + '.'));
+        if (!resp.ok) {
+          // `detail` is the server's own exception text (see _unhandled in serve.py). It was
+          // sent and then dropped here, so a crash said "check the log" and nothing else —
+          // and the log is exactly where someone is not looking when a save has just failed.
+          throw new Error((data.error || ('The server returned ' + resp.status + '.')) +
+                          (data.detail ? ' [' + data.detail + ']' : ''));
+        }
         return data;
       }
       // Not JSON. Say which page we got rather than quoting its first character — and let
