@@ -245,3 +245,17 @@ class AddNeverCrashesTest(_Base):
 
     def test_non_string_content_is_not_a_crash(self):
         self.assertEqual(self._add({"content": 123}).status_code, 200)
+
+
+class EditAndReadAreAsTolerantTest(_Base):
+    def test_editing_with_a_lone_surrogate_saves(self):
+        (self.w.raw / "a.txt").write_text("old", encoding="utf-8")
+        r = self.c.post("/inbox/edit", json={"filename": "a.txt", "content": "new \ud800 text"},
+                        headers={"X-Requested-With": "fetch"})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertIn("new", (self.w.raw / "a.txt").read_text(encoding="utf-8"))
+
+    def test_a_raw_file_with_a_bad_byte_still_renders(self):
+        (self.w.raw / "b.txt").write_bytes(b"caf\xe9 au lait")
+        r = self.c.get("/inbox/read/b.txt")
+        self.assertEqual(r.status_code, 200)

@@ -840,7 +840,7 @@ def _rewrite_md_link(href: str, from_page: Path) -> str:
 def render_md(path: Path) -> str:
     if not path.exists():
         return "<p><em>Page not found.</em></p>"
-    return render_md_text(path.read_text(encoding="utf-8"), path)
+    return render_md_text(path.read_text(encoding="utf-8", errors="replace"), path)
 
 
 def render_md_text(text: str, link_base: Path) -> str:
@@ -891,7 +891,7 @@ def render_md_shareable(path: Path) -> str:
     internal wiki link is stripped to plain text rather than rewritten to an app URL."""
     if not path.exists():
         return "<p><em>Page not found.</em></p>"
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8", errors="replace")
     text = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
     text = _H1_RE.sub("", text, count=1)   # share.html prints the title itself
     text = _strip_internal_links(text)
@@ -917,7 +917,7 @@ def render_md_plaintext(path: Path) -> str:
     pasting into an email or anywhere else that isn't rendering markdown."""
     if not path.exists():
         return ""
-    raw = path.read_text(encoding="utf-8")
+    raw = path.read_text(encoding="utf-8", errors="replace")
     meta, _ = _parse_frontmatter(raw)
     body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", raw, flags=re.DOTALL)
     body = _links_to_plain_text(body)
@@ -1338,7 +1338,7 @@ def chat_send():
                 # fetch_failed set (agent may have called done(ingested=1) despite no content).
                 raw_path = RAW_DIR / Path(inbox_file).name
                 try:
-                    raw_fm, _ = _parse_frontmatter(raw_path.read_text(encoding="utf-8"))
+                    raw_fm, _ = _parse_frontmatter(raw_path.read_text(encoding="utf-8", errors="replace"))
                     if raw_fm.get("fetch_failed"):
                         log.warning("on_done: refusing to mark wikified — fetch_failed=true in %s", inbox_file)
                         ingested = False
@@ -1379,7 +1379,7 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
         if wf.name == "index.md":
             continue
         try:
-            wtext = wf.read_text(encoding="utf-8")
+            wtext = wf.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         wmeta, _ = _parse_frontmatter(wtext)
@@ -1399,7 +1399,7 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
         return
 
     try:
-        wtext = best.read_text(encoding="utf-8")
+        wtext = best.read_text(encoding="utf-8", errors="replace")
         wmeta, wbody = _parse_frontmatter(wtext)
         wmeta["raw_source"] = raw_rel
         fm_lines = ["---"]
@@ -1418,7 +1418,7 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
         # Also stamp wiki_page back onto the raw file's frontmatter
         wiki_page_rel = str(best.relative_to(WIKI_DIR))
         try:
-            raw_text = raw_path.read_text(encoding="utf-8")
+            raw_text = raw_path.read_text(encoding="utf-8", errors="replace")
             raw_fm, raw_body = _parse_frontmatter(raw_text)
             raw_fm["wiki_page"] = wiki_page_rel
             raw_fm_lines = ["---"]
@@ -1431,7 +1431,7 @@ def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
                     sv = str(v)
                     raw_fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
             raw_fm_lines.append("---")
-            raw_path.write_text("\n".join(raw_fm_lines) + "\n" + raw_body, encoding="utf-8")
+            raw_path.write_text("\n".join(raw_fm_lines) + "\n" + raw_body, encoding="utf-8", errors="replace")
             log.info("Stamped wiki_page=%s into %s", wiki_page_rel, raw_path.name)
         except Exception as e2:
             log.warning("Failed to stamp wiki_page into raw file %s: %s", raw_path.name, e2)
@@ -1453,7 +1453,7 @@ def _mark_inbox_wikified(filename: str) -> None:
         log.warning("_mark_inbox_wikified: file not found %s", filename)
         return
     try:
-        text = p.read_text(encoding="utf-8")
+        text = p.read_text(encoding="utf-8", errors="replace")
         fm, body = _parse_frontmatter(text)
         if fm.get("wikified"):
             return  # already marked
@@ -1469,7 +1469,7 @@ def _mark_inbox_wikified(filename: str) -> None:
                 sv = str(v)
                 fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
         fm_lines.append("---")
-        p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
+        p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8", errors="replace")
         log.info("Marked wikified: %s", filename)
         _link_raw_source_to_wiki(p, fm.get("url", "").strip())
         # Repair first, index once, then validate. There used to be a _rebuild_index() here
@@ -1718,7 +1718,7 @@ def wiki_edit(page_path):
         abort(404)
     if not p.exists():
         abort(404)
-    _raw = p.read_text(encoding="utf-8")
+    _raw = p.read_text(encoding="utf-8", errors="replace")
     return render_template(
         "wiki-edit.html",
         raw=_raw,
@@ -2793,7 +2793,7 @@ def api_inbound_email():
     fm += ["---", ""]
 
     try:
-        dest.write_text("\n".join(fm) + content, encoding="utf-8")
+        dest.write_text("\n".join(fm) + content, encoding="utf-8", errors="replace")
         log.info("Inbound email saved: %s from %s (size: %d bytes)", base_name, from_addr, len("\n".join(fm) + content))
         return {"ok": True, "duplicate": False, "filename": base_name}, 201
     except Exception as e:
@@ -2918,12 +2918,12 @@ def inbox_clip():
             f'---\ntitle: "{display_title}"\nurl: {url}\nsaved: {today}\nadded: {today}\nwikified: false\n---\n\n'
             f'{text}'
         )
-        dest.write_text(md_content, encoding="utf-8")
+        dest.write_text(md_content, encoding="utf-8", errors="replace")
         read_url = url_for("inbox_read", filename=base_name)
         status_msg = "Saved with full content"
     else:
         base_name, dest = _unique(f"{slug}.url")
-        dest.write_text(f"{display_title}\nURL: {url}\n", encoding="utf-8")
+        dest.write_text(f"{display_title}\nURL: {url}\n", encoding="utf-8", errors="replace")
         status_msg = f"URL saved — offline reading unavailable ({fetch_err or 'fetch failed'})"
 
     inbox_url = url_for("inbox")
@@ -3127,7 +3127,7 @@ def inbox_process_all():
             if ingested:
                 raw_path = RAW_DIR / Path(_fname).name
                 try:
-                    raw_fm, _ = _parse_frontmatter(raw_path.read_text(encoding="utf-8"))
+                    raw_fm, _ = _parse_frontmatter(raw_path.read_text(encoding="utf-8", errors="replace"))
                     if raw_fm.get("fetch_failed"):
                         log.warning("inbox/process-all: refusing to mark wikified — fetch_failed=true in %s", _fname)
                         ingested = False
@@ -3226,7 +3226,7 @@ def inbox_archive():
                 sv = str(v)
                 fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
         fm_lines.append("---")
-        src.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
+        src.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8", errors="replace")
         # No _rebuild_index here. Archiving flips one boolean in one raw file's
         # frontmatter, and raw/index.md does not show archived state — the rebuild it used
         # to trigger reread all ~7,400 wiki pages and ~1,600 raw files to produce a
@@ -3266,7 +3266,7 @@ def inbox_unarchive():
                 sv = str(v)
                 fm_lines.append(f"{k}: {_json.dumps(sv) if (chr(34) in sv or ':' in sv) else sv}")
         fm_lines.append("---")
-        p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8")
+        p.write_text("\n".join(fm_lines) + "\n" + body, encoding="utf-8", errors="replace")
         # Same as archiving: nothing the index renders has changed.
     except Exception as e:
         log.error("inbox_unarchive failed for %s: %s", name, e)
@@ -3413,9 +3413,9 @@ def _inbox_edit_write(p, content):
             if content.strip():
                 fm_block = re.sub(r'^fetch_failed:.*\n', '', fm_block, flags=re.MULTILINE)
                 fm_block = re.sub(r'^wikified:.*\n', 'wikified: false\n', fm_block, flags=re.MULTILINE)
-            p.write_text(fm_block + "\n" + content, encoding="utf-8")
+            p.write_text(fm_block + "\n" + content, encoding="utf-8", errors="replace")
         else:
-            p.write_text(content, encoding="utf-8")
+            p.write_text(content, encoding="utf-8", errors="replace")
     elif p.suffix == ".url":
         # User pasted article text into a URL-only item — promote to .md with frontmatter
         existing = p.read_text(encoding="utf-8", errors="replace")
@@ -3434,11 +3434,11 @@ def _inbox_edit_write(p, content):
         if url_val:
             fm += f'url: {url_val}\n'
         fm += f'saved: {today}\n---\n\n'
-        md_path.write_text(fm + content, encoding="utf-8")
+        md_path.write_text(fm + content, encoding="utf-8", errors="replace")
         p.unlink()
         return {"ok": True, "filename": md_name}
     else:
-        p.write_text(content, encoding="utf-8")
+        p.write_text(content, encoding="utf-8", errors="replace")
     return {"ok": True}
 
 
