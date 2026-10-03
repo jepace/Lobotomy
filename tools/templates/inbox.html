@@ -391,8 +391,38 @@ async function pollInbox() {
   }
 }
 
-setInterval(() => { if (!document.hidden) pollInbox(); }, 8000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) pollInbox(); });
+// Same backoff as base.html's queue poller, and for the same reason: every poll is a
+// line in nginx's access log, and that log reached 1.0GB and filled the disk. 8s is the
+// right cadence while a wikify is running and far too fast for a list nobody is changing.
+// The poll exists to notice an item that has just been wikified, so the fast rate is
+// needed exactly while one is in flight.
+(function () {
+  const IDLE_MS = 30000, BUSY_MS = 8000;
+  let timer = null;
+
+  function anythingRunning() {
+    return !!document.querySelector('.act-btn.wikify[disabled]');
+  }
+
+  function schedule(ms) {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(tick, ms);
+  }
+
+  async function tick() {
+    if (document.hidden) { schedule(IDLE_MS); return; }
+    try { await pollInbox(); } catch (e) { /* a failed poll must not stop the loop */ }
+    schedule(anythingRunning() ? BUSY_MS : IDLE_MS);
+  }
+
+  schedule(anythingRunning() ? BUSY_MS : IDLE_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) schedule(0);
+  });
+  // Wikify starts a job from this page, so check promptly rather than waiting out the
+  // slow interval — that is the one moment the list is certain to change.
+  window.pollSoon = () => schedule(0);
+})();
 document.addEventListener('keydown', e => {
   if (e.key === 'r' && !e.metaKey && !e.ctrlKey && !e.altKey &&
       !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {
@@ -739,6 +769,7 @@ async function wikifyItem(name) {
   const progress = partFor(name, '.item-progress');
   if (!btn || !progress) return;
   btn.disabled   = true;
+  if (window.pollSoon) window.pollSoon();   // a job just started; watch closely
   btn.textContent = 'Working…';
   const navChat = document.getElementById('nav-chat');
   if (navChat) navChat.classList.add('ai-busy');

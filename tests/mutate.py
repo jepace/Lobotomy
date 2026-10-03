@@ -502,6 +502,20 @@ MUTATIONS = [
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(((?:\.{1,2}/)*(?:[\w.\-]+/)*[\w.\-]+\.md)\)")',
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)]*)\)")'),
     # The wiki page editor had NO test at all until a user hit a JSON.parse error in it.
+    # A gigabyte of nginx access log filled the disk, and this code wrote it: /chat/status
+    # was polled every 2s on every page with no visibility check.
+    ('poll: the queue poller backs off when nothing is running',
+     "        schedule(busy ? BUSY_MS : IDLE_MS);",
+     "        schedule(BUSY_MS);",
+     'tools/templates/base.html'),
+    ('poll: the queue poller skips a hidden tab',
+     "      if (document.hidden) { schedule(_every); return; }   // nobody is looking",
+     "      if (false) { schedule(_every); return; }",
+     'tools/templates/base.html'),
+    ('poll: the inbox poller backs off when nothing is running',
+     "    schedule(anythingRunning() ? BUSY_MS : IDLE_MS);",
+     "    schedule(BUSY_MS);",
+     'tools/templates/inbox.html'),
     # Three long articles failed while short notes went through; the number that tests
     # that correlation was shown to nobody.
     ('client: a failure reports how big the request was',

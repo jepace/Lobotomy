@@ -28,7 +28,8 @@ existed), `rename_page.py`, `unlink_headings.py`, `repair_links.py`,
 `promote_openers.py`, `rename_section.py`, `merge_page.py`, `find_duplicate_pages.py`, `find_duplicate_sections.py`,
 `undo_pass.py` (put back everything one named pass wrote, skipping pages something
 wrote after it), `add_story.py` (put an article into the reading list without the browser,
-for when the paste box will not take it), and `lint.sh`.
+for when the paste box will not take it), `prune_history.py` (what the history store costs,
+and how to reclaim it), and `lint.sh`.
 
 All of them go through `agent._atomic_write`, so their edits are recorded in page history
 and keep the tree's ownership — an existing file keeps its own owner and mode, a new file
@@ -205,15 +206,48 @@ logged it. Both halves were wrong and both are fixed.
 Together those make silence diagnostic: **nothing in the log now means the request never
 got here**, which points at the proxy rather than at Flask.
 
-**Size is not the application's limit**, measured when three long articles in a row failed
-to save while short notes went through: both save routes answer 200 JSON at 15KB, 240KB,
-1MB, 2MB and **7.6MB**, and Flask sets no `MAX_CONTENT_LENGTH`. So a size limit in front
-of it is the live hypothesis, and `apiFetch` now reports the request's byte count on every
-failure — the one number that confirms or kills it was being shown to nobody. The specific
-suspect is nginx's `client_body_buffer_size` (8–16KB by default): a body over it is spooled
-to `client_body_temp_path`, and a **500 on a large body but not a small one** is what nginx
-returns when it cannot write there. Unproven — but it is the only hypothesis left standing
-that explains long-article-only failures with an empty application log.
+**THE DISK WAS FULL, and this code filled it.** Long articles would not save; short notes
+would. The cause, found in nginx's log after days of looking at the application:
+
+    pwritev() "/var/tmp/nginx/client_body_temp/0000000398" failed
+              (28: No space left on device)
+
+nginx spools a request body larger than `client_body_buffer_size` (8–16KB) to disk, so a
+full filesystem fails **exactly the long pastes and none of the short ones** — and nothing
+reaches the application log, because the request is never forwarded. Size is not the
+application's limit: both save routes answer 200 JSON at 15KB, 240KB, 1MB, 2MB and
+**7.6MB**, and Flask sets no `MAX_CONTENT_LENGTH`.
+
+What filled it was `lobotomy.access.log` at **1.0GB**, and the requests in it were ours.
+`base.html` polled `/chat/status` **every 2 seconds on every page of the site with no
+visibility check** — 43,200 requests a day from one tab left open, on wiki pages as much
+as the reading list — and `/inbox/list` added 10,800 more at 8s. **The irony is that
+`serve.py` already filtered both paths out of werkzeug's access log**, so the volume was
+invisible in the one log this project reads while nginx recorded every line of it.
+
+Both pollers now take a cadence rather than a fixed interval: 30s idle, the fast rate only
+while a job is running or a Wikify has just been clicked, and **no request at all while the
+tab is hidden**. 54,000/day → 5,760 for an idle visible tab, 9.4× (measured, not the "10×"
+the first version of the test claimed), and zero in the background. `wiki-lint.py`'s 2s
+relink poll is allowed by name: it is created only inside `if (s.running)` and cleared when
+the sweep ends, which is the rule rather than an exception to it.
+
+Two things to keep from this:
+
+- **A poller is a log writer.** Every poll is a line in a log somewhere, and the one place
+  this project looks is the one place they were filtered out of.
+- **`tests/test_polling_backoff.py` asserted the constants existed**, which three mutations
+  walked straight through: changing `schedule(busy ? BUSY_MS : IDLE_MS)` to
+  `schedule(BUSY_MS)` leaves every constant in place. It now pins the conditional at BOTH
+  schedule sites — asserting "somewhere" also failed, because each file schedules twice and
+  the start-up call satisfied the regex while the tick path was mutated.
+
+`tools/prune_history.py` reports what `wiki/.history/` costs and prunes it, since
+`_snapshot_version` keeps 50 revisions PER PAGE with no aggregate cap and nothing ever
+reported the total. It was NOT the culprit here — stated because this entry first claimed
+it was — but at ~11,000 pages it is the next thing to fill a disk. Dry run by default;
+`--apply` required, because a revision is the only copy of what a page said before a write.
+`_warn_low_disk()` logs free space at startup and shouts under 500MB.
 
 **`tools/wiki.py`** — CLI wrapper around the same agent tools. An interactive REPL or one-shot runner; no Flask dependency.
 

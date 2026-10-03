@@ -95,6 +95,24 @@ the listing.
 It refuses rather than overwriting when the filename already exists; pass `--name` to
 choose another.
 
+### `prune_history.py` — what `wiki/.history/` costs, and how to reclaim it
+
+`_snapshot_version` keeps 50 revisions **per page**, pruned per page on write, with no
+aggregate cap — at ~11,000 pages that is up to half a million full copies, and nothing
+ever reported the total.
+
+```sh
+python3 tools/prune_history.py                 # report only; touches nothing
+python3 tools/prune_history.py --keep 10       # what pruning to 10 would reclaim
+python3 tools/prune_history.py --keep 10 --apply
+python3 tools/prune_history.py --orphans       # history for pages that no longer exist
+```
+
+**A dry run is the default and `--apply` is required.** A revision is the only copy of
+what a page said before a write, so keeping fewer is a real loss of recoverable past; the
+report leads with what you would give up. The oldest revisions go first — they are the
+ones `_snapshot_version` would evict next anyway, and a revert reaches for the recent ones.
+
 ## Maintenance CLIs (no LLM, no API cost)
 
 These read and repair the wiki directly. All of them are safe to run against a live

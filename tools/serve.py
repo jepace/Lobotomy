@@ -24,6 +24,7 @@ import logging.handlers
 import os
 import re
 import secrets
+import shutil
 import sys
 import threading
 import time
@@ -274,6 +275,40 @@ def _auth_required_response(setup: bool = False):
 _SLOW_REQUEST_MS = 2000
 # Polled every 8s by an open inbox tab, so logging them buries everything else.
 _QUIET_PATHS = ("/inbox/list", "/chat/status", "/chat/queue", "/static/")
+
+
+_LOW_DISK_BYTES = 500 * 1024 * 1024      # 500MB
+
+
+def _warn_low_disk(path=None) -> int:
+    """Log how much room is left, loudly when it is nearly gone. Returns bytes free.
+
+    A full filesystem does not look like a full filesystem from in here. nginx spools a
+    request body larger than `client_body_buffer_size` to disk, so when `/var` filled, the
+    symptom was that LONG pastes failed and short ones did not — for days, with nothing in
+    this log, because nginx never forwarded them. The actual error was one line in nginx's
+    log: `pwritev() ... failed (28: No space left on device)`.
+
+    Writing the number at startup would not have prevented it, but it would have been the
+    first thing anyone read. It is also what the history store needs: `_snapshot_version`
+    keeps 50 revisions PER PAGE with no aggregate cap, so at ~11,000 pages the store grows
+    without anything ever reporting its size (`tools/prune_history.py` now does).
+    """
+    try:
+        free = shutil.disk_usage(path or WIKI_DIR).free
+    except OSError as e:
+        log.warning("could not check free disk space: %s", e)
+        return -1
+    gb = free / (1024 ** 3)
+    if free < _LOW_DISK_BYTES:
+        log.warning("LOW DISK: only %.2fGB free. Saving a long article needs room for the "
+                    "proxy to spool the request body — at this level it fails with "
+                    "'No space left on device' and nothing reaches this log. "
+                    "python3 tools/prune_history.py shows what the history store costs.",
+                    gb)
+    else:
+        log.info("disk: %.1fGB free", gb)
+    return free
 
 
 @app.after_request
@@ -3563,6 +3598,7 @@ if __name__ == "__main__":
     provider = cfg_get("llm", "provider", "openai")
     _ver = deployed_version()
     log.info("Lobotomy starting — version: %s", _ver)
+    _warn_low_disk()
     print(f"\nLobotomy  http://{host}:{port}  (provider: {provider})")
     print(f"version: {_ver}\n")
     app.run(host=host, port=port, debug=False, threaded=True)

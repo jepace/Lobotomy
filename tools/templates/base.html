@@ -428,8 +428,11 @@
     bar.appendChild(label); bar.appendChild(btn);
     document.body.appendChild(bar);
 
+    // Resolves to whether anything is running or queued, which is what picks the next
+    // interval. It never rejects: a failed poll is not worth a message, but it must not
+    // stop the loop either, so it reports "not busy" and the slow cadence carries on.
     function syncBusy() {
-      apiFetch('/chat/status').then(function(s) {
+      return apiFetch('/chat/status').then(function(s) {
         if (s.running) navChat.classList.add('ai-busy');
         else navChat.classList.remove('ai-busy');
         var n = s.pending || 0;
@@ -439,10 +442,41 @@
         } else if (!btn.disabled) {
           bar.hidden = true;
         }
-      }).catch(function(){});
+        return !!(s.running || n);
+      }).catch(function(){ return false; });
     }
-    syncBusy();
-    setInterval(syncBusy, 2000);
+    // Poll fast only while there is something to watch, never while hidden.
+    //
+    // This ran every 2 SECONDS on every page of the site, with no visibility check: 43,200
+    // requests a day from one tab left open, on the wiki as much as the reading list.
+    // Each one is a line in nginx's access log, and lobotomy.access.log reached 1.0GB and
+    // filled /var — which is what finally broke saving an article, because nginx spools a
+    // large request body to disk and had nowhere to put it. The app never saw those
+    // requests fail; the whole failure was downstream of a log this code was filling.
+    //
+    // Idle is the overwhelmingly common state, so it gets the slow cadence. The moment a
+    // job is running the bar matters again, so it speeds back up — and a tab brought to
+    // the front checks at once rather than waiting out the slow interval.
+    var IDLE_MS = 30000, BUSY_MS = 2000, _timer = null, _every = IDLE_MS;
+
+    function schedule(ms) {
+      if (_timer) clearTimeout(_timer);
+      _every = ms;
+      _timer = setTimeout(tick, ms);
+    }
+
+    function tick() {
+      if (document.hidden) { schedule(_every); return; }   // nobody is looking
+      syncBusy().then(function (busy) {
+        schedule(busy ? BUSY_MS : IDLE_MS);
+      });
+    }
+
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) { schedule(0); }
+    });
+
+    syncBusy().then(function (busy) { schedule(busy ? BUSY_MS : IDLE_MS); });
   })();
   </script>
 </body>
