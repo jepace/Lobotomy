@@ -283,6 +283,16 @@
     window.apiFetch = async function(url, opts) {
       opts = Object.assign({}, opts);
       opts.headers = Object.assign({'X-Requested-With': 'fetch'}, opts.headers || {});
+      // How big the request was, reported on every failure. Three long articles in a row
+      // failed to save while short notes went through, and the application was ruled out
+      // by measurement — both save routes answer 200 at 7.6MB and Flask sets no
+      // MAX_CONTENT_LENGTH. That leaves a size limit somewhere in front of it, and the
+      // one number that would confirm or kill the idea was not being shown to anyone.
+      // nginx's client_body_buffer_size (8-16KB by default) is the suspect: a body over
+      // it is spooled to client_body_temp, and a 500 is what nginx returns when it cannot
+      // write there.
+      const _sent = (opts.body && opts.body.length) ? opts.body.length : 0;
+      const _size = _sent ? ' The request was ' + _sent.toLocaleString() + ' bytes.' : '';
       let resp;
       try {
         resp = await fetch(url, opts);
@@ -335,9 +345,12 @@
           throw new Error('HTTP ' + resp.status + ' from something in front of the '
             + 'application — it answered with a web page, and every route here answers '
             + 'JSON, so your request never reached Lobotomy.' + named
-            + ' Nothing will be in the Lobotomy log; look in the proxy\'s log instead. '
-            + 'A 504 is its read timeout, a 502 an upstream that closed, a 413 a body it '
-            + 'judged too large.');
+            + ' Nothing will be in the Lobotomy log; look in the proxy\'s log instead.'
+            + _size
+            + ' A 504 is its read timeout, a 502 an upstream that closed, a 413 a body it '
+            + 'judged too large — and a 500 on a LARGE body but not a small one is usually '
+            + 'the proxy failing to spool it to disk (nginx: client_body_buffer_size and '
+            + 'client_body_temp_path).');
         }
         throw new Error('The server sent a web page instead of an answer (HTTP ' + resp.status +
                         '). You may have been signed out — reload the page and sign in.');
@@ -346,7 +359,7 @@
         throw new Error('The server hit an error and could not complete this (HTTP ' +
                         resp.status + '). This is a fault on the server, not your session '
                         + '— signing in again will not help, and the reply was not JSON, '
-                        + 'so it may not have come from the application.');
+                        + 'so it may not have come from the application.' + _size);
       }
       throw new Error('The server returned ' + resp.status + ' ' + (resp.statusText || '') +
                       (body ? ': ' + body.slice(0, 200) : '.'));

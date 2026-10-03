@@ -502,6 +502,12 @@ MUTATIONS = [
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(((?:\.{1,2}/)*(?:[\w.\-]+/)*[\w.\-]+\.md)\)")',
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)]*)\)")'),
     # The wiki page editor had NO test at all until a user hit a JSON.parse error in it.
+    # Three long articles failed while short notes went through; the number that tests
+    # that correlation was shown to nobody.
+    ('client: a failure reports how big the request was',
+     "      const _size = _sent ? ' The request was ' + _sent.toLocaleString() + ' bytes.' : '';",
+     "      const _size = '';",
+     'tools/templates/base.html'),
     # The on-screen message claimed "the server log has the traceback" for any 5xx,
     # including a proxy's HTML page, which means the app never ran. A user looked where it
     # said and found nothing.

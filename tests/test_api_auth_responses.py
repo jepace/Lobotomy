@@ -290,6 +290,25 @@ class BrowserTest(unittest.TestCase):
         self.assertIn("never reached", msg)
         page.close()
 
+    def test_a_failure_reports_how_big_the_request_was(self):
+        """Three long articles failed to save while short notes went through. The
+        application was ruled out by measurement (200 at 7.6MB, no MAX_CONTENT_LENGTH), so
+        a size limit in front of it is the live hypothesis — and the one number that would
+        confirm or kill it was being shown to nobody."""
+        page = self._page(500, "<!DOCTYPE html><title>500</title>")
+        err = page.evaluate("""async () => {
+            try { await window.apiFetch('/api-test',
+                      {method:'POST', body: 'x'.repeat(21480)}); return null; }
+            catch (e) { return e.message; }
+        }""")
+        self.assertIn("21,480 bytes", err)
+        page.close()
+
+    def test_a_request_with_no_body_does_not_claim_a_size(self):
+        page = self._page(500, "<!DOCTYPE html><title>500</title>")
+        self.assertNotIn("bytes", self._err(page)["message"])
+        page.close()
+
     def test_an_html_5xx_points_at_the_proxy_and_names_it(self):
         page = self._page(504, "<!DOCTYPE html><title>504 Gateway Time-out</title>"
                                "<hr><center>nginx/1.24.0</center>")

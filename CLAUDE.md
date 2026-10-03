@@ -205,6 +205,16 @@ logged it. Both halves were wrong and both are fixed.
 Together those make silence diagnostic: **nothing in the log now means the request never
 got here**, which points at the proxy rather than at Flask.
 
+**Size is not the application's limit**, measured when three long articles in a row failed
+to save while short notes went through: both save routes answer 200 JSON at 15KB, 240KB,
+1MB, 2MB and **7.6MB**, and Flask sets no `MAX_CONTENT_LENGTH`. So a size limit in front
+of it is the live hypothesis, and `apiFetch` now reports the request's byte count on every
+failure — the one number that confirms or kills it was being shown to nobody. The specific
+suspect is nginx's `client_body_buffer_size` (8–16KB by default): a body over it is spooled
+to `client_body_temp_path`, and a **500 on a large body but not a small one** is what nginx
+returns when it cannot write there. Unproven — but it is the only hypothesis left standing
+that explains long-article-only failures with an empty application log.
+
 **`tools/wiki.py`** — CLI wrapper around the same agent tools. An interactive REPL or one-shot runner; no Flask dependency.
 
 **`tools/config.py`** — reads `config.json`. Use `cfg_get(section, key, default)` throughout. Config is never hardcoded.
