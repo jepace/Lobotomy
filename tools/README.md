@@ -69,6 +69,32 @@ from the environment.
 
 ---
 
+### `add_story.py` — put an article into the reading list without the browser
+
+The paste box is one route into `raw/`, and when it fails there was no other, so an
+article you have in front of you could not be captured at all. This is the second route.
+No network, no LLM, no cost.
+
+```sh
+python3 tools/add_story.py article.txt --url https://www.nytimes.com/2026/09/30/...
+pbpaste | python3 tools/add_story.py --url https://www.nytimes.com/2026/09/30/...
+python3 tools/add_story.py article.txt --title "How Meta Uses A.I. Data Centers"
+```
+
+It writes `raw/<slug>.md` with the same frontmatter the web capture writes, so the item
+shows in the reading list and Wikify works on it exactly as if it had been pasted.
+
+Three deliberate differences from the web route. Input is read as **bytes** and decoded
+with `errors="replace"`, because a clipboard that has been through a browser can carry a
+lone UTF-16 surrogate and that is precisely what used to lose a story. The title is the
+**headline**, not the first line — a browser copy opens with the site name, then often a
+byline and a reading time, and taking the first line titles the story "nytimes.com". And
+an empty slug cannot produce a dotfile, which would save the story and then hide it from
+the listing.
+
+It refuses rather than overwriting when the filename already exists; pass `--name` to
+choose another.
+
 ## Maintenance CLIs (no LLM, no API cost)
 
 These read and repair the wiki directly. All of them are safe to run against a live

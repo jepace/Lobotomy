@@ -502,6 +502,19 @@ MUTATIONS = [
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(((?:\.{1,2}/)*(?:[\w.\-]+/)*[\w.\-]+\.md)\)")',
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)]*)\)")'),
     # The wiki page editor had NO test at all until a user hit a JSON.parse error in it.
+    # The browser route failed for one user on one article and there was no other way in.
+    ('add_story: input is decoded tolerantly, like every other capture path',
+     '    content = data.decode("utf-8", errors="replace").strip()',
+     '    content = data.decode("utf-8").strip()',
+     'tools/add_story.py'),
+    ('add_story: an existing file is refused, never overwritten',
+     '    if dest.exists():',
+     '    if False:',
+     'tools/add_story.py'),
+    ('add_story: a reading-time line is not mistaken for the headline',
+     "        if re.match(r\"^[\\d\\s–—-]+\\s*(min|minute|hour)\", line, re.I):",
+     '        if False:',
+     'tools/add_story.py'),
     # Found by another session, fuzzing /inbox/add: pasted text carrying a lone UTF-16
     # surrogate (half an emoji from a truncated copy) made the utf-8 write raise, and the
     # 500 took the whole story with it. JSON permits a lone surrogate; utf-8 does not.

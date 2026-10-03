@@ -27,7 +27,8 @@ existed), `rename_page.py`, `unlink_headings.py`, `repair_links.py`,
 `repair_frontmatter.py`, `rebuild_sources.py`, `section_inventory.py`,
 `promote_openers.py`, `rename_section.py`, `merge_page.py`, `find_duplicate_pages.py`, `find_duplicate_sections.py`,
 `undo_pass.py` (put back everything one named pass wrote, skipping pages something
-wrote after it), and `lint.sh`.
+wrote after it), `add_story.py` (put an article into the reading list without the browser,
+for when the paste box will not take it), and `lint.sh`.
 
 All of them go through `agent._atomic_write`, so their edits are recorded in page history
 and keep the tree's ownership — an existing file keeps its own owner and mode, a new file
