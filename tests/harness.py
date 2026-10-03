@@ -99,11 +99,49 @@ class TempWiki:
         assert list(agent.wiki_pages()) == [], (
             "TempWiki: agent.wiki_pages() sees pages in a brand-new temp wiki — "
             "something is still reading the old WIKI_DIR")
+
+        # The rebind check above only proves agent SEES the temp tree. It cannot catch a
+        # module that captured RAW_DIR or WIKI_DIR at import — `from agent import RAW_DIR`
+        # binds the value, so the rebind is invisible to it and its writes land in the real
+        # tree. tools/add_story.py did exactly that, and nine test stories were written into
+        # the repo's raw/ and then committed by a `git add -A`. Nothing failed; the suite
+        # was green the whole time. So snapshot what the real trees hold and check on the
+        # way out. ~4ms across the whole suite.
+        # RAW_DIR and WIKI_DIR only. REPO_ROOT is the whole checkout, whose __pycache__
+        # churns on every run, and HISTORY_DIR lives inside WIKI_DIR already.
+        self._outside = {self._saved_globals[k]: self._listing(self._saved_globals[k])
+                         for k in ("RAW_DIR", "WIKI_DIR")
+                         if isinstance(self._saved_globals.get(k), Path)}
         return self
+
+    @staticmethod
+    def _listing(d):
+        """Names and sizes under a real tree, for the leak check. Cheap by construction:
+        the repo's raw/ and wiki/ hold a handful of files, unlike a deployed one."""
+        try:
+            return {str(p.relative_to(d)): p.stat().st_size
+                    for p in d.rglob("*") if p.is_file()}
+        except (OSError, ValueError):
+            return {}
 
     def __exit__(self, exc_type, exc, tb):
         for k, v in self._saved_globals.items():
             setattr(agent, k, v)
+        # Did anything write outside the temp tree while this test ran? Reported even when
+        # the test itself failed, because a leak is the more serious of the two and the
+        # files are evidence either way.
+        for d, before in getattr(self, "_outside", {}).items():
+            after = self._listing(d)
+            if after != before:
+                added = sorted(set(after) - set(before))
+                changed = sorted(k for k in set(after) & set(before)
+                                 if after[k] != before[k])
+                removed = sorted(set(before) - set(after))
+                raise AssertionError(
+                    f"TempWiki: the REAL tree at {d} changed while a test ran — "
+                    f"added={added} changed={changed} removed={removed}. Something is "
+                    f"holding a path captured at import (`from agent import RAW_DIR` "
+                    f"binds the value) instead of reading agent.RAW_DIR at call time.")
         agent.init_session()
         _clear_autolink_caches()
         shutil.rmtree(self._tmpdir, ignore_errors=True)

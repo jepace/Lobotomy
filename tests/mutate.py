@@ -502,6 +502,12 @@ MUTATIONS = [
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(((?:\.{1,2}/)*(?:[\w.\-]+/)*[\w.\-]+\.md)\)")',
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)]*)\)")'),
     # The wiki page editor had NO test at all until a user hit a JSON.parse error in it.
+    # Nine test stories were written into the repo's real raw/ and committed. The suite
+    # was green: nothing checked either the write or the commit.
+    ('harness: a write to the real raw/ or wiki/ fails the test that made it',
+     '            if after != before:',
+     '            if False:',
+     'tests/harness.py'),
     # The browser route failed for one user on one article and there was no other way in.
     ('add_story: input is decoded tolerantly, like every other capture path',
      '    content = data.decode("utf-8", errors="replace").strip()',

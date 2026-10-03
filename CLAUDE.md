@@ -956,8 +956,24 @@ one you just added.
 `run_all.py` is stdlib `unittest` over `tests/` (repo root — the suite covers the
 whole project, not just `tools/`), built on a `TempWiki` harness that
 rebinds all four module globals, resets the thread-local session context, clears the
-autolinker caches, and asserts its own isolation. Nothing there touches the repo's real
-`wiki/` or `raw/`.
+autolinker caches, and asserts its own isolation.
+
+**That isolation claim was false, and a green suite was the proof of nothing.** The entry
+check only proves `agent` SEES the temp tree; it cannot catch a module that captured a
+path at import, because `from agent import RAW_DIR` binds the VALUE and the rebind is
+invisible to it. `tools/add_story.py` did exactly that, wrote nine test stories into the
+repo's real `raw/`, and a `git add -A` committed them. Nothing failed at any point.
+`TempWiki` now snapshots `RAW_DIR` and `WIKI_DIR` on entry and raises on exit if either
+changed, naming the files — which catches any module holding a captured path, not just
+that one. It costs ~4ms across the whole suite, and it is restricted to those two globals:
+`REPO_ROOT` is the whole checkout, whose `__pycache__` churns on every run, and
+`HISTORY_DIR` is inside `WIKI_DIR` already.
+
+`tests/test_no_data_files_committed.py` is the other half, because two independent failures
+had to line up: the write, and nobody noticing the files in the commit. It allows only the
+repo's skeleton — two `.gitkeep`s and the generated index/log/tasks pages — under `raw/`
+and `wiki/`. **It matters beyond tidiness:** `deploy.sh --full` rsyncs `raw/`, so a
+committed test story becomes a junk item in the reading list of a live server.
 
 **Link-rewriting passes must skip `agent._GENERATED_PAGES`** (`index.md` anywhere,
 `log.md`). `merge_page`, `rename_page.py` and `repair_links.py` share that one list so they
