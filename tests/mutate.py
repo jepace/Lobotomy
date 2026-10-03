@@ -502,6 +502,21 @@ MUTATIONS = [
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(((?:\.{1,2}/)*(?:[\w.\-]+/)*[\w.\-]+\.md)\)")',
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)]*)\)")'),
     # The wiki page editor had NO test at all until a user hit a JSON.parse error in it.
+    # Found by another session, fuzzing /inbox/add: pasted text carrying a lone UTF-16
+    # surrogate (half an emoji from a truncated copy) made the utf-8 write raise, and the
+    # 500 took the whole story with it. JSON permits a lone surrogate; utf-8 does not.
+    # Guards shipped without mutations, so these are the proof the tests hold them.
+    ('atomic_write: a lone surrogate does not lose the write',
+     '        with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as f:',
+     '        with os.fdopen(fd, "w", encoding="utf-8") as f:'),
+    ('inbox_add: an overlong filename is trimmed to what the filesystem allows',
+     '        name = stem[:100] + ("." + ext if ext else "")',
+     '        name = stem + ("." + ext if ext else "")',
+     'tools/serve.py'),
+    ('inbox_add: a non-string body is coerced rather than crashing',
+     '    content = str(data.get("content") or "").strip()',
+     '    content = (data.get("content") or "").strip()',
+     'tools/serve.py'),
     # A background fetch landing after the user pasted their own text replaced it.
     ('fetch_and_patch: a page edited while fetching keeps the edit',
      '            if expect_body is not None and body.strip() != expect_body.strip():',

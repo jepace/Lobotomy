@@ -154,6 +154,34 @@ not `set_content`, for the same reason the hovercard tests do: on `about:blank` 
 `fetch('/api-test')` has no base and throws, and the first run of this module failed that
 way for a reason unrelated to the code.
 
+**A lone UTF-16 surrogate in pasted text lost the whole story** (`_atomic_write`'s
+`errors="replace"`, and the same on serve.py's content reads and writes). This is the
+answer to "the can't-add-the-story-content error, every 4-6 stories", and it was found by
+**fuzzing `/inbox/add`** after reasoning from the symptom had failed three times.
+
+A copy that truncates an emoji leaves half a surrogate pair. **JSON permits it and UTF-8
+refuses it**, so the request parsed fine and then the write raised, which surfaced as a
+bare 500 — and the pasted article was gone. Intermittent exactly as reported, because it
+depends on the characters in what you paste, not on the route, the session or the page.
+
+Two things worth keeping from how it was found:
+
+- **Every hypothesis reasoned out from the symptom was wrong**, and each was disproved by
+  measurement: a long autolink does NOT stall the server (5.7s of linking delayed another
+  thread by 20ms, so the GIL is not the mechanism); the save routes answer 200 JSON for
+  plain text, code spans, fenced blocks, unicode, no frontmatter, an empty body and a
+  100KB page; and a days-old paywalled capture with `fetch_failed` accepts a long paste.
+  Fuzzing the input found in one pass what three rounds of reading the code did not.
+- **The same fuzz found two more**: a filename over 255 bytes raised `ENAMETOOLONG`, and a
+  non-string `content` raised `AttributeError`. All three arrived as the same bare 500,
+  which is why one report covered three bugs.
+
+`errors="replace"` is a deliberate trade at the single write chokepoint: one `?` in place
+of a character that was already garbage, against losing the save. Content reads take it
+too, so one bad byte in a raw file cannot 500 the page that renders it. **Config, auth and
+other state files stay strict** — a replacement character in a password hash or an API key
+is corruption to be noticed, not smoothed over.
+
 **`tools/wiki.py`** — CLI wrapper around the same agent tools. An interactive REPL or one-shot runner; no Flask dependency.
 
 **`tools/config.py`** — reads `config.json`. Use `cfg_get(section, key, default)` throughout. Config is never hardcoded.
