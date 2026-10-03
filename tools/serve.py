@@ -112,6 +112,21 @@ def _setup_logging() -> None:
     root.addHandler(fh)
     root.addHandler(sh)
 
+    # Werkzeug's access log goes to the SAME file. It is its own logger, so it was landing
+    # on stderr and never in the log anyone reads — and it is the one line that proves a
+    # request reached the application at all.
+    #
+    # That mattered more than it sounds. A user hit a failing save, the on-screen message
+    # told them the server log had a traceback, and the log was empty. Two very different
+    # situations produce an empty log: the request never arrived (a proxy answered), or it
+    # arrived and nothing logged it. Without the access line those are indistinguishable,
+    # so "the log shows nothing" could not be used as evidence either way. With it, silence
+    # means the request never got here — which points at the proxy rather than at Flask.
+    wz = logging.getLogger("werkzeug")
+    wz.setLevel(logging.INFO)
+    wz.addHandler(fh)
+    wz.propagate = False      # it already reaches stderr through its own default handler
+
 _setup_logging()
 log = logging.getLogger("lobotomy.serve")
 

@@ -279,12 +279,47 @@ class BrowserTest(unittest.TestCase):
         self.assertIn("500", msg)
         page.close()
 
-    def test_a_500_says_where_to_look(self):
-        """It is the server's fault, so the move is reading the server log."""
-        page = self._page(500, "<!DOCTYPE html><title>Internal Server Error</title>")
+    def test_an_html_5xx_does_not_claim_the_app_log_has_a_traceback(self):
+        """The message cost a real debugging session. It said "the server log has the
+        traceback" for ANY status >= 500; the user went and looked, and the log was silent,
+        because an HTML body means the request never reached the application at all."""
+        page = self._page(502, "<!DOCTYPE html><title>502 Bad Gateway</title>"
+                               "<center>nginx</center>")
         msg = self._err(page)["message"]
-        self.assertIn("server log", msg)
+        self.assertNotIn("traceback", msg)
+        self.assertIn("never reached", msg)
         page.close()
+
+    def test_an_html_5xx_points_at_the_proxy_and_names_it(self):
+        page = self._page(504, "<!DOCTYPE html><title>504 Gateway Time-out</title>"
+                               "<hr><center>nginx/1.24.0</center>")
+        msg = self._err(page)["message"]
+        self.assertIn("proxy", msg)
+        self.assertIn("504", msg)
+        self.assertIn("Gateway Time-out", msg)
+        page.close()
+
+    def test_a_json_500_is_reported_as_the_application_failing(self):
+        """The other side of the same distinction: this one DID come from Flask, so the
+        app log is the right place and the server's own text is worth showing."""
+        page = self._page(500, '{"error":"The server hit an error handling this request '
+                               '(OSError).","detail":"[Errno 28] No space left on device"}',
+                          content_type="application/json")
+        msg = self._err(page)["message"]
+        self.assertIn("OSError", msg)
+        self.assertNotIn("never reached", msg)
+        page.close()
+
+    def test_the_two_5xx_cases_do_not_say_the_same_thing(self):
+        """If they did, the distinction would be decoration."""
+        a = self._page(500, "<!DOCTYPE html><title>Internal Server Error</title>")
+        html_msg = self._err(a)["message"]
+        a.close()
+        b = self._page(500, '{"error":"boom","detail":"RuntimeError"}',
+                       content_type="application/json")
+        json_msg = self._err(b)["message"]
+        b.close()
+        self.assertNotEqual(html_msg, json_msg)
 
     def test_a_401_login_page_still_says_sign_in(self):
         """The distinction has to cut both ways, or the first bug comes back."""

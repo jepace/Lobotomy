@@ -502,6 +502,18 @@ MUTATIONS = [
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(((?:\.{1,2}/)*(?:[\w.\-]+/)*[\w.\-]+\.md)\)")',
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)]*)\)")'),
     # The wiki page editor had NO test at all until a user hit a JSON.parse error in it.
+    # The on-screen message claimed "the server log has the traceback" for any 5xx,
+    # including a proxy's HTML page, which means the app never ran. A user looked where it
+    # said and found nothing.
+    ('client: an HTML 5xx is not blamed on the application',
+     "      if (/^\\s*<(!doctype|html)/i.test(body)) {",
+     "      if (false) {",
+     'tools/templates/base.html'),
+    # Werkzeug's access line is what makes an empty log mean "never arrived".
+    ('serve: werkzeug logs to the application log file',
+     '    wz.addHandler(fh)',
+     '    pass',
+     'tools/serve.py'),
     # Nine test stories were written into the repo's real raw/ and committed. The suite
     # was green: nothing checked either the write or the commit.
     ('harness: a write to the real raw/ or wiki/ fails the test that made it',

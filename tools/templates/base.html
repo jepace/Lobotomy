@@ -315,15 +315,38 @@
       // message naming a move that cannot fix the problem, which is the same failure the
       // write-path refusals are judged on (principle 4). A 5xx is the server breaking, and
       // reloading and signing in will produce it again.
-      if (/^\s*<(!doctype|html)/i.test(body) || resp.status >= 500) {
+      // An HTML body means this did NOT come from the application: every route here
+      // answers JSON, and _unhandled turns even a crash into JSON. So something in front
+      // of the application answered — nginx, a load balancer, a tunnel — and the
+      // application never saw the request.
+      //
+      // Getting this wrong cost a user a real debugging session. The 5xx branch used to
+      // say "the server log has the traceback" for ANY status >= 500, including this case;
+      // they went and looked, and the log was silent, because the request had never
+      // arrived. A message must not assert something it cannot know. What it CAN know is
+      // whether the body was our JSON, and that is exactly the thing that distinguishes
+      // "the app failed" from "the app was never reached".
+      if (/^\s*<(!doctype|html)/i.test(body)) {
+        const who = (body.match(/<title[^>]*>([^<]{0,80})/i) || [])[1]
+                 || (body.match(/\b(nginx|apache|cloudflare|gunicorn|varnish)\b/i) || [])[1]
+                 || '';
+        const named = who ? ' It identifies itself as: ' + who.trim() + '.' : '';
         if (resp.status >= 500) {
-          throw new Error('The server hit an error and could not complete this (HTTP ' +
-                          resp.status + '). This is a fault on the server, not your session '
-                          + '— signing in again will not help. The server log has the '
-                          + 'traceback, under "Exception on" with this request\'s path.');
+          throw new Error('HTTP ' + resp.status + ' from something in front of the '
+            + 'application — it answered with a web page, and every route here answers '
+            + 'JSON, so your request never reached Lobotomy.' + named
+            + ' Nothing will be in the Lobotomy log; look in the proxy\'s log instead. '
+            + 'A 504 is its read timeout, a 502 an upstream that closed, a 413 a body it '
+            + 'judged too large.');
         }
         throw new Error('The server sent a web page instead of an answer (HTTP ' + resp.status +
                         '). You may have been signed out — reload the page and sign in.');
+      }
+      if (resp.status >= 500) {
+        throw new Error('The server hit an error and could not complete this (HTTP ' +
+                        resp.status + '). This is a fault on the server, not your session '
+                        + '— signing in again will not help, and the reply was not JSON, '
+                        + 'so it may not have come from the application.');
       }
       throw new Error('The server returned ' + resp.status + ' ' + (resp.statusText || '') +
                       (body ? ': ' + body.slice(0, 200) : '.'));

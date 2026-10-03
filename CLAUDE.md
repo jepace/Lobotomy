@@ -183,6 +183,28 @@ too, so one bad byte in a raw file cannot 500 the page that renders it. **Config
 other state files stay strict** — a replacement character in a password hash or an API key
 is corruption to be noticed, not smoothed over.
 
+**An empty log is only evidence if every arriving request would have logged.** A failing
+save showed *"the server log has the traceback"*, the log was empty, and that could not be
+read either way: the request may never have arrived, or it may have arrived and nothing
+logged it. Both halves were wrong and both are fixed.
+
+- **`apiFetch` asserted what it could not know.** It gave the traceback message for ANY
+  status >= 500, including an HTML body — which by definition did not come from here,
+  since every route answers JSON and `_unhandled` turns even a crash into JSON. The user
+  looked where the message said and found nothing. **An HTML body is the tell**, so that
+  now picks the explanation: it names the status, quotes the page's `<title>` or the
+  server it identifies as, says the request never reached Lobotomy, and points at the
+  proxy's log — with 504 read timeout / 502 upstream closed / 413 body too large spelled
+  out. Principle 4 again, in the UI: a message must name a move that works.
+- **Werkzeug's access log never reached the file anyone reads.** It is its own logger and
+  was going to stderr. It is the single line that proves a request arrived, so it now gets
+  the same `FileHandler`, at INFO, with `propagate = False` so the terminal does not
+  double-print. `after_request` logs method, path, status and duration for every non-GET
+  and every 4xx/5xx (the 8-second `/inbox/list` poll excluded).
+
+Together those make silence diagnostic: **nothing in the log now means the request never
+got here**, which points at the proxy rather than at Flask.
+
 **`tools/wiki.py`** — CLI wrapper around the same agent tools. An interactive REPL or one-shot runner; no Flask dependency.
 
 **`tools/config.py`** — reads `config.json`. Use `cfg_get(section, key, default)` throughout. Config is never hardcoded.
