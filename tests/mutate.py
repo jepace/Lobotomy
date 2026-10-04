@@ -502,6 +502,20 @@ MUTATIONS = [
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(((?:\.{1,2}/)*(?:[\w.\-]+/)*[\w.\-]+\.md)\)")',
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)]*)\)")'),
     # The wiki page editor had NO test at all until a user hit a JSON.parse error in it.
+    # Search greps the whole wiki, so a slow one was indistinguishable from a broken one:
+    # the popup kept showing the PREVIOUS query's results while the new one ran.
+    ('search: a slow search says it is working',
+     "      box.innerHTML = '<div class=\"search-busy\"><div class=\"search-spinner\"></div>'",
+     "      box.innerHTML = '<div class=\"search-busy\">'",
+     'tools/templates/wiki.html'),
+    ('search: a failed search says so instead of leaving stale results',
+     '      box.innerHTML = `<div class="search-error">Search failed: ${searchEsc(e.message)}</div>`;',
+     '      box.innerHTML = ``;',
+     'tools/templates/wiki.html'),
+    ('search: the error text is escaped',
+     '    .replace(/&/g, \'&amp;\').replace(/</g, \'&lt;\').replace(/>/g, \'&gt;\')\n    .replace(/"/g, \'&quot;\');',
+     '    ;',
+     'tools/templates/wiki.html'),
     # A gigabyte of nginx access log filled the disk, and this code wrote it: /chat/status
     # was polled every 2s on every page with no visibility check.
     ('poll: the queue poller backs off when nothing is running',

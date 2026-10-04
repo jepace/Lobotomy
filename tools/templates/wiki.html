@@ -101,6 +101,30 @@
   .search-result-excerpt { font-size: 12px; color: var(--text2); margin-top: 2px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .search-no-results { padding: 12px 14px; font-size: 13px; color: var(--text2); }
+  /* The searching state. Search greps the whole wiki, so several seconds of nothing is
+     normal and indistinguishable from a broken search — the popup kept showing the
+     PREVIOUS query's results while the new one ran, which reads as a wrong answer rather
+     than a pending one. */
+  .search-busy {
+    display: flex; align-items: center; gap: 9px;
+    padding: 12px 14px; font-size: 13px; color: var(--text2);
+  }
+  .search-spinner {
+    width: 13px; height: 13px; flex: none;
+    border: 2px solid var(--border);
+    border-top-color: var(--text2);
+    border-radius: 50%;
+    animation: search-spin 0.7s linear infinite;
+  }
+  @keyframes search-spin { to { transform: rotate(360deg); } }
+  /* Honour the system setting: the indicator still has to be VISIBLE, so it pulses
+     instead of disappearing — someone who turns motion off still needs to know the
+     search is running. */
+  @media (prefers-reduced-motion: reduce) {
+    .search-spinner { animation: search-pulse 1.2s ease-in-out infinite; }
+    @keyframes search-pulse { 50% { opacity: 0.25; } }
+  }
+  .search-error { padding: 12px 14px; font-size: 13px; color: var(--text2); }
 
   /* chat-about button */
   .chat-about {
@@ -283,6 +307,13 @@ async function toggleShare(btn) {
   const box = document.getElementById('wiki-search-results');
   let timer = null;
 
+  // The search scope has no escaper of its own, and an error message carries text the
+  // server chose — a proxy's HTML page among them. Interpolating it raw would put markup
+  // from a failed request into the page.
+  const searchEsc = t => String(t == null ? '' : t)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
   function highlight(text, q) {
     if (!q) return text;
     const words = q.trim().split(/\s+/).filter(w => w && !w.toLowerCase().startsWith('in:') && !w.toLowerCase().startsWith('tag:'));
@@ -314,13 +345,44 @@ async function toggleShare(btn) {
     el.scrollIntoView({ block: 'nearest' });
   }
 
+  // Which query the popup is currently showing or waiting on. Two searches can be in
+  // flight at once — typing does not wait for the previous one — and the later keystroke
+  // is always the one the user meant, so an older reply is dropped rather than rendered.
+  let live = '';
+
   async function doSearch(q) {
     if (q.length < 2) { box.classList.remove('open'); return; }
-    const data = await apiFetch('/wiki/search?q=' + encodeURIComponent(q));
+    live = q;
+
+    // Say it is working, but only if it is slow enough to be in doubt. Showing the
+    // spinner immediately makes every fast search flicker, which is its own kind of
+    // noise; 180ms is under the threshold where a wait feels like a wait, so a quick
+    // search goes straight from old results to new ones and a slow one explains itself.
+    const pending = setTimeout(() => {
+      if (live !== q) return;
+      box.innerHTML = '<div class="search-busy"><div class="search-spinner"></div>'
+                    + 'Searching the wiki…</div>';
+      box.classList.add('open');
+    }, 180);
+
+    let data;
+    try {
+      data = await apiFetch('/wiki/search?q=' + encodeURIComponent(q));
+    } catch (e) {
+      clearTimeout(pending);
+      if (live !== q) return;
+      // This used to be an unhandled rejection: the popup kept the previous query's
+      // results and the error went to the console, so a search that FAILED looked exactly
+      // like a search that found those older things.
+      box.innerHTML = `<div class="search-error">Search failed: ${searchEsc(e.message)}</div>`;
+      box.classList.add('open');
+      return;
+    }
+    clearTimeout(pending);
     if (inp.value.trim() !== q) return; // stale
     sel = -1;
     if (!data.results.length) {
-      box.innerHTML = `<div class="search-no-results">No results for "${q}"</div>`;
+      box.innerHTML = `<div class="search-no-results">No results for "${searchEsc(q)}"</div>`;
     } else {
       let html = data.results.map(res => `
         <a class="search-result" href="/wiki/${res.path}" role="option">

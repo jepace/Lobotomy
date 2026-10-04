@@ -817,6 +817,33 @@ lifted from the template by regex; it serves the fixture from a **real origin** 
 `set_content`, because on `about:blank` a relative `fetch('/api/…')` has no base, throws,
 and every assertion then fails for a reason unrelated to the code.
 
+**Search says it is working, and says so when it fails** (`.search-busy`, the `catch` in
+`doSearch`). Reported as *"search is slow, so sometimes I can't tell if it is searching or
+not working."* There was no busy state at all: between the keystroke and the results the
+popup kept showing the PREVIOUS query's hits, which does not read as pending — it reads as
+a **wrong answer**, and search greps the whole wiki so that can last seconds.
+
+The spinner waits **180ms** before appearing. Showing it immediately makes every fast
+search flicker, which is its own noise; under that threshold a wait does not register as
+one, so a quick search goes straight from old results to new and only a slow one explains
+itself.
+
+The worse half was that **`doSearch` had no error handling**. `apiFetch` throws now, so a
+failed search was an unhandled rejection — the popup kept the previous query's results and
+the message went to the console, so a search that FAILED looked exactly like a search that
+found those older things. The error text goes through a `searchEsc` local to that scope,
+since the search IIFE had no escaper and an error message carries text the server chose, a
+proxy's HTML page among them.
+
+`tests/test_search_busy_state.py` drives the real script and the real CSS from a real
+origin. **The delay belongs in the BROWSER, not in the route handler**: sleeping in a sync
+playwright handler blocks the driver, so the test cannot look at the page while the request
+is in flight, which is the entire thing being asserted — two tests passed that way by luck,
+observing the DOM only once the sleep had ended. Wrapping `window.fetch` in the fixture
+delays the transport without touching the driver. Give the observation a generous window
+too: the spinner lives from debounce+180ms to debounce+delay, and a 400ms delay left ~200ms
+to catch it, which fails on timing rather than on behaviour.
+
 **A source page's `## Entities` / `## Concepts` are sorted** (`sort_lookup_lists`), in
 `create_file` and in `heal_pages` — the latter because a source page is immutable to the
 LLM once written, so an existing one can be ordered nowhere else. They are lookup tables,
