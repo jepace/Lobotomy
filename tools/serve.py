@@ -1158,7 +1158,18 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
             parser.feed(raw.decode("utf-8", errors="replace"))
         except Exception as e:
             log.debug("HTML parse warning for %s: %s", url, e)
-        text = re.sub(r"\n{3,}", "\n\n", "".join(parser.parts)).strip()
+        # Strip trailing spaces/tabs on every line BEFORE collapsing blank runs.
+        # handle_data appends the whitespace BETWEEN tags, so a source indented like
+        # ordinary HTML produces "\n\n  \n\n    \n\n" — lines that look blank but are
+        # not, which \n{3,} cannot match because the spaces sit between the newlines.
+        # Measured on three paragraphs of normally-indented HTML: ELEVEN blank-looking
+        # lines. That is not only ugly in the reader, it is the text every ingest round
+        # re-sends to the model.
+        #
+        # Trailing-only, never leading: an indented line that HAS content is a code
+        # sample, and flattening it would be a worse fault than the one being fixed.
+        text = re.sub(r"[ \t]+(?=\n)|[ \t]+$", "", "".join(parser.parts))
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
         if not text:
             return None, "No text extracted — site may require JavaScript or be paywalled"
         return text[:100_000], None
@@ -3204,6 +3215,25 @@ def inbox_process_all():
     return {"queued": len(unprocessed)}
 
 
+def _tidy_for_reading(body: str) -> str:
+    """Reading-view whitespace only. Never written back to disk.
+
+    Three things, each the smallest change that fixes a visible fault:
+
+      * **Trailing spaces go**, which also turns a whitespace-only line into an empty one.
+        That is what lets the blank-run collapse below see it at all — and two trailing
+        spaces are a markdown hard line break, so they were adding <br>s nobody typed.
+      * **Runs of blank lines collapse to one.** Markdown already renders 2 or 20 blank
+        lines as the same paragraph break, so this changes no output by itself; it is here
+        so the text the reader works from matches what it looks like.
+      * **Leading indentation is left alone.** An indented line with content is a code
+        block, and flattening those to fix spacing would be the worse fault.
+    """
+    body = re.sub(r"[ \t]+(?=\n)|[ \t]+$", "", body or "")
+    body = re.sub(r"\n{3,}", "\n\n", body)
+    return body.strip()
+
+
 @app.route("/inbox/view/<path:filename>")
 @require_login
 def inbox_view(filename):
@@ -3224,7 +3254,10 @@ def inbox_view(filename):
     import markdown as _md
     meta, body = _parse_frontmatter(content)
     source_url = meta.get("url", "") or None
-    body = body.strip()
+    # Tidy for DISPLAY only — the file on disk is untouched. Everything already captured
+    # carries the blank-looking lines the fetcher used to produce, and a pasted article
+    # brings its own, so cleaning at render is what fixes the items already in the list.
+    body = _tidy_for_reading(body)
     html = _md.markdown(body, extensions=["extra", "nl2br"]) if body else ""
     return {"content": body, "html": html, "url": source_url}
 

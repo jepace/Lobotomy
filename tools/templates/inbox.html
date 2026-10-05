@@ -96,8 +96,21 @@
 
   .empty-state { text-align: center; padding: 50px 20px; color: var(--text2); }
   .archived-item { opacity: .6; }
-  .item-reader-html { padding: 4px 0; font-size: 14px; line-height: 1.65; color: var(--text); }
+  /* A measure. Prose set across a wide window is hard to track from the end of one line
+     to the start of the next; ~70 characters is the usual advice and it costs nothing on
+     a phone, where the column is already narrower than that. */
+  .item-reader-html { padding: 4px 0; font-size: 14px; line-height: 1.65; color: var(--text);
+                      max-width: 70ch; }
   .item-reader-html p  { margin-bottom: .8em; }
+  /* A browser copy opens with a run of one-line paragraphs — site name, byline, reading
+     time, photo credit — and at a full paragraph gap each, the article starts a screen
+     further down than it should. These are display-only and keep the text itself intact. */
+  .item-reader-html p:empty { display: none; }
+  .item-reader-html > p:first-child { margin-top: 0; }
+  .reader-source {
+    display: inline-block; margin: 0 0 10px; font-size: 13px;
+    color: var(--accent); text-decoration: none; word-break: break-all;
+  }
   .item-reader-html h1,.item-reader-html h2,.item-reader-html h3 { font-size:1.05em;font-weight:700;margin:.8em 0 .3em; }
   .item-reader-html ul,.item-reader-html ol { padding-left:1.3em; margin-bottom:.6em; }
   .item-reader-html a  { color: var(--accent); }
@@ -558,6 +571,18 @@ async function toggleItem(name) {
           `style="display:inline-block;padding:8px 14px;background:var(--accent);color:#fff;` +
           `border-radius:8px;font-size:13px;font-weight:700;text-decoration:none;">Open article ↗</a>`;
       } else if (data.html) {
+        // The link to the original was shown only when there was NOTHING to read, which
+        // is backwards: once you are reading the captured text, "is this the whole
+        // article?" is exactly the question, and the answer is one click away.
+        if (data.url) {
+          const a = document.createElement('a');
+          a.className = 'reader-source';
+          a.href = data.url;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.textContent = 'Open original ↗';
+          reader.appendChild(a);
+        }
         const div = document.createElement('div');
         div.className = 'item-reader-html';
         div.innerHTML = data.html;

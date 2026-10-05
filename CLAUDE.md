@@ -817,6 +817,30 @@ lifted from the template by regex; it serves the fixture from a **real origin** 
 `set_content`, because on `about:blank` a relative `fetch('/api/…')` has no base, throws,
 and every assertion then fails for a reason unrelated to the code.
 
+**The reading view's blank lines came from `_clip_fetch`, not from the renderer**
+(`_tidy_for_reading`). Asked to strip extra blank lines out of the reader, and markdown
+turned out to be innocent: it already renders two blank lines and twenty as the same
+paragraph break. The blank lines were real, in the stored text. `handle_data` appends the
+whitespace **between tags**, so HTML indented like ordinary HTML yields
+`First.\n\n  \n\n    \n\nSecond.` — lines that LOOK blank but hold spaces, which
+`re.sub(r"\n{3,}", ...)` cannot match because the spaces sit between the newlines.
+**Measured: three paragraphs of normally-indented HTML produced ELEVEN blank-looking
+lines.**
+
+Stripping trailing whitespace first turns each into a genuinely empty line and the existing
+collapse then works. Fixed in both places on purpose: in **`_clip_fetch`** so new captures
+are clean ON DISK — not cosmetic, since that text is what every ingest round re-sends to
+the model — and in **`inbox_view`** for display only, because everything already captured
+still carries them and a reading view must never rewrite the file it is reading.
+
+**Trailing-only, never leading.** An indented line that has content is a code block, and
+flattening those to tidy spacing would be a worse fault than the one being fixed.
+
+Two presentational changes went with it: a 70ch measure on `.item-reader-html`, and the
+"Open original ↗" link, which used to appear only when there was NOTHING to read — exactly
+backwards, since "is this the whole article?" is the question you have *while* reading the
+captured text.
+
 **Search says it is working, and says so when it fails** (`.search-busy`, the `catch` in
 `doSearch`). Reported as *"search is slow, so sometimes I can't tell if it is searching or
 not working."* There was no busy state at all: between the keystroke and the results the

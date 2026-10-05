@@ -502,6 +502,20 @@ MUTATIONS = [
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(((?:\.{1,2}/)*(?:[\w.\-]+/)*[\w.\-]+\.md)\)")',
      r'_CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)]*)\)")'),
     # The wiki page editor had NO test at all until a user hit a JSON.parse error in it.
+    # Three paragraphs of normally-indented HTML produced ELEVEN blank-looking lines:
+    # handle_data appends the whitespace BETWEEN tags, which \n{3,} cannot match.
+    ('fetch: whitespace-only lines are emptied before blank runs are collapsed',
+     '        text = re.sub(r"[ \\t]+(?=\\n)|[ \\t]+$", "", "".join(parser.parts))',
+     '        text = "".join(parser.parts)',
+     'tools/serve.py'),
+    ('reader: the view tidies text already on disk',
+     '    body = _tidy_for_reading(body)',
+     '    body = (body or "").strip()',
+     'tools/serve.py'),
+    ('reader: indented content is left alone, because it is a code block',
+     '    body = re.sub(r"[ \\t]+(?=\\n)|[ \\t]+$", "", body or "")',
+     '    body = "\\n".join(l.strip() for l in (body or "").splitlines())',
+     'tools/serve.py'),
     # Search greps the whole wiki, so a slow one was indistinguishable from a broken one:
     # the popup kept showing the PREVIOUS query's results while the new one ran.
     ('search: a slow search says it is working',
