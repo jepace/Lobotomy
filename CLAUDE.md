@@ -1037,9 +1037,34 @@ write that **destroyed** that content, and `R_i`'s content is what the write at 
 produced. Attaching `R_i`'s reason to `R_i`'s own row labels a version with the cause of
 its own deletion and puts the newest write's label one row too low. Every version
 therefore takes its timestamp and reason from the revision **below** it, and the newest
-write's reason lands on the current page. The oldest row is the earliest content still
-kept; whatever produced it has been pruned, so it carries no timestamp, reason or counts
-rather than a guessed one.
+write's reason lands on the current page.
+
+**The bottom row is one of two different things, and calling both "Earliest kept version —
+origin unknown" was wrong.** Reported on a page one day old: *"why doesn't it know the
+original story's origin? 'Earliest kept version' sounds fishy, when I know that was the
+creation."* It was. That wording is only true once pruning has thrown older revisions away,
+and the page had ONE revision on a store that keeps fifty. Below `_HISTORY_KEEP` nothing has
+ever been pruned, so the oldest stored revision IS the content the page was created with,
+and the page says when in its own `created:` — read from THAT revision's text, never from
+the live page, or a later edit dates the row.
+
+It can usually say what made it, too, which looks like a guess and is not. **A brand-new
+page leaves no revision for its own creation** — `_snapshot_version` copies the content
+being replaced and there is none — so the first revision on disk is the snapshot taken by
+the autolink pass that runs inside the same `create_file` call and is stamped with it. When
+that revision's tool is `create_file`, the write that destroyed the original content was
+part of the call that wrote it, so its source and reason describe the creation as well. Any
+other tool there says nothing about what came before it, and the row then carries its date
+and nothing else.
+
+`pruned` is deliberately the conservative half: `_HISTORY_KEEP` could have been raised after
+a page was pruned at a lower cap, and nothing on disk can distinguish that — so the claim is
+only made where the count is unambiguous. A genuinely pruned bottom row still says
+`origin unknown` and carries no timestamp or counts rather than a guessed one.
+
+**A second hole fell out of looking at it.** A page whose autolink pass finds nothing to
+link has NO revisions at all — one version, ever — and that single row carried no date and
+no origin whatsoever. It gets the `created:` date now; what wrote it was never recorded.
 
 **`wiki/.history/` is inside `wiki/`, and every tool that walks the tree must exclude it.**
 A revision is a record, never a link target, a page, or a search hit. Two ways this bites,

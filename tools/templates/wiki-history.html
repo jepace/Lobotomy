@@ -123,14 +123,16 @@
       Each row is one version of this page: when it was written, what wrote it and from
       which source, which sections it touched, how many words it added and removed, and
       how big the page was as a result. Newest first.
-      The oldest row is the earliest version still kept — whatever produced it has been
-      pruned, so nothing records when or why.
+      The bottom row is the page as it was first written, unless older versions have been
+      pruned away — then it is the earliest one still kept, and nothing records what made
+      it.
     </div>
 
     {% for r in revisions %}
     <div class="rev{% if r.current %} current-row{% endif %}">
       <div class="when">
         {%- if r.current %}Current version{% if r.when %} — {{ r.when }}{% endif %}
+        {%- elif r.original %}Original version{% if r.when %} — {{ r.when }}{% endif %}
         {%- elif r.earliest %}Earliest kept version
         {%- else %}{{ r.when }}{% endif -%}
       </div>
@@ -158,7 +160,12 @@
         {%- endif -%}
       </div>
       <div class="delta">
-        {%- if r.earliest -%}
+        {#- The bottom row has nothing below it to diff against, so it never carries counts.
+            What it says instead depends on whether this is the page's first version or
+            just the oldest one that survived pruning. -#}
+        {%- if r.original -%}
+          <span class="none">page created</span>
+        {%- elif r.earliest -%}
           <span class="none">origin unknown</span>
         {%- elif r.added or r.removed -%}
           {%- if r.added %}<span class="plus">+{{ r.added }}</span>{% endif -%}

@@ -961,9 +961,29 @@ def page_history(p: Path) -> "list[dict]":
     lands on the current page, which is what it actually produced.
 
     Returns, newest first: current (bool), id (None for the current page), when, why,
-    added, removed, size. The oldest row is the earliest content still kept, and nothing
-    records when or why it was created — whatever made it has been pruned — so it carries
-    no timestamp and no counts rather than a guessed one.
+    added, removed, size.
+
+    **The bottom row is one of two different things, and calling both of them "Earliest
+    kept version — origin unknown" was wrong.** Reported from a page one day old: the user
+    knew perfectly well that row was the creation, and the view said nothing records what
+    produced it. That is only true once pruning has thrown older revisions away. Below
+    `_HISTORY_KEEP` nothing has ever been pruned, so the oldest stored revision IS the
+    content the page was created with — and the page says when, in its own `created:`
+    frontmatter, read from THAT revision's text rather than from the live page so a row
+    cannot be dated by a later edit.
+
+    It can usually say what made it, too, which looks like a guess and is not. A brand-new
+    page leaves no revision for its own creation — `_snapshot_version` copies the content
+    being replaced, and there is none — so the first revision on disk is the one taken by
+    the autolink pass that runs immediately after `create_file`, inside the same call and
+    stamped with it. When that revision's tool is `create_file`, the write that destroyed
+    the original content was part of the call that wrote it, so its source and reason
+    describe the creation as well.
+
+    Both tests must hold, and `pruned` is the conservative half: `_HISTORY_KEEP` could have
+    been raised after a page was pruned at a lower cap, and then a count below it would
+    claim an original that is not one. Nothing on disk can distinguish that, which is why
+    the claim is only ever made where the count is unambiguous.
 
     Lives here rather than in serve.py so it is reachable without flask, which is the only
     reason the history view has any test at all.
@@ -1076,6 +1096,19 @@ def page_history(p: Path) -> "list[dict]":
                 added += j2 - j1
         return added, removed
 
+    # Is the oldest stored revision the page's original content, or merely the oldest one
+    # that survived pruning? _snapshot_version prunes down TO _HISTORY_KEEP, so a count
+    # below it means nothing was ever dropped.
+    pruned = len(revs) >= _HISTORY_KEEP
+    born = ""
+    if not pruned:
+        # From the oldest revision's OWN text, not the live page, so the row cannot be
+        # dated by an edit made later. With no revisions at all the live page is the
+        # original, so it is the right text to read.
+        _m = re.search(r"^created:[ \t]*(\S+)",
+                       revs[0]["text"] if revs else current_text, re.MULTILINE)
+        born = fm_scalar(_m.group(1)) if _m else ""
+
     # The current page, created by the most recent recorded write.
     rows = []
     if revs:
@@ -1088,25 +1121,42 @@ def page_history(p: Path) -> "list[dict]":
                      "sections": _changed_sections(revs[-1]["text"], current_text),
                      "size": len(current_text.encode("utf-8"))})
     else:
-        rows.append({"current": True, "id": None, "when": "", "why": "", "source": "",
+        # No revisions at all: the page has been written exactly once and never changed
+        # since — a created page whose autolink pass found nothing to link is the common
+        # way to get here. It is the current version AND the original, and the row said
+        # nothing whatever: no date, no origin. The date it can honestly give is the
+        # page's own `created:`; what wrote it was never recorded.
+        rows.append({"current": True, "id": None, "when": born, "why": "", "source": "",
                      "tool": "",
                      "added": 0, "removed": 0, "sections": [],
-                     "size": len(current_text.encode("utf-8"))})
+                     "size": len(current_text.encode("utf-8")),
+                     "original": bool(born)})
+    # The first revision of a newly created page is the snapshot its OWN autolink pass
+    # took, so when it is stamped create_file its source and reason describe the creation.
+    _by_create = bool(born) and bool(revs) and revs[0]["tool"] == _TOOL_LABELS["create_file"]
 
     # Each stored version, labelled by the write that produced it — the revision below it.
     for i in range(len(revs) - 1, -1, -1):
         maker = revs[i - 1] if i > 0 else None
         a, r = _delta(maker["text"], revs[i]["text"]) if maker else (0, 0)
+        _orig = maker is None and bool(born)
         rows.append({"current": False, "id": revs[i]["id"],
-                     "when": maker["when"].strftime("%Y-%m-%d %H:%M:%S") if maker else "",
-                     "why": maker["why"] if maker else "",
-                     "source": maker["source"] if maker else "",
-                     "tool": maker["tool"] if maker else "",
+                     "when": (maker["when"].strftime("%Y-%m-%d %H:%M:%S") if maker
+                              else born),
+                     "why": maker["why"] if maker else (revs[0]["why"] if _by_create
+                                                        else ""),
+                     "source": maker["source"] if maker else (revs[0]["source"]
+                                                              if _by_create else ""),
+                     "tool": maker["tool"] if maker else (revs[0]["tool"] if _by_create
+                                                          else ""),
                      "added": a, "removed": r,
                      "sections": (_changed_sections(maker["text"], revs[i]["text"])
                                   if maker else []),
                      "size": revs[i]["path"].stat().st_size,
-                     "earliest": maker is None})
+                     # Two different bottom rows: the page's first version, or the oldest
+                     # one that survived pruning with nothing recording what made it.
+                     "earliest": maker is None and not _orig,
+                     "original": _orig})
     return rows
 
 

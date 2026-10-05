@@ -165,11 +165,21 @@ class PageHistoryTest(TempWikiTestCase):
             self.assertEqual((r["added"], r["removed"]), (1, 0), rows)
 
     def test_the_oldest_row_claims_nothing_it_cannot_know(self):
+        """SUPERSEDED IN PART, deliberately — see tests/test_history_original_version.py.
+
+        This used to assert `earliest` and an empty `when` for the bottom row of ANY page,
+        which is the behaviour a user reported as wrong: on a page with two revisions out
+        of a store that keeps fifty, nothing has been pruned, so that row is the page's
+        ORIGINAL version and `created:` says when. "Claims nothing it cannot know" is
+        still the rule — what changed is what it can know.
+
+        What it must still not claim is counts: there is nothing below it to diff.
+        """
         p = self._page_with_writes(["a", "b"])
         oldest = agent.page_history(p)[-1]
-        self.assertTrue(oldest["earliest"])
-        self.assertEqual(oldest["when"], "", "a creation time was invented for it")
-        self.assertEqual(oldest["why"], "")
+        self.assertFalse(oldest["earliest"])
+        self.assertTrue(oldest["original"])
+        self.assertNotEqual(oldest["when"], "")
         self.assertEqual((oldest["added"], oldest["removed"]), (0, 0))
 
     def test_every_stored_revision_is_still_reachable(self):
@@ -187,7 +197,10 @@ class PageHistoryTest(TempWikiTestCase):
         rows = agent.page_history(p)
         self.assertEqual(len(rows), 1)
         self.assertTrue(rows[0]["current"])
-        self.assertEqual(rows[0]["when"], "")
+        # It used to assert an empty `when` here too. One row with no date and no origin
+        # told the reader nothing at all about the only version there is; the page's own
+        # `created:` is a real record, so the row gives it.
+        self.assertEqual(rows[0]["when"], "2026-01-01")
 
     def test_unstamped_revisions_still_appear(self):
         # Every revision written before reasons existed has no suffix.

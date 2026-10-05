@@ -753,6 +753,27 @@ MUTATIONS = [
      '  if (window.wikifying.has(name)) return;\n  window.wikifying.add(name);',
      '  window.wikifying.add(name);',
      'tools/templates/inbox.html'),
+    # The bottom row of the history view is either the page's first version or the oldest
+    # one that survived pruning, and calling both "origin unknown" lied about the first.
+    ('history: an unpruned bottom row is the original, not merely the earliest kept',
+     '    pruned = len(revs) >= _HISTORY_KEEP',
+     '    pruned = True'),
+    # Dated from THAT revision's own text, so a later edit cannot date the row.
+    ('history: the original is dated from its own revision',
+     '                       revs[0]["text"] if revs else current_text, re.MULTILINE)',
+     '                       current_text, re.MULTILINE)'),
+    # The first revision of a new page is its own autolink snapshot, so a create_file stamp
+    # describes the creation. Any other tool says nothing about what came before it.
+    ('history: only a create_file stamp is read back onto the original',
+     '    _by_create = bool(born) and bool(revs) and revs[0]["tool"] == _TOOL_LABELS["create_file"]',
+     '    _by_create = bool(born) and bool(revs)'),
+    ('history: a page written once still shows its creation date',
+     '        rows.append({"current": True, "id": None, "when": born, "why": "", "source": "",',
+     '        rows.append({"current": True, "id": None, "when": "", "why": "", "source": "",'),
+    ('history: the view tells the original from the earliest kept',
+     '{%- elif r.original %}Original version{% if r.when %} — {{ r.when }}{% endif %}',
+     '{%- elif r.original %}Earliest kept version',
+     'tools/templates/wiki-history.html'),
     # A span of days is one of the shapes a hand-written timeline arrives in. Unrecognised,
     # it is filed as prose: kept above the list, out of order, and undeduplicated.
     ('timeline: a date span is recognised',
