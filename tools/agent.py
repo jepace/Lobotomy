@@ -2930,10 +2930,46 @@ _TIMELINE_HEADING = "Timeline"
 # merely go unsorted, it went undeduplicated, and the same fact was written again beneath
 # it. The date is matched greedily so the hyphens inside 2026-09-12 cannot be read as the
 # separator, and a bullet with a date and no text stays prose.
+#
+# **A span is one of those shapes.** Observed on a page with a single source, where the
+# model wrote `- 2026-10-01 to 2026-10-02: Darya Shipilova dies…` in `create_file`'s body:
+# no shape here matched it, so it was filed as prose and kept ABOVE the bullets — out of
+# order, with a blank line after it, and exempt from deduplication. A source that is unsure
+# which of two days an event fell on says so, so this is not an exotic input.
+#
+# The span is preserved rather than flattened to its first day: "died on the 1st" and "died
+# on the 1st or 2nd" are different claims, and dropping the second date would be the tool
+# inventing precision the source declined to give. Sorting uses the START
+# (`_tl_start`), which is where a span belongs relative to the days it covers.
+#
+# A plain hyphen is allowed as the range separator even though it is also a text separator,
+# because the two cannot collide: the range alternative only matches when a DATE follows the
+# hyphen AND a separator follows that date, so `- **2026-09-25** - A technician…` takes the
+# hyphen as its separator (no date after it) and `- 1999 - 2001 saw a decline` stays prose
+# (no separator after 2001) exactly as before.
+_TL_RANGE = r"(?:[ \t]*(?:to|through|until|–|—|-)[ \t]*(\d{4}(?:-\d{2}){0,2})(?![-\d]))?"
 _TL_BULLET_RE = re.compile(
-    r"^[-*][ \t]*(?:\*\*|__)?[ \t]*(\d{4}(?:-\d{2}){0,2})(?![-\d])[ \t]*(?:\*\*|__)?[ \t]*"
+    r"^[-*][ \t]*(?:\*\*|__)?[ \t]*(\d{4}(?:-\d{2}){0,2})(?![-\d])" + _TL_RANGE +
+    r"[ \t]*(?:\*\*|__)?[ \t]*"
     r"[:—–-][ \t]*(\S.*)$")
 _TL_DATE_RE = re.compile(r"^\d{4}(?:-\d{2}){0,2}$")
+# A date as it is stored and displayed: one date, or a span. `add_timeline_entry` accepts
+# both, because the normalizer above blesses both — a tool that refused what every write
+# path then wrote onto the page would leave no way to edit it (principle 4).
+_TL_SPAN_RE = re.compile(r"^(\d{4}(?:-\d{2}){0,2}) to (\d{4}(?:-\d{2}){0,2})$")
+
+
+def _tl_date_text(start: str, end: "str | None") -> str:
+    """The canonical stored form of a bullet's date. One shape for a span, as there is one
+    shape for a single date — `to` whichever of to/through/until/–/— was written."""
+    return f"{start} to {end}" if end and end != start else start
+
+
+def _tl_start(date: str) -> str:
+    """The first date of a stored date, span or not. Sorting, the future check and the
+    duplicate check all key on this, so a span cannot sort or validate by its tail."""
+    m = _TL_SPAN_RE.match(date)
+    return m.group(1) if m else date
 
 # Words that carry no fact. Only used to compare two entries for the same date, never to
 # alter what is stored.
@@ -2947,7 +2983,7 @@ def _tl_sort_key(date: str) -> str:
     '2026-03' -> '2026-03-00', so a month-only entry sorts before any day in that month
     and a year-only entry before any month in that year — which is where a vaguer date
     belongs relative to the precise ones it contains."""
-    parts = date.split("-")
+    parts = _tl_start(date).split("-")
     while len(parts) < 3:
         parts.append("00")
     return "-".join(parts)
@@ -2974,7 +3010,8 @@ def _parse_timeline(section_text: str):
     for line in section_text.split("\n"):
         m = _TL_BULLET_RE.match(line.strip())
         if m:
-            entries.append((m.group(1), m.group(2).strip(), len(entries)))
+            entries.append((_tl_date_text(m.group(1), m.group(2)),
+                            m.group(3).strip(), len(entries)))
         elif line.strip():
             prose.append(line.rstrip())
     return prose, entries
@@ -3134,16 +3171,27 @@ def _add_timeline_entry(args: dict) -> str:
                 '"date": "2026-03-14", "text": "State health officials confirm 12 cases '
                 'in Lancaster County."}')
 
-    if not _TL_DATE_RE.match(date):
+    # A span is accepted, because `normalize_timeline` stores one and this tool has to be
+    # able to write what the page already holds. Normalized to the one stored shape first,
+    # so "2026-10-01 - 2026-10-02" and "2026-10-01 through 2026-10-02" cannot both sit on
+    # one page as different-looking dates for one event.
+    _span = _TL_BULLET_RE.match("- " + date + ": x")
+    if _span and _span.group(2):
+        date = _tl_date_text(_span.group(1), _span.group(2))
+    if not (_TL_DATE_RE.match(date) or _TL_SPAN_RE.match(date)):
         return (f"Error: add_timeline_entry refused — date {date!r} is not a date. Use "
                 f"YYYY-MM-DD, or YYYY-MM / YYYY when the source is vaguer than that "
-                f"(a story saying 'in March' gives you 2026-03, not a guessed day). "
+                f"(a story saying 'in March' gives you 2026-03, not a guessed day), or "
+                f"'YYYY-MM-DD to YYYY-MM-DD' when the source itself gives a span and will "
+                f"not say which day. "
                 f"A date you cannot pin down at all does not belong on a timeline — put "
                 f"it in the prose of the section it concerns.")
-    if date > _dt.date.today().isoformat():
-        return (f"Error: add_timeline_entry refused — {date} is in the future. A timeline "
-                f"records what has happened; a scheduled event belongs in the prose of "
-                f"the relevant section until it does.")
+    # The END of a span is the part that can be in the future, so both ends are checked.
+    for _d in {_tl_start(date), date.split(" to ")[-1]}:
+        if _d > _dt.date.today().isoformat():
+            return (f"Error: add_timeline_entry refused — {_d} is in the future. A timeline "
+                    f"records what has happened; a scheduled event belongs in the prose of "
+                    f"the relevant section until it does.")
 
     text = " ".join(text.split())
     text = re.sub(r"^[-*][ \t]*", "", text)
@@ -3153,8 +3201,8 @@ def _add_timeline_entry(args: dict) -> str:
     # purpose, and an entry that legitimately opens with a year and a dash — "1999 - 2001
     # saw a decline" — must not be silently beheaded.
     _echo = _TL_BULLET_RE.match("- " + text)
-    if _echo and _echo.group(1) == date:
-        text = _echo.group(2).strip()
+    if _echo and _tl_date_text(_echo.group(1), _echo.group(2)) == date:
+        text = _echo.group(3).strip()
     if not text:
         return "Error: add_timeline_entry refused — the entry has no text, only a date."
     if text.lstrip().startswith("#"):

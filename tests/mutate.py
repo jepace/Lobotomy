@@ -264,13 +264,17 @@ MUTATIONS = [
      # Narrow the reader back to the exact shape the renderer emits. A hand-written
      # `- 2026-08: ...` then goes unrecognised, is filed as prose, and the same fact is
      # written again beneath it.
-     r'    r"^[-*][ \t]*(?:\*\*|__)?[ \t]*(\d{4}(?:-\d{2}){0,2})(?![-\d])[ \t]*(?:\*\*|__)?[ \t]*"',
-     r'    r"^[-*][ \t]*\*\*(\d{4}(?:-\d{2}){0,2})\*\*[ \t]*"'),
+     # The empty `()` keeps the group count at three, so the mutation tests the reader's
+     # generosity rather than renumbering the text group out from under _parse_timeline.
+     r'''    r"^[-*][ \t]*(?:\*\*|__)?[ \t]*(\d{4}(?:-\d{2}){0,2})(?![-\d])" + _TL_RANGE +
+    r"[ \t]*(?:\*\*|__)?[ \t]*"''',
+     r'    r"^[-*][ \t]*\*\*(\d{4}(?:-\d{2}){0,2})\*\*()[ \t]*"'),
     ("timeline: date consumed whole",
      # Without the guard the engine backtracks 2026-09-12 to 2026-09 and reads "-12" as
-     # the separator.
-     '(\\d{4}(?:-\\d{2}){0,2})(?![-\\d])',
-     '(\\d{4}(?:-\\d{2}){0,2})'),
+     # the separator. Anchored through `+ _TL_RANGE` because the range alternative carries
+     # the same date pattern, so the bare string now appears twice.
+     '(\\d{4}(?:-\\d{2}){0,2})(?![-\\d])" + _TL_RANGE',
+     '(\\d{4}(?:-\\d{2}){0,2})" + _TL_RANGE'),
     ("timeline: restatements are folded",
      '    rendered = _render_timeline(_tl_dedupe(entries))',
      '    rendered = _render_timeline(entries)'),
@@ -749,6 +753,25 @@ MUTATIONS = [
      '  if (window.wikifying.has(name)) return;\n  window.wikifying.add(name);',
      '  window.wikifying.add(name);',
      'tools/templates/inbox.html'),
+    # A span of days is one of the shapes a hand-written timeline arrives in. Unrecognised,
+    # it is filed as prose: kept above the list, out of order, and undeduplicated.
+    ('timeline: a date span is recognised',
+     '_TL_RANGE = r"(?:[ \\t]*(?:to|through|until|–|—|-)[ \\t]*(\\d{4}(?:-\\d{2}){0,2})(?![-\\d]))?"',
+     '_TL_RANGE = r"()?"'),
+    # Sorting, the future check and the duplicate check all key on the START, or a span
+    # sorts and validates by its tail.
+    ('timeline: a span sorts by its start',
+     '    parts = _tl_start(date).split("-")',
+     '    parts = date.split("-")'),
+    ('timeline: to/through/until/- all store one shape',
+     '    return f"{start} to {end}" if end and end != start else start',
+     '    return start'),
+    ('timeline: the END of a span is checked against today too',
+     '    for _d in {_tl_start(date), date.split(" to ")[-1]}:',
+     '    for _d in {_tl_start(date)}:'),
+    ('timeline: a span is accepted by the tool',
+     '    if not (_TL_DATE_RE.match(date) or _TL_SPAN_RE.match(date)):',
+     '    if not _TL_DATE_RE.match(date):'),
     ('wikify: the browser releases on every exit path',
      '    window.wikifying.delete(name);',
      '    ;',

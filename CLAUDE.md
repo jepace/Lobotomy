@@ -274,9 +274,10 @@ wikified again, which is worse than the duplicate. It happens on every exit path
 worker's `finally` (after a clean run, a cancel, and a crash), and `drain()`, where the
 worker's release never fires because the job never ran. It is deliberately **after**
 `on_done`, which is what marks the article wikified — release first and there is a window
-where the row still offers Wikify while the key is already free. `_release_key` checks
-`_keys[k] == job_id`, so a late release from a finished job cannot unlock the key its
-successor now holds.
+where the row still offers Wikify while the key is already free. `_job_keys.pop` is what
+makes a double release safe, and it is the only thing that needs to — an added
+`_keys[k] == job_id` test looked like belt-and-braces for exactly that and was unreachable,
+which `mutate.py` reported as a MISSED guard.
 
 Two call-site consequences. `inbox/process-all` must **advance to the next item** on a
 duplicate: that job's `on_done` belongs to the click that started it, so ours never fires
@@ -956,6 +957,34 @@ but a rule the model has no way to obey at `create_file` time is not worth a ref
 principle 1 — so `normalize_timeline()` absorbs the hand-written form on every write path
 and in `heal_pages`. The date is matched with `(?![-\d])` so the engine cannot backtrack
 `2026-09-12` to `2026-09` and read `-12` as the separator.
+
+**A span of days is one of those shapes, and it was missing.** Reported on a page with a
+SINGLE source, so none of the multi-source paths were involved: `create_file` wrote
+`- 2026-10-01 to 2026-10-02: Darya Shipilova dies…`, no shape matched a date RANGE, and the
+documented consequence followed exactly — filed as prose, kept ABOVE the list, out of
+chronological order, with a blank line after it, and exempt from deduplication. A source
+that will not say which of two days an event fell on says so, so this is ordinary input.
+
+**The span is preserved, not flattened to its first day.** "died on the 1st" and "died on
+the 1st or 2nd" are different claims, and dropping the second date would be the tool
+inventing a precision the source declined to give. `_tl_start` is what sorting, the
+future check and the duplicate check all key on, so a span cannot sort or validate by its
+tail; `_tl_date_text` folds to/through/until/–/—/- to one stored form, or one event sits on
+the page under two different-looking dates. A plain hyphen is safe as a range separator
+even though it is also the text separator, because the range alternative only matches when
+a DATE follows it AND a separator follows that date — so `- **2026-09-25** - A technician…`
+still takes the hyphen as its separator, and `- 1999 - 2001 saw a decline` still stays
+prose.
+
+`add_timeline_entry` accepts a span too, and that is not scope creep: the normalizer writes
+one onto the page, so a tool refusing the shape would leave no way to edit what every write
+path produces (principle 4). Its refusal names the span form, and **both ends are checked
+against today** — the end is the half that can be in the future.
+
+**Stated gap:** a span and a single date inside it are different date strings, so
+`_tl_dedupe` does not treat `2026-10-01` and `2026-10-01 to 2026-10-02` as one event.
+Widening "same date" to "overlapping span" would make `2026` overlap every entry in that
+year, and there is no observed failure to justify that.
 
 Duplicates are decided by `_tl_dedupe`, shared by the tool and the normalizer so they
 cannot disagree about what counts as a restatement. Exact-text comparison was not enough:

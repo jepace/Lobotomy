@@ -184,8 +184,10 @@ with `update_section`, replacing it, not adding to it — and adds one Timeline 
 reporting it, and places the entry in chronological position itself. Sources arrive out of
 order — a background piece read today may describe something from last month — so do not
 try to find the insertion point, and do not use `append_section` on a Timeline. If the
-source is vaguer than a day, pass `2026-03` or `2026`; if it gives no date at all, the
-fact is not a timeline entry and belongs in the prose of the section it concerns.
+source is vaguer than a day, pass `2026-03` or `2026`; if the source gives a span and will
+not say which day — "she died on the 1st or 2nd" — pass `2026-10-01 to 2026-10-02` rather
+than picking one; if it gives no date at all, the fact is not a timeline entry and belongs
+in the prose of the section it concerns.
 
 **Concept document** (`wiki/concepts/`):
 - Definition
