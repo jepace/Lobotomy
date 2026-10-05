@@ -255,6 +255,35 @@ it was — but at ~11,000 pages it is the next thing to fill a disk. Dry run by 
 
 **`tools/job_queue.py`** — background job queue used by `serve.py` for async inbox processing.
 
+**`submit(key=…)` makes a job unique while it is waiting or running.** Asked what happens
+on a second Wikify click: `submit` minted a fresh `secrets.token_hex(8)` every call, so two
+clicks queued two complete agent turns over the same raw file, and the only thing in the way
+was `btn.disabled = true` in the browser — **lost on a reload, absent in a second tab, and
+reset every time the 30-second poll re-renders the row.** At `max_rpm: 1` the duplicate is a
+second ~40-minute run spending a per-day quota to re-derive pages the first run already
+wrote, then folding the same source into them again.
+
+A duplicate submit queues nothing and **returns the id of the job already in flight**, so
+the caller attaches to it — principle 4 in the UI: clicking twice should show you the run
+that is happening, not an error about a thing already underway. The key is
+`ingest:<raw filename>`; a plain chat message carries no key and is never deduplicated,
+because repeating yourself in a conversation is legitimate.
+
+**The release is the risky half, not the guard** — leak a key and that article can never be
+wikified again, which is worse than the duplicate. It happens on every exit path: the
+worker's `finally` (after a clean run, a cancel, and a crash), and `drain()`, where the
+worker's release never fires because the job never ran. It is deliberately **after**
+`on_done`, which is what marks the article wikified — release first and there is a window
+where the row still offers Wikify while the key is already free. `_release_key` checks
+`_keys[k] == job_id`, so a late release from a finished job cannot unlock the key its
+successor now holds.
+
+Two call-site consequences. `inbox/process-all` must **advance to the next item** on a
+duplicate: that job's `on_done` belongs to the click that started it, so ours never fires
+and the batch would stop dead at that item. And `window.wikifying` in `inbox.html` is only
+the local half — it stops a double click before the round trip, in a `finally` so the early
+`return` on a failed ingest cannot leak it.
+
 ### Module state — read this before writing a test or a maintenance pass
 
 `agent.py` keeps mutable state in three places, and code that ignores any of them will

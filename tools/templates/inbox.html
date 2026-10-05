@@ -789,10 +789,18 @@ async function saveEdit(name) {
   }
 }
 
+// Articles this tab has a wikify in flight for. `btn.disabled` is not enough on its own:
+// the 30s poll re-renders the row and hands back a fresh, enabled button, and a double
+// click can land two calls before the first reply. This is only the local half — the
+// server's dedupe key is what covers a second tab and a reload.
+window.wikifying = window.wikifying || new Set();
+
 async function wikifyItem(name) {
   const btn      = partFor(name, '.act-btn.wikify');
   const progress = partFor(name, '.item-progress');
   if (!btn || !progress) return;
+  if (window.wikifying.has(name)) return;
+  window.wikifying.add(name);
   btn.disabled   = true;
   if (window.pollSoon) window.pollSoon();   // a job just started; watch closely
   btn.textContent = 'Working…';
@@ -809,6 +817,13 @@ async function wikifyItem(name) {
       // "not found" before recovering via the path in the injected <file> block.
       body: JSON.stringify({message: 'Ingest raw/' + name, inbox_file: name}),
     });
+
+    // The server refused to queue a second run because one is already going. Say so, and
+    // then follow that job's events — the progress the user wanted to see is its progress.
+    if (job.duplicate) {
+      progress.innerHTML =
+        '<div class="prog-tool">Already being ingested — following that run.</div>';
+    }
 
     // Poll for events instead of holding a long-lived streaming connection open.
     // A streaming connection occupies one of the browser's 6 per-host connection slots,
@@ -881,6 +896,11 @@ async function wikifyItem(name) {
     btn.disabled = false;
     btn.textContent = 'Wikify';
     if (navChat) navChat.classList.remove('ai-busy');
+  } finally {
+    // Every exit path, including the early `return` on a failed ingest. Leaking an entry
+    // would make that article un-wikifiable until the page is reloaded, which is a worse
+    // failure than the double click this guards against.
+    window.wikifying.delete(name);
   }
 }
 

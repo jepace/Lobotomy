@@ -35,6 +35,10 @@ class JobQueue:
         self._current_job_id: "str | None" = None
         self._cancel_events: "dict[str, threading.Event]" = {}
         self._lock = threading.Lock()
+        # key -> job_id for jobs waiting or running, and the reverse so a finishing job
+        # can release its own key without scanning. Both guarded by _lock.
+        self._keys = {}
+        self._job_keys = {}
         self._recover()
         t = threading.Thread(target=self._worker, daemon=True)
         t.start()
@@ -50,19 +54,55 @@ class JobQueue:
         return {"running": jid is not None, "job_id": jid, "pending": self._q.qsize()}
 
     def submit(self, client, model: str, messages: list,
-               system: str, on_done=None, setup=None) -> str:
+               system: str, on_done=None, setup=None, key: str = None) -> tuple:
         """
-        Enqueue an agent turn. Returns job_id immediately.
+        Enqueue an agent turn. Returns (job_id, is_duplicate) immediately.
         setup() is called in the worker thread immediately before the job runs.
         on_done(messages) is called in the worker thread after completion.
+
+        **`key` makes the job unique.** If a job carrying the same key is already waiting
+        or running, nothing is queued and that job's id comes back with is_duplicate=True,
+        so the caller attaches to the work already in flight.
+
+        Wikify had no such guard, and the only thing stopping a second one was
+        `btn.disabled` in the browser — lost on a page reload, absent in a second tab, and
+        reset whenever the poll re-rendered the row. Two clicks therefore queued two full
+        ingests of the SAME article. At `max_rpm: 1` that is a second ~40-minute run
+        spending a per-day quota on work already done, and it re-folds the same source into
+        pages the first run has already written.
+
+        Returning the existing id rather than refusing is the deliberate choice: clicking
+        Wikify twice should watch the one job, not raise an error about a thing that is
+        already happening (write-path principle 4 — name a move that works, and here the
+        move is "it is already running, here it is").
         """
-        job_id = secrets.token_hex(8)
-        self._event_file(job_id).write_text("", encoding="utf-8")
-        stop_event = threading.Event()
         with self._lock:
+            if key is not None and key in self._keys:
+                return self._keys[key], True
+            job_id = secrets.token_hex(8)
+            stop_event = threading.Event()
             self._cancel_events[job_id] = stop_event
+            if key is not None:
+                self._keys[key] = job_id
+                self._job_keys[job_id] = key
+        self._event_file(job_id).write_text("", encoding="utf-8")
         self._q.put((job_id, client, model, messages, system, on_done, stop_event, setup))
-        return job_id
+        return job_id, False
+
+    def _release_key(self, job_id: str) -> None:
+        """Forget a finished job's key. **Must happen on every exit path** — leak one and
+        that article can never be wikified again, which is a worse failure than the
+        duplicate this exists to prevent."""
+        # The `pop` is what makes a double release safe, and it is the only thing that
+        # needs to: a job appears in _job_keys once and is removed here, so a second
+        # release for the same job finds nothing and cannot free the key a successor has
+        # since taken. An extra `_keys[k] == job_id` test looked like protection against
+        # that and was unreachable — no mutation of it could be caught, which is how it
+        # was found.
+        with self._lock:
+            k = self._job_keys.pop(job_id, None)
+            if k is not None:
+                self._keys.pop(k, None)
 
     def cancel(self, job_id: str) -> bool:
         """Signal the running job to stop. Returns True if the job was found."""
@@ -101,6 +141,8 @@ class JobQueue:
                 log.warning("drain: could not close out %s: %s", job_id, e)
             with self._lock:
                 self._cancel_events.pop(job_id, None)
+            # A drained job never runs, so the worker's release never fires for it.
+            self._release_key(job_id)
             self._q.task_done()
             dropped += 1
         if dropped:
@@ -245,10 +287,18 @@ class JobQueue:
                 with self._lock:
                     self._current_job_id = None
                     self._cancel_events.pop(job_id, None)
-                if on_done and not cancelled:
-                    try:
-                        on_done(messages)
-                    except Exception as e:
-                        log.error("Job %s: save_history failed: %s", job_id, e, exc_info=True)
+                try:
+                    if on_done and not cancelled:
+                        try:
+                            on_done(messages)
+                        except Exception as e:
+                            log.error("Job %s: save_history failed: %s", job_id, e, exc_info=True)
+                finally:
+                    # AFTER on_done, not before. on_done is what marks the article
+                    # wikified; releasing first opens a window in which the row still
+                    # offers Wikify and a click would queue a second, redundant ingest.
+                    # It is in its own finally because a leaked key makes that article
+                    # permanently un-wikifiable — worse than the duplicate it prevents.
+                    self._release_key(job_id)
                 self._cleanup()
             self._q.task_done()

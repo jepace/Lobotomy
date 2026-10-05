@@ -1411,8 +1411,18 @@ def chat_send():
                 log.warning("on_done: inbox_file=%s but no __ingested__:1 in messages — not marking wikified", inbox_file)
 
     log.info("Chat send: model=%s history_len=%d", model, len(history))
-    job_id = job_queue.submit(client, model, history, sys_prompt, on_done=on_done, setup=_inbox_setup)
-    return {"job_id": job_id}
+    # One ingest per article. Two Wikify clicks — a double click, a second tab, a reload
+    # that re-enabled the button — used to queue two full runs of the same work, and at
+    # max_rpm: 1 the second is another ~40 minutes of a per-day quota spent re-deriving
+    # what the first already wrote. A plain chat message carries no key and is never
+    # deduplicated: repeating yourself is a legitimate thing to do in a conversation.
+    job_id, duplicate = job_queue.submit(
+        client, model, history, sys_prompt, on_done=on_done, setup=_inbox_setup,
+        key=f"ingest:{Path(inbox_file).name}" if inbox_file else None)
+    if duplicate:
+        log.info("Chat send: already ingesting %s as job %s — not queueing again",
+                 inbox_file, job_id)
+    return {"job_id": job_id, "duplicate": duplicate}
 
 
 def _link_raw_source_to_wiki(raw_path, inbox_url: str) -> None:
@@ -3204,7 +3214,17 @@ def inbox_process_all():
             # Submit the next item now that this one is done.
             _submit_item(items, index + 1)
 
-        job_id = job_queue.submit(client, model, history, system_prompt(), on_done=on_done, setup=_setup)
+        job_id, duplicate = job_queue.submit(
+            client, model, history, system_prompt(), on_done=on_done, setup=_setup,
+            key=f"ingest:{Path(filename).name}")
+        if duplicate:
+            # Someone clicked Wikify on this item before the batch reached it. That job's
+            # on_done belongs to the click, not to us, so OURS will never fire — move the
+            # chain along here or the batch stops dead at this item.
+            log.info("inbox/process-all: %s is already being ingested as job %s — skipping",
+                     filename, job_id)
+            _submit_item(items, index + 1)
+            return
         log.info("inbox/process-all: submitted %s as job %s", filename, job_id)
 
     try:

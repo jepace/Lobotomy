@@ -721,6 +721,38 @@ MUTATIONS = [
     ('429 log: a long provider message is capped to one line',
      '            _brief = msg.strip().splitlines()[0][:160] if msg else "rate limited"',
      '            _brief = msg'),
+    # One ingest per article. Two Wikify clicks used to queue two full agent turns over
+    # the same raw file; at max_rpm: 1 that is a second ~40-minute run spending a per-day
+    # quota on work the first run already did.
+    ('wikify: a keyed job already in flight is not queued again',
+     '            if key is not None and key in self._keys:\n                return self._keys[key], True',
+     '            if False:\n                return self._keys[key], True',
+     'tools/job_queue.py'),
+    # The release matters more than the guard: leak a key and that article can never be
+    # wikified again, which is worse than the duplicate.
+    ('wikify: a finished job releases its key',
+     '                    self._release_key(job_id)\n                self._cleanup()',
+     '                    pass\n                self._cleanup()',
+     'tools/job_queue.py'),
+    # A drained job never runs, so the worker's release never fires for it.
+    ('wikify: drain releases the keys it drops',
+     '            # A drained job never runs, so the worker\'s release never fires for it.\n            self._release_key(job_id)',
+     '            pass',
+     'tools/job_queue.py'),
+    # process-all's own on_done chains to the next item, and a duplicate submit means that
+    # on_done belongs to someone else's job and will never run for us.
+    ('wikify: process-all advances past an item already in flight',
+     '                     filename, job_id)\n            _submit_item(items, index + 1)\n            return',
+     '                     filename, job_id)',
+     'tools/serve.py'),
+    ('wikify: the browser does not fire a second click through',
+     '  if (window.wikifying.has(name)) return;\n  window.wikifying.add(name);',
+     '  window.wikifying.add(name);',
+     'tools/templates/inbox.html'),
+    ('wikify: the browser releases on every exit path',
+     '    window.wikifying.delete(name);',
+     '    ;',
+     'tools/templates/inbox.html'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',
