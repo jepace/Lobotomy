@@ -26,7 +26,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import agent
 import serve
 
-TEMPLATE = Path(__file__).resolve().parent.parent / "tools" / "templates" / "wiki.html"
+# The hover card moved to base.html when the chat log and the reading list started
+# showing wiki links too — one card for every page, rather than a second copy on the
+# two pages that gained links. These lifts follow it.
+TEMPLATE = Path(__file__).resolve().parent.parent / "tools" / "templates" / "base.html"
 
 
 class PreviewEndpointTest(TempWikiTestCase):
@@ -114,7 +117,7 @@ def _script():
     start = src.rindex("(function () {", 0, src.index("const DWELL", start))
     end = src.index("})();", src.index("Escape", start)) + len("})();")
 
-    base = (TEMPLATE.parent / "base.html").read_text(encoding="utf-8")
+    base = src
     bs = base.index("window.apiFetch = async function(url, opts)")
     be = base.index("\n    };", bs) + len("\n    };")
     return base[bs:be] + "\n" + src[start:end]
@@ -346,3 +349,129 @@ class BrowserTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ToolLogLinkTest(BrowserTest):
+    """The card has to appear on the tool-call links too, and those are a different shape.
+
+    Asked for after the logs started linking the page each write touched. A wiki page's own
+    links are written WITHOUT `.md` — `_resolve_wiki_href` strips it and the preview route
+    adds it back — while a log link carries `.md` AND a `#section`, because the line names
+    the exact section the write hit. The card used to be scoped to `.wiki-content` in
+    `wiki.html` and `isPreviewable` rejected any href containing `#`, so on these links it
+    would have done nothing at all, twice over.
+
+    It moved to `base.html` rather than being copied onto the two pages that gained links.
+    """
+
+    def _log(self):
+        """A reading-list progress block, as toolLineHtml writes it."""
+        return self._serve(
+            """<div class="prog-tool" style="padding:40px">
+                 ⚙ update_section
+                 <a class="tool-link" href="/wiki/entities/alberta.md#overview" id="SEC">
+                   wiki/entities/alberta.md § Overview</a>
+               </div>
+               <div class="prog-tool">
+                 ⚙ read_file
+                 <a class="tool-link" href="/wiki/entities/alberta.md" id="PAGE">
+                   wiki/entities/alberta.md</a>
+               </div>""",
+            {"title": "Alberta", "type": "entity",
+             "snippet": "A province of Canada.", "sections": ["Overview", "Politics"],
+             "url": "/wiki/entities/alberta"})
+
+    def test_a_section_link_gets_a_card(self):
+        """The href carries a #fragment, which the old check rejected outright."""
+        page = self._log()
+        self.assertTrue(self._hover_and_wait(page, "#SEC"))
+        self.assertIn("Alberta", page.inner_text(".hovercard"))
+        page.close()
+
+    def test_a_plain_page_link_gets_one_too(self):
+        page = self._log()
+        self.assertTrue(self._hover_and_wait(page, "#PAGE"))
+        page.close()
+
+    def test_the_card_works_outside_wiki_content(self):
+        """These blocks are on /chat and /reading-list, which have no .wiki-content."""
+        page = self._log()
+        self.assertEqual(page.evaluate("document.querySelectorAll('.wiki-content').length"), 0)
+        self.assertTrue(self._hover_and_wait(page, "#SEC"))
+        page.close()
+
+    def test_both_shapes_share_one_fetch(self):
+        """Keyed on the page, not the href: a log lists the same page many times, once per
+        section, and re-hovering must not re-ask for each."""
+        calls = []
+        page = self.browser.new_page(viewport={"width": 1000, "height": 700})
+        html = (f"<!doctype html><html><head><style>{_styles()}</style></head>"
+                f"<body><div style='padding:40px'>"
+                f"<a class='tool-link' href='/wiki/entities/alberta.md#overview' id='A'>a</a> "
+                f"<a class='tool-link' href='/wiki/entities/alberta.md#politics' id='B'>b</a> "
+                f"<a class='tool-link' href='/wiki/entities/alberta.md' id='C'>c</a>"
+                f"</div><script>{_script()}</script></body></html>")
+        page.route(self.BASE, lambda r: r.fulfill(status=200, content_type="text/html",
+                                                  body=html))
+        page.route("**/api/wiki/**/preview", lambda r: (calls.append(r.request.url),
+            r.fulfill(status=200, content_type="application/json", body=json.dumps(
+                {"title": "Alberta", "type": "entity", "snippet": "s",
+                 "sections": [], "url": "/wiki/entities/alberta"}))))
+        page.goto(self.BASE)
+        for sel in ("#A", "#B", "#C"):
+            self._hover_and_wait(page, sel)
+            page.mouse.move(0, 0)
+        self.assertEqual(len(calls), 1, calls)
+        page.close()
+
+    def test_the_fetch_url_is_not_double_suffixed(self):
+        """The in-page form has no .md and the route adds it; a log link already has one.
+        Appending unconditionally produced /api/wiki/entities/alberta.md.md/preview."""
+        calls = []
+        page = self.browser.new_page(viewport={"width": 1000, "height": 700})
+        html = (f"<!doctype html><html><head><style>{_styles()}</style></head>"
+                f"<body><div style='padding:40px'>"
+                f"<a class='tool-link' href='/wiki/entities/alberta.md#overview' id='L'>a</a>"
+                f"</div><script>{_script()}</script></body></html>")
+        page.route(self.BASE, lambda r: r.fulfill(status=200, content_type="text/html",
+                                                  body=html))
+        page.route("**/api/wiki/**/preview", lambda r: (calls.append(r.request.url),
+            r.fulfill(status=200, content_type="application/json", body=json.dumps(
+                {"title": "Alberta", "type": "entity", "snippet": "s", "sections": [],
+                 "url": "/wiki/entities/alberta"}))))
+        page.goto(self.BASE)
+        self._hover_and_wait(page, "#L")
+        self.assertEqual(len(calls), 1, calls)
+        self.assertNotIn(".md.md", calls[0])
+        self.assertTrue(calls[0].endswith("/api/wiki/entities/alberta.md/preview"), calls[0])
+        page.close()
+
+
+class SharedPlacementTest(unittest.TestCase):
+    """One card for every page, rather than a copy on each page that grows links."""
+
+    @classmethod
+    def setUpClass(cls):
+        tpl = Path(__file__).resolve().parent.parent / "tools" / "templates"
+        cls.base = (tpl / "base.html").read_text(encoding="utf-8")
+        cls.wiki = (tpl / "wiki.html").read_text(encoding="utf-8")
+
+    def test_it_lives_in_base(self):
+        self.assertIn(".hovercard", self.base)
+        self.assertIn("const DWELL", self.base)
+
+    def test_wiki_no_longer_carries_its_own(self):
+        self.assertNotIn(".hovercard", self.wiki)
+        self.assertNotIn("const DWELL", self.wiki)
+
+    def test_it_is_defined_once(self):
+        self.assertEqual(self.base.count("const DWELL"), 1)
+
+    def test_a_fragment_no_longer_disqualifies_a_link(self):
+        """Most links in a log name a section, so excluding fragments withheld the card
+        from nearly all of them."""
+        self.assertNotIn("!href.includes('#')", self.base)
+
+    def test_the_delegation_still_falls_back_to_the_document(self):
+        """chat and reading-list have no .wiki-content."""
+        self.assertIn("document.querySelector('.wiki-content') || document", self.base)

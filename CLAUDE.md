@@ -1101,7 +1101,7 @@ the whole-page branch, and the long-page branch's "do NOT re-read" clause lost i
 that way; `mutate.py` reported it MISSED, and `tests/test_unread_section_handback.py` now
 covers both.
 
-**Hover cards** (`/api/wiki/<path>/preview` + the IIFE in `wiki.html`). Hovering a wiki
+**Hover cards** (`/api/wiki/<path>/preview` + the IIFE in `base.html`). Hovering a wiki
 link for 300ms shows title, type, blurb and — only above four — a section count. The blurb
 comes from `first_desc_line`, which was **hoisted out of `_rebuild_index`** for this, so a
 page's index entry and the card you get hovering a link to it cannot say different things.
@@ -1112,6 +1112,26 @@ dozen targets. `tests/test_hovercards.py` drives the real script AND the real CS
 lifted from the template by regex; it serves the fixture from a **real origin** rather than
 `set_content`, because on `about:blank` a relative `fetch('/api/…')` has no base, throws,
 and every assertion then fails for a reason unrelated to the code.
+
+**It lives in `base.html` because the chat log and the reading list grew wiki links too**
+— asked for after the tool-call lines became links. Moved rather than copied: a second card
+is a second set of dwell, cache and placement rules to drift. Two things blocked the reuse
+and each would have failed SILENTLY, producing no card rather than a wrong one:
+
+- It was scoped to `.wiki-content`, which neither of those pages has. The delegation
+  already fell back to `document`, so only the placement was wrong.
+- `isPreviewable` rejected any href containing `#` — and a log link names the exact section
+  a write touched, so **most** of them carry one. Fragments are allowed now and stripped
+  for the lookup.
+
+A wiki page's own links are written WITHOUT `.md` (`_resolve_wiki_href` strips it, the
+route adds it back) while a log link carries it, so `previewUrl` normalizes both rather than
+appending unconditionally — which produced `/api/wiki/entities/alberta.md.md/preview`. The
+cache is keyed on the PAGE rather than the href, so one page listed once per section is one
+fetch. Delegation means links the live stream adds afterwards are covered with no rebinding.
+
+The existing test's lifts had to follow the code to `base.html`; CLAUDE.md's warning about
+that test is exactly this hazard.
 
 **The reading view's blank lines came from `_clip_fetch`, not from the renderer**
 (`_tidy_for_reading`). Asked to strip extra blank lines out of the reader, and markdown

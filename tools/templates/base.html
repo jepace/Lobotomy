@@ -233,6 +233,33 @@
       margin-bottom: 12px;
     }
     .wiki-content hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+  /* Hover cards. A preview of where a link goes, so you can decide without leaving the
+     page you are reading. */
+  .hovercard {
+    position: absolute;
+    z-index: 60;
+    max-width: 340px;
+    padding: 10px 12px;
+    border: 1px solid var(--border, #30363d);
+    border-radius: 8px;
+    background: var(--bg1, #161b22);
+    box-shadow: 0 8px 24px rgba(0,0,0,.35);
+    font-size: 13px;
+    line-height: 1.45;
+    pointer-events: none;          /* never steals the click it is describing */
+  }
+  .hovercard .hc-title { font-weight: 600; margin-bottom: 2px; }
+  .hovercard .hc-type {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--text2, #8b949e); margin-left: 6px; font-weight: 500;
+  }
+  .hovercard .hc-snippet { color: var(--text, #c9d1d9); }
+  .hovercard .hc-secs {
+    margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border, #30363d);
+    font-size: 12px; color: var(--text2, #8b949e);
+  }
+  .hovercard .hc-empty { color: var(--text2, #8b949e); font-style: italic; }
+  @media (hover: none) { .hovercard { display: none; } }
   </style>
   {% block head %}{% endblock %}
 </head>
@@ -460,6 +487,124 @@
   })();
   </script>
   <script>
+// ---------------------------------------------------------------------------
+// Hover cards: a peek at where a wiki link goes, without leaving this page.
+//
+// Armed on hover AND on keyboard focus — hover alone makes the feature invisible to
+// anyone not using a mouse. Skipped entirely on touch, where there is no hover to speak
+// of and a long-press would fight the browser's own menu.
+//
+// One fetch per DISTINCT link, cached for the life of the page: a wiki page can carry a
+// hundred links to a dozen targets, and re-hovering must not re-ask. The card is
+// pointer-events:none so it can never swallow the click it is describing.
+// ---------------------------------------------------------------------------
+(function () {
+  if (window.matchMedia && window.matchMedia('(hover: none)').matches) return;
+
+  const DWELL = 300;                       // don't fire while the pointer is just passing
+  const cache = new Map();                 // href -> preview JSON (or null if it failed)
+  let card = null, timer = null, current = null;
+
+  function hide() {
+    clearTimeout(timer);
+    current = null;
+    if (card) { card.remove(); card = null; }
+  }
+
+  // A wiki page's own links are written WITHOUT .md and the preview route adds it back;
+  // the tool-call links in the chat log and the reading list carry .md AND a #section,
+  // because they name the exact section a write touched. One normalizer, so a card
+  // appears on both rather than on whichever kind the card was written for.
+  function pagePath(href) {
+    return String(href || '').split('#')[0];
+  }
+
+  function isPreviewable(a) {
+    if (!a || !a.getAttribute) return false;
+    const p = pagePath(a.getAttribute('href'));
+    // Wiki pages only: not the page we are on, not external links. A #section is fine —
+    // it was excluded when only in-page links existed, and that silently withheld the
+    // card from every link that names a section, which is most of them in a log.
+    return p.startsWith('/wiki/') && p !== window.location.pathname;
+  }
+
+  function previewUrl(href) {
+    let p = pagePath(href).replace(/^\/wiki/, '');
+    if (!p.endsWith('.md')) p += '.md';     // in-page links drop it, log links keep it
+    return '/api/wiki' + p + '/preview';
+  }
+
+  function render(d, a) {
+    hide();
+    card = document.createElement('div');
+    card.className = 'hovercard';
+    if (!d) {
+      card.innerHTML = '<div class="hc-empty">No preview available.</div>';
+    } else {
+      const esc = t => String(t == null ? '' : t)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      // Sections only when there are enough of them to say something the snippet does
+      // not. Four or fewer is noise on a card this size.
+      let secs = '';
+      if (d.sections && d.sections.length > 4) {
+        secs = '<div class="hc-secs">' + d.sections.length + ' sections · ' +
+               esc(d.sections.slice(0, 4).join(' · ')) +
+               (d.sections.length > 4 ? ' · …' : '') + '</div>';
+      }
+      card.innerHTML =
+        '<div class="hc-title">' + esc(d.title) +
+        (d.type ? '<span class="hc-type">' + esc(d.type) + '</span>' : '') + '</div>' +
+        (d.snippet ? '<div class="hc-snippet">' + esc(d.snippet) + '</div>'
+                   : '<div class="hc-empty">No description yet.</div>') + secs;
+    }
+    document.body.appendChild(card);
+
+    // Position below the link, nudged back inside the viewport rather than clipped.
+    const r = a.getBoundingClientRect();
+    const w = card.offsetWidth, h = card.offsetHeight;
+    let left = window.scrollX + r.left;
+    let top  = window.scrollY + r.bottom + 6;
+    if (left + w > window.scrollX + document.documentElement.clientWidth - 8) {
+      left = window.scrollX + document.documentElement.clientWidth - w - 8;
+    }
+    if (r.bottom + 6 + h > document.documentElement.clientHeight) {
+      top = window.scrollY + r.top - h - 6;     // flip above
+    }
+    card.style.left = Math.max(window.scrollX + 8, left) + 'px';
+    card.style.top = top + 'px';
+  }
+
+  async function show(a) {
+    // Keyed on the PAGE, not the href, so foo.md and foo.md#overview share one fetch.
+    const href = pagePath(a.getAttribute('href'));
+    if (cache.has(href)) { if (current === href) render(cache.get(href), a); return; }
+    try {
+      const d = await apiFetch(previewUrl(href));
+      cache.set(href, d);
+      if (current === href) render(d, a);
+    } catch (e) {
+      cache.set(href, null);
+    }
+  }
+
+  function arm(a) {
+    if (!isPreviewable(a)) return;
+    clearTimeout(timer);
+    current = pagePath(a.getAttribute('href'));
+    timer = setTimeout(() => { if (current === pagePath(a.getAttribute('href'))) show(a); }, DWELL);
+  }
+
+  const content = document.querySelector('.wiki-content') || document;
+  content.addEventListener('mouseover', e => arm(e.target.closest('a')));
+  content.addEventListener('mouseout', e => {
+    if (e.target.closest('a')) hide();
+  });
+  content.addEventListener('focusin', e => arm(e.target.closest('a')));
+  content.addEventListener('focusout', hide);
+  window.addEventListener('scroll', hide, {passive: true});
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') hide(); });
+})();
+
   (function() {
     var navChat = document.getElementById('nav-chat');
     if (!navChat) return;

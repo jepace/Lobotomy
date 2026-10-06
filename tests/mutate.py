@@ -828,6 +828,22 @@ MUTATIONS = [
      '    if not hmac.compare_digest(auth[7:].strip(), push_key):',
      '    if auth[7:].strip() != push_key:',
      'tools/serve.py'),
+    # The card was scoped to wiki.html and rejected any href with a #, so on the log links
+    # — which carry .md AND a #section — it would have done nothing at all, twice over.
+    ('hovercard: a link naming a section still gets a card',
+     "    return p.startsWith('/wiki/') && p !== window.location.pathname;",
+     "    return p.startsWith('/wiki/') && !String(a.getAttribute('href')).includes('#')\n           && p !== window.location.pathname;",
+     'tools/templates/base.html'),
+    # In-page links drop .md and the route adds it back; log links already carry it.
+    ('hovercard: the preview url is not double-suffixed',
+     "    if (!p.endsWith('.md')) p += '.md';     // in-page links drop it, log links keep it",
+     "    p += '.md';",
+     'tools/templates/base.html'),
+    # A log lists one page many times, once per section.
+    ('hovercard: both link shapes share one fetch',
+     "    const href = pagePath(a.getAttribute('href'));\n    if (cache.has(href))",
+     "    const href = a.getAttribute('href');\n    if (cache.has(href))",
+     'tools/templates/base.html'),
     # The logs name the file every write touched and reading one meant copying the path
     # into the URL bar by hand.
     ('tool link: the page path becomes a link',
