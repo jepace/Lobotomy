@@ -2513,14 +2513,56 @@ def _summary_accretion_refusal(tool: str, path: str, section: str,
     """One refusal, shared by update_section and append_section so they cannot disagree
     about what a summary section is for.
 
-    Principle 4: name the move, not the constraint. There are three, and which one fits
+    Principle 4: name the move, not the constraint. There are four, and which one fits
     depends on something only the model knows — whether this fact is a standing feature of
-    the subject, one entry in a sequence, or a story of its own — so all three are named
-    and the text is explicitly not thrown away.
+    the subject, one entry in a sequence, a story of its own, or genuinely summary material
+    — so all four are named and the text is explicitly not thrown away.
+
+    **Two things this got wrong on its first live ingest, both visible in one log.**
+
+    The agent met this refusal on `pete-ricketts.md` and **resent the identical call twice
+    more**, costing three rounds at the `max_rpm: 1` pacing before it tried anything else.
+    Four named moves were not enough on their own, because nothing in the reply changed
+    between attempts — and a model that reads a refusal as "that didn't go through" will
+    try again. The second and later refusals for the same section therefore say outright
+    that this exact call has already been refused and will not succeed, and drop the menu
+    for the one move that always works.
+
+    And option 1 steered it straight into ANOTHER guard: told to name a section for the
+    subject it chose `'2026 Senate Campaign'`, which the date-in-heading rule refuses. That
+    is principle 4's documented worst case — renaming one violation into another — and it
+    is near-certain here rather than unlucky, because the material is dated by definition,
+    so the obvious name carries its year. Option 1 now says so.
     """
     _quoted = "\n".join(f"  • {s[:110]}{'…' if len(s) > 110 else ''}" for s in dated[:3])
     _elsewhere = (f"\n\nThe page's other sections: {', '.join(others)}."
                   if others else "")
+    # Count per (page, section): the same page's OTHER section is a fresh problem, and a
+    # different page entirely certainly is.
+    try:
+        _seen = _ctx()._summary_refusals
+        _key = f"{path}§{_norm_heading(section)}"
+        _seen[_key] = _seen.get(_key, 0) + 1
+        _n = _seen[_key]
+    except Exception:
+        _n = 1
+
+    if _n > 1:
+        return (
+            f"Error: {tool} refused AGAIN — this is refusal {_n} for '{section}' in "
+            f"{path}, for the same reason. Sending it again will be refused again. "
+            f"Stop sending this call.\n\n"
+            f"Do this instead, now:\n\n"
+            f"    append_section(path='{path}', section='<name>', text='<your sentence>')\n\n"
+            f"where <name> describes the SUBJECT and contains no year and no date — "
+            f"'Senate Campaign', not '2026 Senate Campaign'; 'Public Health', not "
+            f"'2026 Outbreak'. A dated heading is refused by a different rule and costs "
+            f"you another round.\n\n"
+            f"That call creates the section and always succeeds on a page that has no "
+            f"heading of that name. Your text is not wasted."
+            f"{_elsewhere}"
+        )
+
     return (
         f"Error: {tool} refused — this adds a dated news sentence to '{section}' without "
         f"revising it. {'That sentence is' if len(dated) == 1 else 'Those sentences are'} "
@@ -2529,15 +2571,19 @@ def _summary_accretion_refusal(tool: str, path: str, section: str,
         f"material, never used as the place to put a fact that fits nowhere else — do that "
         f"once per ingest and it becomes a list of unrelated headlines in one paragraph, "
         f"which is what this page is becoming.\n\n"
-        f"Your text is not wasted. Pick the one that fits:\n"
+        f"Do NOT resend this call — it will be refused again. Your text is not wasted; "
+        f"pick the one that fits:\n"
         f"  1. It is a standing feature of the subject → append_section(path, "
-        f"section='<a name for that subject>', text=…) to give it its own section.\n"
+        f"section='<a name for that subject>', text=…) to give it its own section. The "
+        f"name must contain NO year and NO date — 'Senate Campaign', not '2026 Senate "
+        f"Campaign' — or the heading rule refuses it and you lose another round.\n"
         f"  2. It is one entry in an unfolding sequence → add_timeline_entry(path, date, "
         f"text) if this page has a Timeline.\n"
         f"  3. It is a story in its own right (an outbreak, an election, a trial) → "
         f"create_file for a page about THAT, and link it from here.\n"
-        f"  4. It genuinely belongs in the summary → resend {section!r} REWRITTEN to "
-        f"include it, rather than with it bolted on the end."
+        f"  4. It genuinely belongs in the summary → resend {section!r} REWRITTEN — the "
+        f"existing text reworded to account for this fact, not the existing text with "
+        f"your sentence added to the end. That is what was just refused."
         f"{_elsewhere}"
     )
 
@@ -3581,6 +3627,7 @@ def _ctx():
         t._session_stale_pages = set()
         t._session_progress_last = None
         t._routes_given = {}
+        t._summary_refusals = {}
     return t
 
 
@@ -3606,6 +3653,7 @@ def init_session(inbox_path: str = "", inbox_url: str = "") -> None:
     t._session_stale_pages = set()
     t._session_progress_last = None
     t._routes_given = {}
+    t._summary_refusals = {}
 
 
 def _backfill_inbox_from_fetch(url: str, content: str) -> None:

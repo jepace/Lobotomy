@@ -212,6 +212,144 @@ class UpdateSectionTest(TempWikiTestCase):
         self.assertFalse(r.startswith("Error:"), r)
 
 
+class RepeatedRefusalTest(TempWikiTestCase):
+    """What the first live ingest did, from the production log.
+
+    The agent met this refusal on pete-ricketts.md and **resent the identical call twice
+    more** — three refusals for one sentence, at ~60s of pacing each. Four named moves
+    were not enough on their own: nothing in the reply CHANGED between attempts, and a
+    model reading a refusal as "that didn't go through" tries again.
+
+    The second and later refusals for the same section say outright that this exact call
+    has already been refused, and drop the menu for the one move that always works.
+    """
+
+    OV = ("Pete Ricketts is a Republican United States Senator from Nebraska, appointed "
+          "in 2023 and previously Governor of the state.")
+    NEWS = (" In the 2026 election, he is facing a competitive challenge from "
+            "independent candidate Dan Osborn.")
+
+    def setUp(self):
+        super().setUp()
+        self.w.page("entities/pete-ricketts.md", title="Pete Ricketts", type="entity",
+                    body=f"## Overview\n\n{self.OV}\n\n## Legislative Focus\n\nData.\n")
+        agent.init_session()
+        agent._read_file("wiki/entities/pete-ricketts.md")
+        self.p = "wiki/entities/pete-ricketts.md"
+
+    def _resend(self):
+        return agent.TOOL_FNS["update_section"](
+            {"path": self.p, "section": "Overview", "content": self.OV + self.NEWS})
+
+    def test_the_first_refusal_already_says_not_to_resend(self):
+        self.assertIn("Do NOT resend this call", self._resend())
+
+    def test_the_second_refusal_is_different_from_the_first(self):
+        first = self._resend()
+        second = self._resend()
+        self.assertNotEqual(first, second,
+                            "an identical reply gives the model no reason to change")
+
+    def test_the_second_refusal_says_it_has_already_been_refused(self):
+        self._resend()
+        self.assertIn("refused AGAIN", self._resend())
+
+    def test_the_second_refusal_counts_the_attempts(self):
+        self._resend()
+        self.assertIn("refusal 2", self._resend())
+        self.assertIn("refusal 3", self._resend())
+
+    def test_the_second_refusal_gives_one_move_not_a_menu(self):
+        """A menu is what it already failed to act on. The escalation names the single
+        call that always succeeds."""
+        self._resend()
+        second = self._resend()
+        self.assertIn("append_section(path=", second)
+        for gone in ("add_timeline_entry", "create_file"):
+            self.assertNotIn(gone, second)
+
+    def test_the_escalation_names_the_real_path(self):
+        self._resend()
+        self.assertIn(f"path='{self.p}'", self._resend())
+
+    def test_the_count_is_per_section_not_per_session(self):
+        """Another section on the same page is a fresh problem, not a repeat."""
+        self.w.page("entities/other.md", title="Other", type="entity",
+                    body=f"## Overview\n\n{self.OV}\n")
+        agent._read_file("wiki/entities/other.md")
+        self._resend()
+        self._resend()
+        other = agent.TOOL_FNS["update_section"](
+            {"path": "wiki/entities/other.md", "section": "Overview",
+             "content": self.OV + self.NEWS})
+        self.assertNotIn("refused AGAIN", other)
+
+    def test_a_new_session_starts_the_count_again(self):
+        self._resend()
+        self._resend()
+        agent.init_session()
+        agent._read_file("wiki/entities/pete-ricketts.md")
+        self.assertNotIn("refused AGAIN", self._resend())
+
+    def test_the_move_it_names_succeeds(self):
+        """Where a refusal names a call, following it must work."""
+        self._resend()
+        self._resend()
+        r = agent.TOOL_FNS["append_section"](
+            {"path": self.p, "section": "Senate Campaign",
+             "text": "He faces Dan Osborn in the 2026 election."})
+        self.assertFalse(r.startswith("Error:"), r)
+        self.assertIn("Dan Osborn", self.w.disk("entities/pete-ricketts.md"))
+
+
+class DatedHeadingTrapTest(TempWikiTestCase):
+    """The refusal must not steer the model into a different guard.
+
+    From the same log: told to name a section for the subject, the agent chose
+    '2026 Senate Campaign' — refused by the date-in-heading rule — and spent another
+    round. That is principle 4's documented worst case, renaming one violation into
+    another, and here it is near-certain rather than unlucky: the material is dated by
+    definition, so the obvious name carries its year.
+    """
+
+    OV = "Pete Ricketts is a Republican Senator from Nebraska."
+    NEWS = " In the 2026 election, he faces independent candidate Dan Osborn."
+
+    def setUp(self):
+        super().setUp()
+        self.w.page("entities/pete-ricketts.md", title="Pete Ricketts", type="entity",
+                    body=f"## Overview\n\n{self.OV}\n")
+        agent.init_session()
+        agent._read_file("wiki/entities/pete-ricketts.md")
+        self.p = "wiki/entities/pete-ricketts.md"
+
+    def _refusal(self):
+        return agent.TOOL_FNS["update_section"](
+            {"path": self.p, "section": "Overview", "content": self.OV + self.NEWS})
+
+    def test_the_dated_heading_really_is_refused(self):
+        """The trap is real: this is what the agent actually tried."""
+        r = agent.TOOL_FNS["append_section"](
+            {"path": self.p, "section": "2026 Senate Campaign", "text": "Osborn runs."})
+        self.assertTrue(r.startswith("Error:"), r)
+
+    def test_the_first_refusal_warns_about_it(self):
+        r = self._refusal()
+        self.assertIn("NO year", r)
+        self.assertIn("2026 Senate Campaign", r)
+
+    def test_the_escalated_refusal_warns_about_it_too(self):
+        self._refusal()
+        r = self._refusal()
+        self.assertIn("no year and no date", r)
+
+    def test_the_undated_name_it_suggests_is_accepted(self):
+        self._refusal()
+        r = agent.TOOL_FNS["append_section"](
+            {"path": self.p, "section": "Senate Campaign", "text": "Osborn runs."})
+        self.assertFalse(r.startswith("Error:"), r)
+
+
 class AppendSectionTest(TempWikiTestCase):
     """Guarding one write path just moves the damage to the other."""
 

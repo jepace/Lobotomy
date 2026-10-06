@@ -748,6 +748,23 @@ knows: a new named section, `add_timeline_entry`, a page of its own, or the summ
 rewritten. It quotes the offending sentences, since a refusal that names the text it is
 objecting to is one the model can act on.
 
+**Its first live ingest found two defects in that refusal, both in one log.** The agent met
+it on `pete-ricketts.md` and **resent the identical call twice more** — three refusals for
+one sentence, ~60s of pacing each. Four named moves were not enough on their own, because
+nothing in the reply CHANGED between attempts, and a model reading a refusal as "that did
+not go through" tries again. A per-`(page, section)` counter on the session context now
+escalates: the second and later refusals say outright that this exact call has already been
+refused, and **drop the menu** for the one call that always works. A menu is what it just
+failed to act on.
+
+And option 1 **steered it into another guard** — told to name a section for the subject it
+chose `'2026 Senate Campaign'`, which the date-in-heading rule refuses, costing another
+round. That is principle 4's documented worst case, renaming one violation into another, and
+here it is near-certain rather than unlucky: this material is dated by definition, so the
+obvious name carries its year. Both refusals now say the name must carry no date, with the
+example. The lesson generalises — **a refusal that tells the model to write something new
+has to respect the rules the OTHER guards will apply to it.**
+
 **The sentence splitter was the fiddly part.** "U.S. Senate" split in two and the fragment
 then opened with a capital, so no heuristic about the FOLLOWING text could repair it — the
 test has to be on what precedes the dot. A fixed-width two-character lookbehind rejects a

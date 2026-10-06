@@ -818,6 +818,20 @@ MUTATIONS = [
      '_SENTENCE_SPLIT_RE = re.compile(r"(?<![A-Z]\\.)(?<=[.!?])\\s+(?=[\\"\'\\[(]?[A-Z])")',
      '_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\\s+(?=[\\"\'\\[(]?[A-Z])")'),
     # Principle 4: the refusal has to name the calls that work, not just the constraint.
+    # The first live ingest resent the identical refused call twice. Four named moves were
+    # not enough on their own, because nothing in the reply changed between attempts.
+    ('summary: a repeated refusal escalates instead of repeating itself',
+     '    if _n > 1:',
+     '    if False:'),
+    ('summary: the repeat count is per page and section',
+     '        _key = f"{path}§{_norm_heading(section)}"',
+     '        _key = "x"'),
+    # Option 1 steered the agent into the date-in-heading rule: told to name a section it
+    # chose '2026 Senate Campaign'. Principle 4's worst case, renaming one violation
+    # into another.
+    ('summary: the refusal warns that the new heading must carry no date',
+     '        f"name must contain NO year and NO date',
+     '        f"name is up to you. ("'),
     ('summary: the refusal names the moves',
      '        f"  1. It is a standing feature of the subject → append_section(path, "',
      '        f"  1. Put it somewhere else. ("'),
