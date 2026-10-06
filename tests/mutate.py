@@ -152,8 +152,8 @@ MUTATIONS = [
      # Without it, merging two pages for one hospital is refused because each
      # sentence uses that page's own name for it — blocking the cleanup that the
      # naming mismatch made necessary in the first place.
-     '                if _subject_re:\n                    line = _subject_re.sub("\\u00absubject\\u00bb", line)',
-     '                if False:\n                    line = _subject_re.sub("\\u00absubject\\u00bb", line)'),
+     '        return _subject_re.sub("\\u00absubject\\u00bb", n) if _subject_re else n',
+     '        return n'),
     ("resolver: a spelled-out name finds its initialised page",
      # Without it, done() demands a page that exists under an initialised title,
      # lookup_titles confirms the demand, and the model makes a duplicate.
@@ -323,7 +323,7 @@ MUTATIONS = [
      '    if not _allow_shrink and _old_cmp >= 800 and _new_cmp < _old_cmp * 0.6:',
      '    if False:'),
     ("merge_page refuses while the loser still says something new",
-     '    if result["outstanding"] and not force:',
+     '    if detail and not force:',
      '    if False:'),
     ("deprecated pages leave the title map",
      '            if title and not deprecated:',
@@ -1044,6 +1044,108 @@ MUTATIONS = [
      '    window.wikifying.delete(name);',
      '    ;',
      'tools/templates/inbox.html'),
+
+    # merge --carry. The feature is a convenience; the guards around it are not, because
+    # the thing it would be easiest to get wrong is appending to a summary, which is the
+    # wiki's worst existing defect.
+    ('merge-carry: a summary is never appended to',
+     '        c["summary"] = _norm_heading(c["section"]) in _SUMMARY_SECTIONS',
+     '        c["summary"] = False'),
+    ('merge-carry: the carried text reaches disk even when the merge then refuses',
+     # The bug a whole green suite walked past: a summary delta returns before the
+     # survivor write at the bottom, so a carry was reported and dropped.
+     '                s_text = carried\n'
+     '                if not dry_run:\n'
+     '                    _atomic_write(surv, s_text)\n'
+     '                    s_on_disk = s_text',
+     '                s_text = carried'),
+    ('merge-carry: a carry with no other change is still written',
+     '    if not dry_run and new_s != s_on_disk:',
+     '    if not dry_run and new_s != s_text:'),
+    ('merge: a loser paragraph that EXTENDS the survivor is not already-said',
+     # Pre-existing data loss. The old line-level test asked whether either line contained
+     # the other, so a paragraph repeating the survivor's and adding a sentence counted as
+     # redundant and was deleted with the page. Silently, with no --force.
+     '        fresh = [sent.strip() for sent in _sentences(c["raw"])\n'
+     '                 if len(_fold(sent)) > 25\n'
+     '                 and not any(_fold(sent) in sc for sc in s_claims)]',
+     '        fresh = []'),
+    ('merge-carry: a created section is reported, not slipped in',
+     '        made.append(section)',
+     '        pass'),
+
+    # page_report. A report's value is entirely in not crying wolf, so most of these
+    # protect a filter rather than a finding.
+    ('page-report: an empty section needs every heading word in the source slug',
+     "            backing = [sl for sl in source_slugs\n"
+     "                       if all(w in sl.lower() for w in words)]",
+     "            backing = [sl for sl in source_slugs\n"
+     "                       if any(w in sl.lower() for w in words)]",
+     'tools/page_report.py'),
+    ('page-report: a one-word heading is never matched against a slug',
+     '        if len(words) >= 2:',
+     '        if words:',
+     'tools/page_report.py'),
+    ('page-report: two headings colliding after date absorption are reported',
+     '    return [{"merged": v[0][1], "from": [n for n, _ in v]}\n'
+     '            for v in groups.values() if len({n for n, _ in v}) > 1]',
+     '    return []',
+     'tools/page_report.py'),
+    ('page-report: a pile needs size AND dated news, not either',
+     '        if s["chars"] >= total * share and len(dated) >= min_dated:',
+     '        if s["chars"] >= total * share or len(dated) >= min_dated:',
+     'tools/page_report.py'),
+    ('page-report: duplication is compared with links flattened',
+     '    flat = _norm_prose(text).lower()',
+     '    flat = text.lower()',
+     'tools/page_report.py'),
+    ('page-report: containment, so a bullet inside a paragraph is found',
+     '            score = len(shared) / min(len(a["sh"]), len(b["sh"]))',
+     '            score = len(shared) / max(len(a["sh"]), len(b["sh"]))',
+     'tools/page_report.py'),
+    ("page-report: a bullet's bold label does not hide the duplicate",
+     '                out.append({"section": s["name"], "text": it,\n'
+     '                            "cmp": _BULLET_LABEL_RE.sub("", it)})',
+     '                out.append({"section": s["name"], "text": it, "cmp": it})',
+     'tools/page_report.py'),
+    ('page-report: a short repeated phrase is not a finding',
+     '        if len(norm) < min_chars:',
+     '        if False:',
+     'tools/page_report.py'),
+    ('page-report: a split name must be a page the autolinker knows',
+     '            if not hit:\n                continue',
+     '            if False:\n                continue',
+     'tools/page_report.py'),
+    ('page-report: an honorific before a name is not a split',
+     "                if not re.fullmatch(r\"[A-Z][\\w.'\u2019-]*\", w) or w.lower() in _HONORIFICS:",
+     "                if not re.fullmatch(r\"[A-Z][\\w.'\u2019-]*\", w):",
+     'tools/page_report.py'),
+    ('page-report: a sentence-ending period does not join two words into a name',
+     '                if w.endswith(".") and not (\n'
+     '                        agent._ABBREV_TAIL_RE.search(w)\n'
+     '                        or re.fullmatch(r"(?:[A-Z]\\.)+", w)):\n'
+     '                    break',
+     '                if False:\n                    break',
+     'tools/page_report.py'),
+    ('page-report: the generated Sources section is not scanned for body links',
+     '        if s["generated"]:\n            continue\n'
+     '        for line in s["body"].split("\\n"):',
+     '        if False:\n            continue\n'
+     '        for line in s["body"].split("\\n"):',
+     'tools/page_report.py'),
+    ('page-report: competing targets are grouped on subject words',
+     '        if len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us", "is")):\n'
+     '            w = w[:-1]',
+     '        if False:\n            w = w[:-1]',
+     'tools/page_report.py'),
+    ('page-report: the noisier subset tier stays opt-in',
+     '    if include_subsets:',
+     '    if True:',
+     'tools/page_report.py'),
+    ('page-report: duplicate sources are found by title, since slugs cannot collide',
+     '                titles[" ".join(t.lower().split())].append((stem, t))',
+     '                titles[stem].append((stem, t))',
+     'tools/page_report.py'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',

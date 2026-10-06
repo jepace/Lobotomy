@@ -764,6 +764,51 @@ guard that is *not* there: a minimum name length looks like protection against f
 them identically — `\b` is the real guard, and no mutation could catch the length cutoff
 being removed.
 
+**That line-by-line comparison was also losing text, silently, and `--carry` is what found
+it.** Asked *"can you make merges easier? editing deltas by hand is a real pain"*, over a
+`find_duplicate_pages.py` run showing **35 groups, 73 pages**. Everything in a merge was
+mechanical except one step — it refuses while the loser still says anything the survivor
+does not, prints those lines, and leaves you to move them — and across 35 groups that one
+step is the whole cost of the cleanup.
+
+Making the report usable meant reporting the delta rather than the paragraph holding it: a
+claim is a LINE, a section's prose is one line per paragraph, so an Overview repeating the
+survivor's first sentence and adding one clause came back whole and had to be diffed by
+eye. Splitting it into sentences to report it exposed the bug. **The old test asked whether
+either line contained the other** — so a loser paragraph that repeated the survivor's and
+then APPENDED a sentence satisfied `survivor_line in loser_line`, counted as already-said,
+and the merge went through and deleted the page with that sentence in it. No `--force`, no
+refusal, nothing in the output. The one shape where a page genuinely extends another is the
+one shape that was dropped, and the symmetric test that caused it looks obviously correct.
+Comparison is per sentence now; a line the splitter cannot divide still gets the symmetric
+test, because a one-sentence paragraph merely reflowed is not new material and treating it
+as such would make every merge refuse.
+
+`--carry` then appends each non-summary line to the survivor's section of the same name.
+Three things it had to get right:
+
+- **A summary is never appended to.** Appending a sentence to an `## Overview` is precisely
+  the accretion `_accreted_dated_sentences` refuses and `overview_drift.py` reports on
+  11,000 pages. A convenience that manufactured the wiki's worst existing defect one merge
+  at a time would be a bad trade at any price. Those deltas come back with the
+  `update_section` call that resolves them — usually one or two sentences, so the hand work
+  becomes *rewrite one paragraph*, which is the judgement half and nothing else.
+- **A differently-named section is created and REPORTED, not mapped.** The first version of
+  this claimed it would land `## Political Stances` in the survivor's `## Positions`, and
+  said so in its docstring and its test. It cannot: deciding those two headings name one
+  subject is a judgement, not a string comparison, and a tool that guessed would merge a
+  section about policy into one about appointments. So it does what `append_section` does —
+  create it and say so — because creating a section is legitimate and a refusal would have
+  no escape hatch.
+- **The carried text has to reach disk on the refusing path.** `_merge_page_impl` writes the
+  survivor once, near the bottom, after the aliases and sources are folded in — and a
+  summary delta `return`s before that point, so a carry was computed, reported in
+  `result["carried"]`, and dropped. **Every unit test passed**, because they all asserted on
+  the result dict or on a merge that succeeded; running the real CLI against an
+  AIPAC-shaped fixture showed two sections missing from the file. The lesson is the one this
+  file keeps relearning: a test that reads the return value is not a test that the write
+  happened.
+
 **`_resolve_page()` is the one place that decides create-vs-update**, and `lookup_titles`,
 `done()`'s listed-name check and the duplicate guards all share it. That sharing is a
 feature — they cannot contradict each other — and it is also why a gap in it produces a
@@ -967,6 +1012,51 @@ dot preceded by a single capital (U.S., J.D.), and a short abbreviation list cov
 guard stops the wiki acquiring more, and nothing else could say how many already have it.
 It reads, never writes, and **offers no repair on purpose** — where a dated sentence
 belongs is a judgement about what the page is for.
+
+**`tools/page_report.py` is the whole-page version of that question.** Asked *"if I gave
+you the text of the current donald-trump.md page, what could you do with it? It's pretty
+much a complete mess."* — 223,659 bytes, fourteen sections, 53.8s to autolink against
+13,195 titles. **The mess was nine separate defects**, and most of them are counting
+problems no human can do by eye at that size: five empty sections (three of them with
+sources for their subject in the page's own frontmatter, so ingested text was missing);
+two parallel dumping grounds holding the same pile in prose and in bullets, saying the Lake
+Ontario renaming six times and the Sept 29 AI accord in four separate bullets; and one
+sentence verbatim twice. Report-only, no LLM, no `--apply`, for `overview_drift.py`'s
+reason.
+
+Three of its checks are worth naming here because each one is a filter rather than a
+finding, and the filter is the hard part:
+
+- **A `PILE` needs size AND dated news.** Size alone reports the section that is working —
+  a page's principal section is supposed to be its biggest. Dated openers alone report the
+  Timeline of every event page in the wiki.
+- **The duplicate comparison must see through the autolinking, and must use containment.**
+  Two copies of one paragraph are reliably linked DIFFERENTLY, because the once-per-section
+  budget is keyed on `(target page, section ordinal)` — so a byte comparison finds nothing
+  on a real page. And the common shape is a short bullet wholly absorbed into a long
+  paragraph, which Jaccard scores low exactly when it matters; the short one being fully
+  contained IS the finding. A bullet's bold label (`- **AI**: …`) comes off first, or the
+  commonest duplicate shape there is — one sentence written once as prose and once as a
+  labelled bullet — matches nothing.
+- **A split proper name (`White [House](…)`) is only reported when the FULLER name is a
+  page the autolinker knows.** Three weaker tests each cried wolf: a capitalised word
+  before a capitalised one-word link flags `Trump [Republicans](…)`; adding an honorific
+  list fixes `President [Trump](…)` and not that; and a word ending in a dot made
+  *"at the White. [House](…) members objected"* into the name "White House", because `.` has
+  to be in the word pattern for "U.S." and `_norm_name_key` strips it back out
+  (`_ABBREV_TAIL_RE` is agent.py's own answer to that and is shared). Asking whether "White
+  House" is itself a title settles it **the autolinker's own way** — the title map is sorted
+  longest-first precisely so the longer name wins, which makes every hit a race the linker
+  is designed to win and lost, and therefore something `_title_upgrade_re` should be able to
+  repair.
+
+**And one thing it deliberately refuses to answer.** Common-word bleeding — `[notes]`,
+`[standing]`, `[power]`, dozens of them on that page — is listed and never flagged. A page
+titled "Tariffs" is SUPPOSED to be linked from the word `tariffs` and one titled "Notes" is
+not, and **nothing on a single page distinguishes them**: the evidence is wiki-wide, which
+is what `bleeding_titles.py` reads. Duplicating a worse version of that answer would put
+dozens of confident wrong findings in front of the real ones, which is the same
+not-crying-wolf constraint every report here is built around.
 
 **Four refusals hand the needed content back in the same response** — `update_section`
 (unread section), `update_file` (unread page, and stale page), `create_file` (page

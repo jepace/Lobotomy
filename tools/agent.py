@@ -4615,14 +4615,76 @@ _READER_URL_RE = re.compile(r"about:reader\?url=[^\s\"'<>)\]]+", re.IGNORECASE)
 
 
 def merge_page(loser_rel: str, survivor_rel: str, extra_aliases=(),
-               force: bool = False, dry_run: bool = False) -> dict:
+               force: bool = False, dry_run: bool = False, carry: bool = False) -> dict:
     """Fold one page into another. See _merge_page_impl for the detail."""
     with write_reason("merge"):
-        return _merge_page_impl(loser_rel, survivor_rel, extra_aliases, force, dry_run)
+        return _merge_page_impl(loser_rel, survivor_rel, extra_aliases, force, dry_run,
+                                carry)
+
+
+# Where a carried line goes, given the section it came from. Returning the survivor's own
+# heading rather than the loser's matters: the two pages name the same section differently
+# ("Positions" against "Political Stances") far more often than they agree, and appending
+# under the loser's name would create a second section for one subject — the exact failure
+# `append_section` already reports rather than refuses.
+def _carry_destination(surv_body: str, loser_section: str) -> "str | None":
+    want = _norm_heading(loser_section)
+    for _lvl, name in _page_section_names(surv_body):
+        if _norm_heading(name) == want:
+            return name
+    return None
+
+
+def _carry_lines(surv_text: str, groups: dict) -> "tuple[str, list]":
+    """Append each group of carried lines to the survivor's matching section.
+
+    Appending is legitimate HERE and nowhere near a summary, which is why the caller
+    filters those out before this is reached. A merge is a consolidation the operator has
+    already decided on, and these lines are by construction things the survivor does not
+    say — so this is the one place in the codebase where adding prose to a section is the
+    correct move rather than the accretion the write guards refuse.
+
+    A section the survivor lacks is created at the end of the body, before the generated
+    `## Sources`, which `_inject_sources_section` rewrites on the next write anyway — and
+    its name is RETURNED, so the caller can report it.
+
+    **Reporting it is the honest limit of this whole feature.** The two pages name the
+    same section differently ("Positions" against "Political Stances") more often than
+    they agree, and deciding those two headings are one subject is a judgement, not a
+    string comparison. A version of this claimed it mapped them and did not. So a
+    differently-named section is created, exactly as `append_section` creates one when
+    asked for a template heading a page calls something else, and reported for the same
+    reason: creating a section is legitimate, a refusal would have no escape hatch, and
+    the operator is the only one who can tell whether the two should be one.
+    """
+    body_start = 0
+    m = re.match(r"^---\s*\n.*?\n---\s*\n", surv_text, flags=re.DOTALL)
+    if m:
+        body_start = m.end()
+    head, body = surv_text[:body_start], surv_text[body_start:]
+    made = []
+
+    for section, lines in groups.items():
+        block = "\n\n".join(lines)
+        dest = _carry_destination(body, section)
+        if dest:
+            found = _find_section(body, dest)
+            if found:
+                _h, start, end = found
+                existing = body[start:end].rstrip()
+                body = body[:start] + existing + "\n\n" + block + "\n\n" + body[end:]
+                continue
+        # No such section on the survivor: make one, ahead of ## Sources.
+        src = re.search(r"^#{1,6}[ \t]*Sources[ \t]*$", body, re.MULTILINE)
+        new = f"## {section}\n\n{block}\n\n"
+        body = (body[:src.start()] + new + body[src.start():]) if src \
+            else body.rstrip() + "\n\n" + new
+        made.append(section)
+    return head + body, made
 
 
 def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
-               force: bool = False, dry_run: bool = False) -> dict:
+               force: bool = False, dry_run: bool = False, carry: bool = False) -> dict:
     """Fold one page into another: repoint every link, carry the names and sources over,
     then delete the loser.
 
@@ -4649,6 +4711,7 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
     the only remaining copy of what the page said, and nothing else references it.
     """
     result = {"repointed": [], "aliases": [], "sources_added": [], "outstanding": [],
+              "outstanding_detail": [], "carried": {}, "new_sections": [],
               "deleted": None, "error": None}
     loser = (WIKI_DIR / loser_rel) if not str(loser_rel).startswith("wiki/") else REPO_ROOT / loser_rel
     surv = (WIKI_DIR / survivor_rel) if not str(survivor_rel).startswith("wiki/") else REPO_ROOT / survivor_rel
@@ -4674,6 +4737,10 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
         return result
 
     l_text, s_text = (x.read_text(encoding="utf-8", errors="replace") for x in (loser, surv))
+    s_on_disk = s_text          # --carry rewrites s_text, so the write below needs the
+                                # version actually on disk to compare against. Comparing
+                                # with the carried text instead means a merge whose only
+                                # change is the carry is computed and never written.
     l_title = _fm_title(l_text) or loser.stem
     s_title = _fm_title(s_text) or surv.stem
 
@@ -4702,28 +4769,116 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
     # links flattened, the subject's names folded together and whitespace normalized,
     # ignoring headings and the generated Sources section — the same shape of test
     # find_duplicate_sections uses to decide when a merge needs no judgment.
+    # Each claim carries the section it came from and the line as written, which is what
+    # makes --carry possible: moving a delta by hand was the one manual step left in a
+    # merge, and the information needed to place it was already being computed here and
+    # thrown away. The normalized form is still what gets COMPARED, and `outstanding`
+    # still holds those normalized strings, because that is what callers already read.
     def _claims(text):
         body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
         body = re.split(r"^#{1,6}[ \t]*Sources[ \t]*$", body, flags=re.MULTILINE)[0]
-        out = []
-        for line in body.splitlines():
-            line = _MD_LINK_RE.sub(r"\1", line).strip().lstrip("-*• ").strip()
+        out, section = [], ""
+        for raw in body.splitlines():
+            hm = re.match(r"^(#{2,6})[ \t]*(\S.*?)[ \t]*$", raw)
+            if hm:
+                section = hm.group(2).strip()
+                continue
+            line = _MD_LINK_RE.sub(r"\1", raw).strip().lstrip("-*• ").strip()
             if len(line) > 25 and not line.startswith("#"):
-                line = " ".join(line.split()).lower()
+                norm = " ".join(line.split()).lower()
                 if _subject_re:
-                    line = _subject_re.sub("\u00absubject\u00bb", line)
-                out.append(line)
+                    norm = _subject_re.sub("\u00absubject\u00bb", norm)
+                out.append({"norm": norm, "raw": raw.strip(), "section": section})
         return out
 
-    s_claims = _claims(s_text)
-    result["outstanding"] = [c for c in _claims(l_text)
-                             if not any(c in sc or sc in c for sc in s_claims)]
-    if result["outstanding"] and not force:
-        result["error"] = (
-            f"{loser_rel} still says {len(result['outstanding'])} thing(s) "
-            f"{survivor_rel} does not. Move them first — merging bodies is the part that "
-            f"needs judgment, and concatenating them would just recreate the duplication. "
-            f"Use --force once you have decided the remainder is redundant.")
+    s_claims = [c["norm"] for c in _claims(s_text)]
+
+    def _fold(text):
+        n = " ".join(_MD_LINK_RE.sub(r"\1", text).split()).lower()
+        return _subject_re.sub("\u00absubject\u00bb", n) if _subject_re else n
+
+    # **A claim is compared SENTENCE by sentence, not line by line, and that is a data-loss
+    # fix rather than a convenience.** A claim is a line, a section's prose is one line per
+    # paragraph, and the old test asked whether either line contained the other — so a
+    # loser paragraph that REPEATED the survivor's and then added a sentence satisfied
+    # `survivor_line in loser_line`, counted as already said, and the merge went through
+    # and deleted it. Silently, with no --force and nothing in the output: the one shape
+    # where a page genuinely extends another is the one shape that was dropped. Found by a
+    # test written for the reporting, which is the only reason it was found at all.
+    #
+    # The same split gives the reporting what it needed anyway. `new` is the sentences the
+    # survivor does not say, so an operator is handed the delta instead of the paragraph
+    # holding it — "editing deltas by hand is a real pain", which is what started this.
+    # `norm` stays the whole line, because that is what callers already read.
+    detail = []
+    for c in _claims(l_text):
+        fresh = [sent.strip() for sent in _sentences(c["raw"])
+                 if len(_fold(sent)) > 25
+                 and not any(_fold(sent) in sc for sc in s_claims)]
+        # A line the splitter cannot divide is judged whole, with the old symmetric test:
+        # a one-sentence paragraph reflowed or re-punctuated is not new material, and
+        # treating it as such would make every merge refuse.
+        if not fresh:
+            if any(c["norm"] in sc or sc in c["norm"] for sc in s_claims):
+                continue
+            fresh = [c["raw"]]
+        c["summary"] = _norm_heading(c["section"]) in _SUMMARY_SECTIONS
+        c["new"] = " ".join(fresh)
+        detail.append(c)
+    result["outstanding"] = [c["norm"] for c in detail]
+    result["outstanding_detail"] = detail
+
+    if detail and carry and not force:
+        # Everything but the summary is placed mechanically. A summary delta is NOT, on
+        # purpose: appending a sentence to an `## Overview` is precisely the accretion
+        # `_accreted_dated_sentences` refuses, and a tool that did it under the banner of
+        # making merges easier would be manufacturing the wiki's worst existing defect one
+        # merge at a time. Those sentences are handed back with the call that resolves
+        # them, and they are usually one or two — so this turns "move every delta by hand"
+        # into "rewrite one paragraph", which is the judgement half and nothing else.
+        groups = {}
+        for c in detail:
+            if not c["summary"]:
+                groups.setdefault(c["section"] or "Background", []).append(c["new"])
+        if groups:
+            carried, made = _carry_lines(s_text, groups)
+            result["new_sections"] = made
+            if carried != s_text:
+                result["carried"] = {k: list(v) for k, v in groups.items()}
+                # Written HERE rather than left to the write below, because a summary
+                # delta refuses the merge and returns before that point — so the lines
+                # this just placed were reported as carried and then silently dropped.
+                # Found by running the real CLI end to end on an AIPAC-shaped fixture;
+                # every unit test passed throughout.
+                s_text = carried
+                if not dry_run:
+                    _atomic_write(surv, s_text)
+                    s_on_disk = s_text
+        left = [c for c in detail if c["summary"]]
+        result["outstanding"] = [c["norm"] for c in left]
+        result["outstanding_detail"] = left
+        detail = left
+
+    if detail and not force:
+        if carry:
+            sec = detail[0]["section"] or "Overview"
+            result["error"] = (
+                f"{len(detail)} line(s) of {loser_rel}'s ## {sec} are not on "
+                f"{survivor_rel}, and a summary is rewritten, never appended to — "
+                f"appending there is the accretion the write guards refuse. Rewrite it to "
+                f"account for them:\n"
+                f"  update_section(path='{survivor_rel}', section='{sec}', "
+                f"content=<one summary covering both>)\n"
+                f"Then run this again. Everything outside the summary has already been "
+                f"carried over. --force if you have read these and decided they add "
+                f"nothing.")
+        else:
+            result["error"] = (
+                f"{loser_rel} still says {len(detail)} thing(s) {survivor_rel} does not. "
+                f"Move them first — merging bodies is the part that needs judgment, and "
+                f"concatenating them would just recreate the duplication. --carry places "
+                f"every non-summary line under its own section on the survivor; --force "
+                f"skips the check once you have decided the remainder is redundant.")
         return result
 
     # --- carry the names over -----------------------------------------------------
@@ -4752,7 +4907,7 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
         joined = ", ".join(f'"{x}"' for x in s_src + extra_src)
         new_s = _set_fm_field(new_s, "sources", f"sources: [{joined}]")
 
-    if not dry_run and new_s != s_text:
+    if not dry_run and new_s != s_on_disk:
         _atomic_write(surv, new_s)
 
     # --- repoint every link that pointed at the loser -----------------------------

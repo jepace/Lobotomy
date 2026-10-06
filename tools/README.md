@@ -352,11 +352,76 @@ survivor, because provenance outlives the page; and **the old title plus its ali
 added as aliases of the survivor, so prose that said "GDP" still resolves after the page
 called GDP is gone. `--alias NAME` adds more.
 
-**Bodies are not merged for you.** That is the judgment half, and a tool that concatenated
-them would recreate the duplication the wiki exists to avoid — so it refuses while the old
-page still says anything the survivor does not, and prints those lines. Move them first,
-then run it again. `--force` skips the check once you have decided the remainder is
-redundant.
+**Several losers in one command**, because `find_duplicate_pages.py` reports groups and
+not all of them are pairs — Pacific Gas and Electric had five pages. Each is merged into
+the survivor in turn and a refusal on one does not stop the rest.
+
+```sh
+python3 tools/merge_page.py wiki/entities/pge.md wiki/entities/pacific-gas-electric.md \
+    --into wiki/entities/pacific-gas-and-electric-company.md --carry
+```
+
+**`--carry` is what makes a merge not be hand work.** Asked for directly — *"can you make
+merges easier? editing deltas by hand is a real pain"* — over a run showing **35 groups, 73
+pages**. Everything about a merge was already mechanical except one step: it refuses while
+the old page still says anything the survivor does not, prints those lines, and leaves you
+to move them. Across 35 groups that one step is the whole cost of the cleanup. `--carry`
+appends each outstanding line to the survivor's section of the same name, or creates the
+section and **reports that it did** — two pages naming one section differently ("Positions"
+against "Political Stances") is a judgement no string comparison can make, so it is yours.
+
+**Except a summary.** An `## Overview` or `## Definition` delta is never appended, because
+appending a sentence to a summary is exactly the accretion `_accreted_dated_sentences`
+refuses and `overview_drift.py` reports on 11,000 pages — a convenience that manufactured
+the wiki's worst existing defect one merge at a time would be a bad trade at any price.
+Those lines come back with the `update_section` call that resolves them, and there are
+usually one or two, so the hand work is **rewrite one paragraph** rather than move every
+delta. `--force` still skips the check entirely, and is the only mode that can lose text.
+
+**The delta reported is the new SENTENCES, not the paragraph holding them.** A section's
+prose is one line per paragraph, so an Overview that repeats the survivor's first sentence
+and adds one clause used to come back whole and had to be diffed by eye. That was the
+complaint, and fixing it exposed a **silent data-loss bug that had always been there**: the
+old comparison asked whether either line contained the other, so a loser paragraph that
+REPEATED the survivor's and then added a sentence counted as already-said, and the merge
+deleted it — with no `--force` and nothing in the output. The one shape where a page
+genuinely extends another was the one shape that was dropped.
+
+### `page_report.py` — everything mechanically wrong with one page
+Written for `donald-trump.md`: 223,659 bytes, fourteen sections, 53.8s to autolink against
+13,195 titles, and "pretty much a complete mess". The mess was **nine separate defects**,
+most of them counting problems nobody can do by eye at that size.
+
+```sh
+python3 tools/page_report.py entities/donald-trump.md
+python3 tools/page_report.py donald-trump                   # slug is enough
+python3 tools/page_report.py donald-trump --only repeats,targets
+python3 tools/page_report.py donald-trump --subsets --links  # the two noisier halves
+```
+
+Report-only, no LLM, and **no `--apply`** — same reason as `overview_drift.py`: every
+repair here is a judgement about what the page is for. Re-run it after each pass and watch
+the count drop.
+
+| check | what it finds |
+|---|---|
+| `EMPTY` | a heading with no body — **marked** when the page lists sources for its subject, which means ingested text is not where the page's own map says it is |
+| `HEADINGS` | what the write guards would refuse, plus the trap two of them make together: `(2025)` and `(2026)` each absorb to one name, so stripping the dates COLLIDES them into a duplicate |
+| `DRIFT` | the summary measured with `overview_drift.py`'s own numbers |
+| `PILE` | a section far larger than its siblings **and** full of dated news — both signals, since a page's main section is supposed to be its biggest |
+| `REPEATS` | near-identical paragraphs and bullets anywhere on the page |
+| `ECHOES` | one sentence appearing verbatim twice |
+| `LINKS` | dead targets, `White [House](…)`, body links into `wiki/sources/` |
+| `TARGETS` | one subject under several slugs — `war-with-iran` / `war-in-iran` / `iran-war` |
+| `SOURCES` | one article captured twice (compared on TITLE, since duplicate slugs cannot collide), and unreadable slugs |
+
+Two deliberate limits. **Common-word bleeding is not judged here** — a page titled
+"Tariffs" *should* be linked from the word `tariffs` and one titled "Notes" should not, and
+nothing on a single page distinguishes them; `bleeding_titles.py` answers it from the whole
+wiki. And **a split name is only reported when the fuller name is a page the autolinker
+knows**: three weaker tests all cried wolf on `Trump [Republicans](…)`, and asking whether
+"White House" is itself a title settles it the autolinker's own way, since the title map is
+sorted longest-first precisely so the longer name wins.
 
 The old page's history under `wiki/.history/` is left in place: it is the only remaining
 copy of what that page said.
