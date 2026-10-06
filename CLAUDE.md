@@ -220,6 +220,42 @@ rather than the event stream and need their own pass, scoped to `.tool-list.stat
 can never re-process a list the live renderer owns. That third one is the same view that was
 missing the sections to begin with.
 
+**A tool line is written whether the call SUCCEEDED or was refused, and linking it turned
+that ambiguity into a false claim.** Reported as a link that 404s:
+
+    ⚙ create_file wiki/entities/2026-r-a-f-fairford-bombing-plot.md
+
+The page did not exist and never had. The agent called `create_file` for the event page
+BEFORE the source page existed, `create_file` refused — *"create the source page first"* —
+and the line appeared anyway, because the event is emitted whatever the tool returned. That
+was merely vague until the path became a link; **a link asserts the page exists**, so
+making these clickable turned a vague line into a wrong one. My regression, from the commit
+before.
+
+The outcome was already known at the yield and already recorded in `_session_tool_calls`;
+it just never reached the view. The event carries `ok` and `why` now, a refused line is
+marked `✗` and says why, and `toolLineHtml` refuses to link it — **a 404 is worse than
+plain text, because it claims otherwise**. The saved display log gets the same treatment by
+pairing each call with its `{"role": "tool", "tool_call_id": …}` result, already in the
+transcript; a missing id counts as success, so a provider that omits one gets today's
+behaviour rather than every line marked failed.
+
+**Two of the four mutations for this were MISSED on the first run, and both were the tests'
+fault rather than the code's** — the same shape twice, worth keeping:
+
+- *A fixture that cannot reach the code it names proves nothing.* The no-link test used
+  `"✗ create_file  wiki/entities/x.md  — refused"`. The linking regex is anchored at
+  end-of-string, so a trailing reason means it never matched **at all** — the `✗` guard was
+  never exercised and removing it changed nothing. The line has to END in the path, and the
+  test now also asserts the unmarked form IS linked, which is what proves the fixture
+  reaches the guard.
+- *Testing the renderer is not testing the producer.* Every other test here built the event
+  dict by hand. Setting `"ok": True` in `agent.py` broke nothing, because no test had ever
+  driven the real loop. `EventContractTest` scripts the model's replies through
+  `_post_with_fallback` and reads what `stream_agent_turn` emits. It neutralizes exactly one
+  config key — `inter_request_delay: 5`, two requests a test, four tests, **41 seconds** —
+  because `mutate.py` pays for the whole suite once per mutation.
+
 **A test that greps for a string the code and a COMMENT both contain proves nothing.** The
 first assertion here checked that `"attempt "` appears in `base.html` — it does, in the
 comment explaining this bug — so `mutate.py` deleted the attempt counter from the code and

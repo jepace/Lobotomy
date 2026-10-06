@@ -828,6 +828,23 @@ MUTATIONS = [
      '    if not hmac.compare_digest(auth[7:].strip(), push_key):',
      '    if auth[7:].strip() != push_key:',
      'tools/serve.py'),
+    # A tool line is written whether the call succeeded or was REFUSED. Ambiguous until
+    # the path became a link; a link ASSERTS the page exists, so it became a false claim.
+    ('refused call: the event carries its outcome',
+     '                              "arg": arg_preview, "ok": ok,',
+     '                              "arg": arg_preview, "ok": True,'),
+    ('refused call: a refusal is marked in the live view',
+     "        var mark = (ev.ok === false) ? '\\u2717 ' : '\\u2699 ';",
+     "        var mark = '\\u2699 ';",
+     'tools/templates/base.html'),
+    ('refused call: a refusal is not linked',
+     "      if (text.charAt(0) === '\\u2717') return _esc(text);",
+     "      if (false) return _esc(text);",
+     'tools/templates/base.html'),
+    ('refused call: the saved log marks it too',
+     '                        _mark = "" if _ok else "\\u2717 "',
+     '                        _mark = ""',
+     'tools/serve.py'),
     # The card was scoped to wiki.html and rejected any href with a #, so on the log links
     # — which carry .md AND a #section — it would have done nothing at all, twice over.
     ('hovercard: a link naming a section still gets a card',

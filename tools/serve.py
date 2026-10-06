@@ -800,6 +800,16 @@ def _sanitize_history(messages: list) -> list:
     return clean
 
 
+
+def _failure_reason_line(result: str) -> str:
+    """The first line of a refusal, without the boilerplate — what the saved log shows
+    beside a call that did not happen."""
+    text = (result or "").split("\n", 1)[0]
+    text = re.sub(r"^Error:\s*", "", text)
+    text = re.sub(r"^\w+ refused\s*[\u2014-]\s*", "", text)
+    return text[:160].strip()
+
+
 def save_history(messages: list, source: str = "chat") -> None:
     """Append human-readable messages to the display log, then clear AI context."""
     _append_display_log(messages, source)
@@ -832,6 +842,18 @@ def _append_display_log(messages: list, source: str) -> None:
         # a new turn; tool calls and the final assistant reply belong to it.
         turns = []
         current: dict | None = None
+        # A tool line is written whether the call SUCCEEDED or was refused, and the saved
+        # log had no way to tell — so a refused create_file redrew as an ordinary line and,
+        # once the path became a link, as a link to a page that was never written. The
+        # outcome is already in the transcript: each call's result comes back as its own
+        # {"role": "tool", "tool_call_id": …} message. Pair them up.
+        #
+        # Conservative on a missing id: unknown counts as SUCCEEDED, so a provider that
+        # omits one gets today's behaviour rather than every line marked as a failure.
+        _results = {}
+        for m in messages:
+            if m.get("role") == "tool" and m.get("tool_call_id"):
+                _results[m["tool_call_id"]] = str(m.get("content") or "")
         for m in messages:
             role = m.get("role")
             if role == "user":
@@ -860,7 +882,11 @@ def _append_display_log(messages: list, source: str) -> None:
                     # section any had touched.
                     arg = tool_arg_preview(fn, args)
                     if fn and fn not in ("done",):
-                        current["tools"].append(f"{fn}  {arg}".strip())
+                        _res = _results.get(tc.get("id") or "", "")
+                        _ok = not _res.lower().startswith("error")
+                        _mark = "" if _ok else "\u2717 "
+                        _why = "" if _ok else "  \u2014 " + _failure_reason_line(_res)
+                        current["tools"].append(f"{_mark}{fn}  {arg}".strip() + _why)
                 # Capture the final text reply.
                 content = m.get("content") or ""
                 if isinstance(content, list):

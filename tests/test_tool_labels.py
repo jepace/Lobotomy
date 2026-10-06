@@ -35,6 +35,7 @@ nothing about whether anything is happening; seven of the second count 1/60 to 7
 the cap. `window.agentEventLine` is the one formatter for both.
 """
 import json
+import tempfile
 import pathlib
 import re
 import sys
@@ -418,3 +419,220 @@ class LinkWiringTest(unittest.TestCase):
         self.assertIn(".tool-link", self.chat)
         self.assertIn(".tool-link", self.inbox)
 
+
+
+class RefusedCallTest(unittest.TestCase):
+    """A tool line is written whether the call succeeded or was REFUSED.
+
+    Reported as a link that 404s: the log showed
+
+        ⚙ create_file wiki/entities/2026-r-a-f-fairford-bombing-plot.md
+
+    and the page did not exist. It never had. The agent called `create_file` for the event
+    page BEFORE the source page existed, `create_file` refused — "create the source page
+    first" — and the line appeared anyway, because the event is emitted whatever the tool
+    returned. That was merely ambiguous until the path became a link; **a link asserts the
+    page exists**, so making these clickable turned a vague line into a false one.
+
+    The outcome was already known at the yield and already recorded in
+    `_session_tool_calls`; it just never reached the view. It does now, and a refused line
+    is marked, carries its reason, and is NOT linked — a 404 is worse than plain text,
+    because it claims otherwise.
+    """
+
+    REFUSAL = ("Error: create_file refused — create the source page "
+               "(wiki/sources/...) first, then create entity/concept pages.")
+
+    def test_a_refused_call_is_marked(self):
+        out = _run_event_line({"type": "tool", "name": "create_file",
+                               "arg": "wiki/entities/x.md", "ok": False,
+                               "why": "create the source page first"})
+        self.assertTrue(out.startswith("✗"), repr(out))
+
+    def test_a_successful_call_keeps_the_gear(self):
+        out = _run_event_line({"type": "tool", "name": "create_file",
+                               "arg": "wiki/entities/x.md", "ok": True})
+        self.assertTrue(out.startswith("⚙"), repr(out))
+
+    def test_an_event_with_no_ok_field_is_treated_as_success(self):
+        """Older stored events carry no flag; marking them all as failures would be worse
+        than the ambiguity being fixed."""
+        out = _run_event_line({"type": "tool", "name": "read_file", "arg": "w/a.md"})
+        self.assertTrue(out.startswith("⚙"), repr(out))
+
+    def test_the_refusal_says_why(self):
+        out = _run_event_line({"type": "tool", "name": "create_file", "arg": "w/a.md",
+                               "ok": False, "why": "create the source page first"})
+        self.assertIn("create the source page first", out)
+
+    def test_a_refused_line_is_not_linked(self):
+        """The whole point. The path names a page the call did not write.
+
+        The line must END in the path. The first version of this test appended a trailing
+        reason, and the linking regex is anchored at end-of-string — so it never matched,
+        the marker guard was never exercised, and mutate.py removed the guard with this
+        test still green. A fixture that cannot reach the code it names proves nothing.
+        """
+        out = _run_tool_line("\u2717 create_file  wiki/entities/x.md")
+        self.assertNotIn("<a", out)
+        # The same line WITHOUT the marker IS linked — proof the fixture reaches the guard.
+        self.assertIn("<a", _run_tool_line("\u2699 create_file  wiki/entities/x.md"))
+
+    def test_a_refused_line_is_still_escaped(self):
+        out = _run_tool_line("✗ create_file  <img src=x>")
+        self.assertIn("&lt;img", out)
+        self.assertNotIn("<img", out)
+
+    def test_a_successful_line_is_still_linked(self):
+        out = _run_tool_line("⚙ create_file  wiki/entities/x.md")
+        self.assertIn("<a", out)
+
+
+class RefusedCallInSavedLogTest(unittest.TestCase):
+    """The same, for the view that redraws after the ingest finishes."""
+
+    def setUp(self):
+        self.w = TempWiki()
+        self.w.__enter__()
+        self._saved = serve.DISPLAY_LOG_FILE
+        serve.DISPLAY_LOG_FILE = pathlib.Path(tempfile.mkdtemp()) / "display.json"
+
+    def tearDown(self):
+        serve.DISPLAY_LOG_FILE = self._saved
+        self.w.__exit__(None, None, None)
+
+    def _tools(self, calls, results):
+        msgs = [{"role": "user", "content": "Ingest raw/x.md"},
+                {"role": "assistant", "tool_calls": [
+                    {"id": i, "function": {"name": n, "arguments": json.dumps(a)}}
+                    for i, n, a in calls]}]
+        msgs += [{"role": "tool", "tool_call_id": i, "name": "x", "content": c}
+                 for i, c in results.items()]
+        serve.save_history(msgs, source="inbox")
+        return json.loads(serve.DISPLAY_LOG_FILE.read_text(encoding="utf-8"))[-1]["tools"]
+
+    def test_the_reported_case(self):
+        tools = self._tools(
+            [("c1", "create_file", {"path": "wiki/entities/2026-r-a-f-fairford-bombing-plot.md"})],
+            {"c1": "Error: create_file refused — create the source page first."})
+        self.assertTrue(tools[0].startswith("✗"), tools)
+        self.assertIn("create the source page first", tools[0])
+
+    def test_a_successful_call_is_unmarked(self):
+        tools = self._tools([("c1", "create_file", {"path": "wiki/sources/s.md"})],
+                            {"c1": "Created wiki/sources/s.md (900 bytes)"})
+        self.assertEqual(tools, ["create_file  wiki/sources/s.md"])
+
+    def test_a_missing_result_counts_as_success(self):
+        """A provider that omits the id would otherwise mark every line as a failure."""
+        tools = self._tools([("", "read_file", {"path": "w/a.md"})], {})
+        self.assertFalse(tools[0].startswith("✗"), tools)
+
+    def test_both_outcomes_in_one_turn(self):
+        tools = self._tools(
+            [("c1", "create_file", {"path": "wiki/entities/e.md"}),
+             ("c2", "create_file", {"path": "wiki/sources/s.md"})],
+            {"c1": "Error: create_file refused — source page first.",
+             "c2": "Created wiki/sources/s.md"})
+        self.assertTrue(tools[0].startswith("✗"), tools)
+        self.assertFalse(tools[1].startswith("✗"), tools)
+
+
+class EventContractTest(unittest.TestCase):
+    """The SERVER's half: does the stream actually send the outcome?
+
+    Every other test here builds the event dict by hand and checks the formatter. That
+    proves the renderer, not the producer — `mutate.py` set `"ok": True` in agent.py and
+    nothing objected, because no test had ever driven the real loop. This one scripts the
+    model's replies through `_post_with_fallback` and reads what comes out of
+    `stream_agent_turn`.
+    """
+
+    def setUp(self):
+        self.w = TempWiki()
+        self.w.__enter__()
+        agent.init_session(inbox_path="raw/x.md")
+
+    def tearDown(self):
+        self.w.__exit__(None, None, None)
+
+    def _events(self, calls):
+        """Run the real loop with a scripted model: one round of `calls`, then stop."""
+        replies = [
+            {"choices": [{"message": {"tool_calls": [
+                {"id": f"c{i}", "type": "function",
+                 "function": {"name": n, "arguments": json.dumps(a)}}
+                for i, (n, a) in enumerate(calls)]}}]},
+            {"choices": [{"message": {"content": "done"}}]},
+        ]
+        it = iter(replies)
+
+        def fake_post(client, payload, primary):
+            return next(it), primary
+
+        # Pacing is deliberate in production and pure cost here. `inter_request_delay: 5`
+        # from config.json.example times two requests per call times four tests is forty
+        # seconds, which mutate.py would then pay once per mutation. Only that one key is
+        # neutralized; every other config read still goes to the real value.
+        _real_cfg_int = agent.cfg_int
+
+        def no_delay(section, key, default=None):
+            if (section, key) == ("llm", "inter_request_delay"):
+                return 0
+            return _real_cfg_int(section, key, default)
+
+        saved = (agent._post_with_fallback, agent.cfg_int,
+                 agent._rpm_wait_sync, agent._rpm_wait_streaming)
+        agent._post_with_fallback = fake_post
+        agent.cfg_int = no_delay
+        agent._rpm_wait_sync = lambda: None
+        agent._rpm_wait_streaming = lambda: iter(())
+        try:
+            out = []
+            for line in agent.stream_agent_turn({}, "m", [{"role": "user", "content": "go"}],
+                                                "sys"):
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+            return [e for e in out if e.get("type") == "tool"]
+        finally:
+            (agent._post_with_fallback, agent.cfg_int, agent._rpm_wait_sync,
+             agent._rpm_wait_streaming) = saved
+
+    def test_a_refused_call_reports_ok_false(self):
+        """create_file for an entity page before the source page exists — the reported
+        case, which produced a link to a page that was never written."""
+        evs = self._events([("create_file", {
+            "path": "wiki/entities/2026-r-a-f-fairford-bombing-plot.md",
+            "title": "2026 R.A.F. Fairford Bombing Plot", "type": "entity",
+            "body": "## Overview\n\nA plot.\n"})])
+        self.assertEqual(len(evs), 1, evs)
+        self.assertIs(evs[0]["ok"], False)
+        self.assertFalse((self.w.wiki / "entities"
+                          / "2026-r-a-f-fairford-bombing-plot.md").exists())
+
+    def test_the_refusal_reason_travels_with_it(self):
+        evs = self._events([("create_file", {
+            "path": "wiki/entities/e.md", "title": "E", "type": "entity",
+            "body": "## Overview\n\nx\n"})])
+        self.assertIn("source page", evs[0]["why"])
+
+    def test_a_successful_call_reports_ok_true(self):
+        evs = self._events([("create_file", {
+            "path": "wiki/sources/s-2026-x.md", "title": "S 2026 X", "type": "source",
+            "body": ("## Summary\n\nA source.\n\n## Claims\n\n- A claim.\n\n"
+                     "## Entities\n\n- Someone\n\n## Concepts\n\n- Something\n\n"
+                     "## Quotes\n\n- \"q\"\n\n## Context\n\nc\n")})])
+        self.assertIs(evs[0]["ok"], True)
+        self.assertEqual(evs[0]["why"], "")
+
+    def test_the_arg_still_carries_the_section(self):
+        """The label and the outcome ride the same event; neither displaced the other."""
+        self.w.page("entities/a.md", title="A", type="entity",
+                    body="## Overview\n\nx.\n")
+        agent._read_file("wiki/entities/a.md")
+        evs = self._events([("update_section", {"path": "wiki/entities/a.md",
+                                                "section": "Overview",
+                                                "content": "Rewritten overview text."})])
+        self.assertIn("§ Overview", evs[0]["arg"])

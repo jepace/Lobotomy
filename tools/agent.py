@@ -8239,9 +8239,14 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                 _prog = _ingest_progress()
                 if _prog:
                     log.info("%s", _prog)
+            # Computed once, here, because the progress views need it too: a tool line
+            # is emitted whether the call succeeded or was REFUSED, and without this the
+            # two are indistinguishable. Observed: create_file for an entity page before
+            # the source page existed was refused, the line appeared anyway, and once the
+            # path became a link that line asserted a page that was never written.
+            ok = not (isinstance(result, str) and result.lower().startswith("error"))
             # Record for log entry — skip done() itself
             if fn_name != "done":
-                ok = not (isinstance(result, str) and result.lower().startswith("error"))
                 _ctx()._session_tool_calls.append((fn_name, arg_preview, ok,
                                                    _failure_reason(result, ok)))
 
@@ -8269,7 +8274,9 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                 yield json.dumps({"type": "done", "ingested": ingested_flag == "1"}) + "\n"
                 return
 
-            yield json.dumps({"type": "tool", "name": fn_name or "(unknown)", "arg": arg_preview}) + "\n"
+            yield json.dumps({"type": "tool", "name": fn_name or "(unknown)",
+                              "arg": arg_preview, "ok": ok,
+                              "why": _failure_reason(result, ok)}) + "\n"
             if not isinstance(result, str):
                 result = json.dumps(result)
             # Gemini requires a non-empty name on every tool response

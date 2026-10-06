@@ -464,6 +464,9 @@
     // the path nor the section name can carry markup into the page.
     window.toolLineHtml = function(line) {
       var text = String(line == null ? '' : line);
+      // A line marked as a refusal names a page the call did NOT write. Linking it would
+      // promise a page that 404s, which is worse than leaving the path as text.
+      if (text.charAt(0) === '\u2717') return _esc(text);
       var m = text.match(/(wiki\/[A-Za-z0-9._\/-]*\.md)(\s+\u00a7\s+(\S.*?))?\s*$/);
       if (!m) return _esc(text);
       var href = '/wiki/' + m[1].replace(/^wiki\//, '');
@@ -476,7 +479,14 @@
     window.agentEventLine = function(ev) {
       if (!ev) return null;
       if (ev.type === 'tool') {
-        return '\u2699 ' + ev.name + (ev.arg ? '  ' + ev.arg : '');
+        // A REFUSED call still produces a line — the event is emitted whatever the tool
+        // returned — so the marker is what tells the two apart. Without it a refused
+        // create_file read exactly like a successful one, and once the path became a link
+        // that line asserted a page which was never written. ✗ also suppresses the link,
+        // in toolLineHtml: a 404 is worse than plain text, because it claims otherwise.
+        var mark = (ev.ok === false) ? '\u2717 ' : '\u2699 ';
+        return mark + ev.name + (ev.arg ? '  ' + ev.arg : '')
+             + (ev.ok === false && ev.why ? '  \u2014 ' + ev.why : '');
       }
       if (ev.type === 'retrying') {
         return '\u23f3 ' + (ev.msg || ('AI busy \u2014 retrying in ' + ev.delay + 's'
