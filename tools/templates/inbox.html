@@ -511,6 +511,20 @@ async function saveToInbox() {
     body: JSON.stringify({content, filename}),
   });
   if (data.ok) {
+    // An add that found the story already here changed nothing on disk, so saying
+    // "saved" would be a lie — and the thing worth knowing is whether it has been
+    // wikified already, since that is the difference between "go read it" and
+    // "it is already in the wiki".
+    if (data.duplicate) {
+      const what = data.title || data.filename;
+      alert(data.refetched
+        ? `"${what}" is already in your reading list — the earlier capture was empty, `
+          + `so another fetch has been started.`
+        : data.wikified
+          ? `"${what}" is already in your reading list and has already been wikified. `
+            + `Nothing was changed.`
+          : `"${what}" is already in your reading list. Nothing was changed.`);
+    }
     document.getElementById('content').value  = '';
     document.getElementById('filename').value = '';
     document.getElementById('save-panel').classList.remove('open');

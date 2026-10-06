@@ -1204,6 +1204,127 @@ def _raw_source_index() -> dict:
     return idx
 
 
+def _raw_items() -> list:
+    """Every reading-list file, as (path, frontmatter, body). One pass over raw/.
+
+    Used by the add path to answer "is this already here?", and only there — it is NOT on
+    the 8-second poll, so the per-file frontmatter parse is paid once when you save a
+    story rather than continuously. Keeping it off the poll is the whole reason this is
+    separate from `list_inbox`, which does much more and is the one hot path in this file.
+    """
+    out = []
+    if not RAW_DIR.is_dir():
+        return out
+    for f in sorted(RAW_DIR.iterdir()):
+        if not f.is_file() or f.name.startswith(".") or f.name == "index.md":
+            continue
+        try:
+            fm, body = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        out.append((f, fm or {}, body or ""))
+    return out
+
+
+# Tracking parameters, dropped when COMPARING two capture URLs. Deliberately a fixed list
+# of known-meaningless names rather than "strip the query string": plenty of sites put the
+# article's identity in a parameter (`?id=`, `?story=`, `?p=`), and treating two different
+# articles as one would lose the second silently — the very failure this is here to stop.
+_TRACKING_PARAMS = frozenset(
+    "fbclid gclid dclid msclkid igshid mc_cid mc_eid _ga _gl ref_src ref_url "
+    "spm scm share_id".split())
+
+
+def _dupe_url_key(url: str) -> str:
+    """A capture URL reduced to what decides whether two captures are the same article.
+
+    **For comparison only — the URL stored on the item is always what was captured.** The
+    same shape as `_norm_prose`: compare normalized, store verbatim.
+
+    `_normalize_capture_url` does NOT do this. It unwraps Firefox's `about:reader?url=…`
+    wrapper and nothing else, so a story shared from Twitter with `?utm_source=` on the end
+    read as a brand-new article. (This comment used to claim that function handled tracking
+    links; it does not, and the two tests asserting it failed.)
+
+    Scheme, a leading `www.`, host case, a trailing slash, the fragment and the tracking
+    parameters above all come off. Everything else stays, including any parameter not on
+    that list.
+    """
+    import urllib.parse
+    u = (_normalize_capture_url(url) or "").strip()
+    if not u:
+        return ""
+    try:
+        p = urllib.parse.urlsplit(u)
+    except ValueError:
+        return u.lower()
+    host = (p.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    kept = [(k, v) for k, v in urllib.parse.parse_qsl(p.query, keep_blank_values=True)
+            if k.lower() not in _TRACKING_PARAMS and not k.lower().startswith("utm_")]
+    query = urllib.parse.urlencode(sorted(kept))
+    path = p.path.rstrip("/")
+    return f"{host}{path}" + (f"?{query}" if query else "")
+
+
+def _find_existing_capture(url: str = "", content: str = ""):
+    """The reading-list file that already holds this URL or this exact text, or None.
+
+    **`/inbox/add` had no duplicate check of any kind**, and the reason that did not show
+    up as duplicate ROWS is worse than duplicate rows would have been: the destination
+    filename is derived deterministically from the URL (or from the first 60 characters of
+    the text), so a second add resolved to the same path and `_atomic_write` silently
+    overwrote it. Measured, all three with `{"ok": true}` returned:
+
+      * Re-adding a URL already in the list reset a `wikified: true` capture to
+        `wikified: false` — an article already folded into the wiki reappears as unread,
+        and wikifying it again is another ~40-minute ingest of a source already ingested.
+      * Re-adding a URL whose article text you had pasted in by hand REPLACED that text
+        with an empty `fetch_failed: true` placeholder. The paste was gone.
+      * Two genuinely DIFFERENT articles pasted from one site collapsed into one file,
+        because the slug comes from the first 60 characters and a site's chrome ("Skip to
+        content Skip to site index Sections Search Subscribe…") runs to 151 before the
+        headline. The first article was destroyed with nothing reported.
+
+    Matching is by `_dupe_url_key` first — the same story reached by a share link with
+    `?utm_source=` on it is the same story. Failing that, by body text with whitespace
+    collapsed, which catches pasting the same article twice when the second copy picked up
+    different line wrapping.
+    """
+    want_url = _dupe_url_key(url) if url else ""
+    want_body = " ".join(content.split()) if content else ""
+    for f, fm, body in _raw_items():
+        if want_url:
+            have = (fm.get("url") or "").strip().strip('"\'')
+            if have and _dupe_url_key(have) == want_url:
+                return f, fm, body
+        if want_body and " ".join(body.split()) == want_body:
+            return f, fm, body
+    return None
+
+
+def _unique_raw_name(name: str) -> str:
+    """`name`, or the first `-2`, `-3`… variant that is free.
+
+    The add path must never overwrite: a story already in the list is either a duplicate
+    (reported, not rewritten) or a DIFFERENT story whose slug happened to collide, and
+    silently replacing the latter is how one paste destroys another. Editing an item is a
+    separate route, so nothing here has any business clobbering a file.
+    """
+    dest = RAW_DIR / name
+    if not dest.exists():
+        return name
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        stem, ext = name, ""
+    for n in range(2, 1000):
+        cand = f"{stem}-{n}" + (f".{ext}" if ext else "")
+        if not (RAW_DIR / cand).exists():
+            return cand
+    return f"{stem}-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}" + (f".{ext}" if ext else "")
+
+
 def list_inbox(show_archived: bool = False) -> list:
     candidates = []
     if RAW_DIR.is_dir():
@@ -3069,9 +3190,28 @@ def inbox_add():
     is_url = content.startswith("http") and "\n" not in content and " " not in content.strip()
     if is_url:
         url = _normalize_capture_url(content)
+        # Already here? Say so and leave it alone. The one exception is a capture that
+        # fetched NOTHING and has never been touched since: re-adding that URL is how you
+        # ask for another go at the fetch, and there is no text to lose. Anything with a
+        # body, or already wikified, is never rewritten by an add.
+        _dup = _find_existing_capture(url=url)
+        if _dup:
+            _f, _fm, _body = _dup
+            _wikified = str(_fm.get("wikified", "")).strip().lower() in ("true", "1", "yes")
+            if _body.strip() or _wikified:
+                log.info("inbox/add: %s is already in the reading list as %s — not rewriting",
+                         url, _f.name)
+                return {"ok": True, "duplicate": True, "filename": _f.name,
+                        "wikified": _wikified,
+                        "title": (_fm.get("title") or _f.name).strip().strip('"\'')}
+            log.info("inbox/add: %s is an empty capture — retrying the fetch", _f.name)
+            _fetch_and_patch(_f, url, expect_body="")
+            return {"ok": True, "duplicate": True, "refetched": True,
+                    "filename": _f.name, "wikified": False,
+                    "title": (_fm.get("title") or _f.name).strip().strip('"\'')}
         title = url.rstrip("/").split("/")[-1].split("?")[0].replace("-", " ").replace("_", " ") or url
         slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "article"
-        base_name = name or f"{slug}.md"
+        base_name = _unique_raw_name(name or f"{slug}.md")
         dest = RAW_DIR / base_name
         today = datetime.date.today().isoformat()
         now   = datetime.datetime.now().isoformat(timespec="seconds")
@@ -3085,6 +3225,16 @@ def inbox_add():
         # overwrite the latter.
         _fetch_and_patch(dest, url, expect_body="")
         return {"ok": True, "filename": dest.name, "fetch_failed": True}
+    # Pasted text. The same article pasted twice is a duplicate and is reported rather
+    # than written again; a DIFFERENT article whose slug collides gets its own filename.
+    _dup = _find_existing_capture(content=content)
+    if _dup:
+        _f, _fm, _ = _dup
+        _wikified = str(_fm.get("wikified", "")).strip().lower() in ("true", "1", "yes")
+        log.info("inbox/add: identical text is already in the reading list as %s", _f.name)
+        return {"ok": True, "duplicate": True, "filename": _f.name,
+                "wikified": _wikified,
+                "title": (_fm.get("title") or _f.name).strip().strip('"\'')}
     if not name:
         slug = re.sub(r"[^a-z0-9]+", "-", content[:60].lower()).strip("-")
         # An empty slug made the filename ".txt" — a DOTFILE, which the listing skips, so
@@ -3093,6 +3243,9 @@ def inbox_add():
         # `now` above is bound only in the URL branch; this one needs its own.
         _stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         name = f"{slug or 'note-' + _stamp}.txt"
+    # Never overwrite. Two different articles from one site share 151 characters of
+    # chrome before the headline, and the slug is built from the first 60.
+    name = _unique_raw_name(name)
     dest = RAW_DIR / name
     # Through _atomic_write like every other write: raw/ sits beside a server running as
     # another user, and a plain write_text here inherits none of the ownership handling.

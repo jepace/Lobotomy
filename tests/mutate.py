@@ -753,6 +753,41 @@ MUTATIONS = [
      '  if (window.wikifying.has(name)) return;\n  window.wikifying.add(name);',
      '  window.wikifying.add(name);',
      'tools/templates/inbox.html'),
+    # /inbox/add had no duplicate check, and the filename is derived deterministically —
+    # so a second add resolved to the same path and silently OVERWROTE it. Re-adding a URL
+    # wiped pasted text and reset wikified:true; two different articles from one site
+    # collapsed into one file, destroying the first.
+    ('inbox/add: a URL already in the reading list is not re-captured',
+     '        _dup = _find_existing_capture(url=url)\n        if _dup:',
+     '        _dup = _find_existing_capture(url=url)\n        if False:',
+     'tools/serve.py'),
+    ('inbox/add: a capture that already holds text is never rewritten',
+     '            if _body.strip() or _wikified:',
+     '            if False:',
+     'tools/serve.py'),
+    ('inbox/add: identical pasted text is not saved twice',
+     '    _dup = _find_existing_capture(content=content)\n    if _dup:',
+     '    _dup = _find_existing_capture(content=content)\n    if False:',
+     'tools/serve.py'),
+    # Two different articles whose first 60 characters are the same site chrome.
+    ('inbox/add: a colliding slug gets its own filename',
+     '    name = _unique_raw_name(name)\n    dest = RAW_DIR / name',
+     '    dest = RAW_DIR / name',
+     'tools/serve.py'),
+    ('inbox/add: a colliding URL capture gets its own filename',
+     '        base_name = _unique_raw_name(name or f"{slug}.md")',
+     '        base_name = name or f"{slug}.md"',
+     'tools/serve.py'),
+    # Over-normalizing merges two different articles, which loses the second as surely
+    # as the overwrite did — so only known-meaningless parameters come off.
+    ('inbox/add: only tracking parameters are ignored when comparing URLs',
+     '            if k.lower() not in _TRACKING_PARAMS and not k.lower().startswith("utm_")]',
+     '            if False]',
+     'tools/serve.py'),
+    ('inbox/add: host, scheme and trailing slash do not make a new story',
+     '    path = p.path.rstrip("/")\n    return f"{host}{path}"',
+     '    path = p.path\n    return f"{p.scheme}{host}{path}"',
+     'tools/serve.py'),
     # A summary section grown by one dated news sentence per ingest. The size guard is the
     # mirror image — it catches a section that SHRINKS — and this failure is the one its
     # own comment already names, "the pile the wiki is not supposed to become".

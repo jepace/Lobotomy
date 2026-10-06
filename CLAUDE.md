@@ -93,6 +93,45 @@ condition. It launches whatever chromium is on disk by `executable_path`, since 
 playwright build and the installed browser build drift apart and the default launch then
 tells you to download one.
 
+**`/inbox/add` must never destroy an existing item** (`_raw_items`, `_find_existing_capture`,
+`_dupe_url_key`, `_unique_raw_name`). Asked *"does the reading list notice if I try to add a
+duplicate item?"* — it did not, and the reason that never showed up as duplicate ROWS is
+worse than duplicate rows would have been. The destination filename is derived
+deterministically (from the URL, or from the first 60 characters of pasted text), so a
+second add resolved to the same path and `_atomic_write` **silently overwrote it**. All
+three measured, all three answering `{"ok": true}`:
+
+- **Re-adding a URL reset `wikified: true` to `false`.** An article already folded into the
+  wiki came back as unread, and wikifying it again is another ~40-minute ingest at
+  `max_rpm: 1` of a source already ingested.
+- **Re-adding a URL whose text you had pasted in by hand replaced that text** with an empty
+  `fetch_failed: true` placeholder. The paste was gone — the same class as the save-failure
+  bugs above, from the opposite direction.
+- **Two genuinely DIFFERENT articles pasted from one site collapsed into one file.** The
+  slug is the first 60 characters, and a news site's chrome ("Skip to content Skip to site
+  index Sections Search Subscribe for $1 a week Log in Today's Paper World U.S. Politics…")
+  runs to **151** before the headline. The first article was destroyed, silently.
+
+The rule the three share: **editing is a separate route, so the add path has no business
+overwriting anything.** A story already here is either a duplicate — reported, never
+rewritten — or a different story whose slug collided, which gets `-2`. One deliberate
+exception, and it destroys nothing: a capture that fetched NOTHING and has no body is what
+re-adding the URL is *for*, so that retries the fetch.
+
+**`_normalize_capture_url` does not do URL normalization in the sense you would assume** —
+it unwraps Firefox's `about:reader?url=…` wrapper and nothing else. A comment here claimed
+it handled tracking links and the two tests asserting that failed. `_dupe_url_key` is the
+comparison key: scheme, `www.`, host case, trailing slash, fragment and known tracking
+parameters come off. **Compare normalized, store verbatim** — the same rule as `_norm_prose`,
+because the Original-article link has to go where the user actually saved. The tracking list
+is fixed and short on purpose: plenty of sites put the article's identity in a parameter
+(`?id=`, `?story=`), and merging two articles loses the second exactly as the overwrite did.
+
+`_raw_items()` is deliberately separate from `list_inbox()` and is **not** on the 8-second
+poll — the per-file frontmatter parse is paid once when you save a story. `add_story.py`
+already refused to overwrite (`if dest.exists(): return 1`); the web route, the one anybody
+actually uses, had no check at all.
+
 **A `fetch` must get JSON back even when it is refused** (`_wants_json`,
 `_auth_required_response`, `apiFetch` in `base.html`). Reported as *"I copied and pasted an
 article and can't save it"*, with the message `Save failed: JSON.parse: unexpected
