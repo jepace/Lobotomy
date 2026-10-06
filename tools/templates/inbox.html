@@ -931,6 +931,13 @@ async function saveEdit(name) {
 // server's dedupe key is what covers a second tab and a reload.
 window.wikifying = window.wikifying || new Set();
 
+// Draw the progress list. Escapes, because ev.arg is a path the MODEL chose and this goes
+// into innerHTML — chat.html has escaped since it was written and this had not.
+function renderProgress(lines) {
+  return lines.map(t => `<div class="prog-tool">${String(t).replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`).join('');
+}
+
 async function wikifyItem(name) {
   const btn      = partFor(name, '.act-btn.wikify');
   const progress = partFor(name, '.item-progress');
@@ -978,12 +985,15 @@ async function wikifyItem(name) {
         for (let i = seenCount; i < allEvents.length; i++) {
           const ev = allEvents[i];
           if (ev.type === 'tool') {
-            tools.push('⚙ ' + ev.name + (ev.arg ? '  ' + ev.arg : ''));
-            progress.innerHTML = tools.map(t => `<div class="prog-tool">${t}</div>`).join('');
+            tools.push(window.agentEventLine(ev));
+            progress.innerHTML = renderProgress(tools);
           } else if (ev.type === 'retrying') {
-            const msg = ev.msg || ('Retrying in ' + ev.delay + 's…');
-            tools.push('⏳ ' + msg);
-            progress.innerHTML = tools.map(t => `<div class="prog-tool">${t}</div>`).join('');
+            // Same formatter as the chat page. These two tail the SAME event stream and
+            // each used to word it differently: "Retrying in 60s…" here against
+            // "AI busy — retrying in 60s (attempt 1/60)" there. Seven of the first in a
+            // row say nothing about whether anything is still happening.
+            tools.push(window.agentEventLine(ev));
+            progress.innerHTML = renderProgress(tools);
           } else if (ev.type === 'error') {
             progress.innerHTML += `<div class="prog-error">Error: ${ev.content}</div>`;
           } else if (ev.type === 'done') {

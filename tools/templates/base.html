@@ -389,6 +389,35 @@
       localStorage.setItem('fontSize', s);
       applyFontSize(s);
     };
+
+    // One formatting of an agent event, for every progress view there is.
+    //
+    // The reading list and the chat page tail the SAME /chat/events stream and each had
+    // its own copy of this. They drifted, and the comparison was asked for directly:
+    //
+    //   reading list   "Retrying in 60s…"
+    //   chat           "AI busy — retrying in 60s (attempt 1/60)"
+    //
+    // Seven of the first in a row say nothing about whether anything is happening; seven
+    // of the second count 1/60 to 7/60 and name the cap. The better one was on the page
+    // nobody watches during a wikify.
+    //
+    // The gear was worse than drift — it was a bug. chat.html rendered the same `tools`
+    // array with two different map expressions, one prefixing "⚙ " and one not, so
+    // whichever event arrived LAST decided how every earlier line was drawn: a single
+    // retry stripped the gear off every tool line above it. Putting the icon in the TEXT
+    // rather than in one branch's markup is what makes that impossible.
+    window.agentEventLine = function(ev) {
+      if (!ev) return null;
+      if (ev.type === 'tool') {
+        return '\u2699 ' + ev.name + (ev.arg ? '  ' + ev.arg : '');
+      }
+      if (ev.type === 'retrying') {
+        return '\u23f3 ' + (ev.msg || ('AI busy \u2014 retrying in ' + ev.delay + 's'
+          + (ev.max ? ' (attempt ' + ev.attempt + '/' + ev.max + ')' : '')));
+      }
+      return null;
+    };
   })();
   </script>
   <script>

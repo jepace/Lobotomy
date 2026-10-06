@@ -302,32 +302,36 @@ async function readStream(streamResp, toolsEl, bubbleEl) {
       if (!line) continue;
       try {
         var ev = JSON.parse(line);
+        // ONE way to draw the list, so no branch can redraw it differently.
+        function renderTools() {
+          return tools.map(function(t){ return '<div class="tool-item">' + escHtml(t) + '</div>'; }).join('');
+        }
         if (ev.type === 'ping') {
           continue;
         } else if (ev.type === 'tool') {
           hadTools = true;
-          tools.push(ev.name + '  ' + ev.arg);
+          tools.push(window.agentEventLine(ev));
           toolsEl.style.display = 'block';
-          toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">⚙ ' + escHtml(t) + '</div>'; }).join('');
+          toolsEl.innerHTML = renderTools();
         } else if (ev.type === 'text') {
           fullText += ev.content;
           bubbleEl.innerHTML = md(fullText);
         } else if (ev.type === 'retrying') {
-          var retryMsg = ev.msg || ('AI busy — retrying in ' + ev.delay + 's'
-            + (ev.max != null ? ' (attempt ' + ev.attempt + '/' + ev.max + ')' : ''));
-          tools.push('⏳ ' + retryMsg);
+          // The icon is in the TEXT, not in this branch's markup. Two branches drawing one
+          // array two ways is what let a single retry strip the gear off every tool line.
+          tools.push(window.agentEventLine(ev));
           toolsEl.style.display = 'block';
-          toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">' + escHtml(t) + '</div>'; }).join('');
+          toolsEl.innerHTML = renderTools();
         } else if (ev.type === 'cancelled') {
           cancelled = true;
           if (hadTools) {
             tools.push('✗ Cancelled');
-            toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">' + escHtml(t) + '</div>'; }).join('');
+            toolsEl.innerHTML = renderTools();
           }
         } else if (ev.type === 'done') {
           if (hadTools && !cancelled) {
             tools.push('✓ Done');
-            toolsEl.innerHTML = tools.map(function(t){ return '<div class="tool-item">' + escHtml(t) + '</div>'; }).join('');
+            toolsEl.innerHTML = renderTools();
           }
         } else if (ev.type === 'error') {
           bubbleEl.innerHTML = '<span style="color:var(--danger)">Error: ' + escHtml(ev.content) + '</span>';

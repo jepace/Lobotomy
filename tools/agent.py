@@ -3869,6 +3869,48 @@ _DONE_SENTINEL = "__AGENT_DONE__:"
 
 # Tools that put a page on disk. After one of these lands, the ingest is measurably
 # further along, which is the only moment worth recounting.
+def tool_arg_preview(fn_name: str, args: dict, limit: int = 80) -> str:
+    """The one-line label for a tool call, wherever a progress view shows one.
+
+    THREE places built this and one of them was wrong. The live `/chat/events` stream and
+    the debug log both appended `§ <section>`; `serve.py`'s saved display log took
+    `args["path"]` and nothing else — so while an ingest was running the chat page showed
+
+        update_section wiki/entities/alberta.md § Overview
+
+    and the moment it finished, the same turn redrew from history as
+
+        update_section wiki/entities/alberta.md
+
+    Thirty lines of `update_section` against the same handful of pages, with no way to tell
+    which section any of them touched. The live view was never the problem; the record of
+    it was.
+
+    Section goes after `§` and a timeline date after `@` because dict order varies between
+    calls — a preview that just took the first value showed the path on some calls and the
+    section on others.
+    """
+    args = args or {}
+    if fn_name == "add_timeline_entry":
+        out = f'{args.get("path", "?")} @ {args.get("date", "?")}'
+    elif fn_name in ("read_section", "update_section", "append_section"):
+        out = f'{args.get("path", "?")} § {args.get("section", "?")}'
+    elif fn_name in ("create_file", "update_file", "read_file"):
+        out = str(args.get("path", next(iter(args.values()), "")))
+    elif fn_name == "search_wiki":
+        out = str(args.get("query", ""))
+    elif fn_name == "fetch_url":
+        out = str(args.get("url", ""))
+    elif fn_name == "prepend_log":
+        out = str(args.get("entry", ""))
+    elif fn_name == "done":
+        out = str(args.get("summary", ""))
+    else:
+        out = str(next(iter(args.values()), ""))
+    return out[:limit]
+
+
+
 _PAGE_WRITE_TOOLS = {"create_file", "update_file", "update_section",
                      "append_section", "replace_text", "add_timeline_entry"}
 
@@ -7882,11 +7924,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                           type(e).__name__, e, exc_info=True)
                 result = f"Error: {type(e).__name__}: {e}"
             result_preview = str(result)[:200].replace("\n", " ") if isinstance(result, str) else str(result)[:200]
-            _preview = (f'{args.get("path", "?")} § {args.get("section", "?")}'
-                        if fn_name in ("read_section", "update_section", "append_section")
-                        else f'{args.get("path", "?")} @ {args.get("date", "?")}'
-                        if fn_name == "add_timeline_entry"
-                        else str(list(args.values())[:1]))
+            _preview = tool_arg_preview(fn_name, args)
             log.debug("Tool result [%s] %s: %s", fn_name or "(unknown)", _preview[:60], result_preview)
             if fn_name in _PAGE_WRITE_TOOLS and not result_preview.lower().startswith("error"):
                 _prog = _ingest_progress()
@@ -8175,25 +8213,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                     args["query"] = args["query"] + " " + _scope_in_name
                 elif _scope_in_name:
                     args["query"] = _scope_in_name
-                if fn_name == "add_timeline_entry":
-                    arg_preview = f'{args.get("path", "?")} @ {args.get("date", "?")}'[:80]
-                elif fn_name in ("read_section", "update_section", "append_section"):
-                    # Show both path and section: dict order varies between calls, so a
-                    # single-value preview showed the path on some calls and the section
-                    # on others, making the log impossible to follow.
-                    arg_preview = f'{args.get("path", "?")} § {args.get("section", "?")}'[:80]
-                elif fn_name in ("create_file", "update_file", "read_file"):
-                    arg_preview = str(args.get("path", next(iter(args.values()), "")))[:80]
-                elif fn_name == "search_wiki":
-                    arg_preview = str(args.get("query", ""))[:80]
-                elif fn_name == "fetch_url":
-                    arg_preview = str(args.get("url", ""))[:80]
-                elif fn_name == "prepend_log":
-                    arg_preview = str(args.get("entry", ""))[:80]
-                elif fn_name == "done":
-                    arg_preview = str(args.get("summary", ""))[:80]
-                else:
-                    arg_preview = str(next(iter(args.values()), ""))[:80]
+                arg_preview = tool_arg_preview(fn_name, args)
                 # Logged BEFORE the call, not after. It used to be after, so a tool that
                 # blocked wrote nothing at all — an ingest wedged mid-round and the last
                 # line in the log was the LLM response, with no way to tell which tool it

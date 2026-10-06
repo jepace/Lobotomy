@@ -173,6 +173,7 @@ from config import (cfg_get, cfg_bool, cfg_int, validate_config,
                     cfg_active_provider, cfg_provider, cfg_available_models,
                     cfg_all_providers, cfg_write_llm)
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title, _H1_RE,
+                   tool_arg_preview,
                    fm_scalar, fm_quote, parse_tags_line, first_desc_line,
                    _page_section_names,
                    write_reason, page_history,
@@ -851,8 +852,13 @@ def _append_display_log(messages: list, source: str) -> None:
                         args = json.loads((tc.get("function") or {}).get("arguments") or "{}")
                     except Exception:
                         args = {}
-                    # Build a short readable arg preview (path, query, url, title).
-                    arg = args.get("path") or args.get("query") or args.get("url") or args.get("title") or ""
+                    # The SAME label the live stream shows. This used to take
+                    # args["path"] and nothing else, so a turn that read
+                    # "update_section …/alberta.md § Overview" while it ran redrew from
+                    # history as "update_section …/alberta.md" the moment it finished —
+                    # thirty of them against a handful of pages, with no way to tell which
+                    # section any had touched.
+                    arg = tool_arg_preview(fn, args)
                     if fn and fn not in ("done",):
                         current["tools"].append(f"{fn}  {arg}".strip())
                 # Capture the final text reply.

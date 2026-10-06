@@ -828,6 +828,28 @@ MUTATIONS = [
      '    if not hmac.compare_digest(auth[7:].strip(), push_key):',
      '    if auth[7:].strip() != push_key:',
      'tools/serve.py'),
+    # Three places built the tool-call label and serve.py's saved display log was the odd
+    # one out: path only, no section. The live view was right; the record of it was not.
+    ('tool label: a section tool names its section',
+     '        out = f\'{args.get("path", "?")} § {args.get("section", "?")}\'',
+     '        out = str(args.get("path", "?"))'),
+    ('tool label: the saved chat history uses the shared builder',
+     '                    arg = tool_arg_preview(fn, args)',
+     '                    arg = args.get("path") or ""',
+     'tools/serve.py'),
+    ('tool label: the live stream uses the shared builder',
+     '                arg_preview = tool_arg_preview(fn_name, args)',
+     '                arg_preview = str(args.get("path", ""))[:80]'),
+    # chat.html drew one array with two map expressions, one prefixing the gear; whichever
+    # event came LAST decided how every earlier line looked.
+    ('tool label: one formatter for both progress views',
+     '    window.agentEventLine = function(ev) {',
+     '    window.agentEventLine = function(ev) { return null; };\n    window._unused = function(ev) {',
+     'tools/templates/base.html'),
+    ('tool label: the retry text says which attempt',
+     "          + (ev.max ? ' (attempt ' + ev.attempt + '/' + ev.max + ')' : '')",
+     "          + ''",
+     'tools/templates/base.html'),
     # /inbox/add had no duplicate check, and the filename is derived deterministically —
     # so a second add resolved to the same path and silently OVERWROTE it. Re-adding a URL
     # wiped pasted text and reset wikified:true; two different articles from one site

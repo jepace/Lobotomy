@@ -168,6 +168,41 @@ button along with the badge, since that page was built from the text the edit re
 **Both renderers, always.** Every row exists twice — the Jinja loop and the poll's prepend
 path — so a change to one is a bug in the other, and the tests assert the pair.
 
+**One label for a tool call, in every view that shows one** (`tool_arg_preview`,
+`window.agentEventLine`). Asked whether the chat log and the reading-list log differ, then
+narrowed: *"it's the chat log for AFTER an ingest is complete that does not display
+sections."* Fifty lines of `⚙ update_section wiki/entities/alberta.md` against a handful of
+pages, with no way to tell which section any of them touched.
+
+**The live view was never wrong; the record of it was.** Three places built this label.
+`agent.py`'s `/chat/events` stream and its debug log both appended `§ <section>` and always
+had; `serve.py`'s saved display log took `args["path"]` and nothing else, so a turn that
+read `update_section …/alberta.md § Overview` while running redrew from history without the
+section the moment it finished. `tool_arg_preview()` is the only builder now, and `serve.py`
+imports the NAME — `agent.foo` there is a `NameError`, and `save_history` wraps its parse in
+a `try/except` that swallows everything, which is exactly how such a mistake stays invisible.
+
+Two more drifts fell out of the same comparison:
+
+- **The gear was a bug, not a style difference.** `chat.html` rendered the same `tools`
+  array with two different map expressions — one prefixing `⚙ `, one not — and both ran
+  over the whole array, so whichever event arrived LAST decided how every earlier line was
+  drawn. **A single retry stripped the gear off every tool line above it**, which is why
+  the pasted chat log had none while the reading list's had one per line. The icon lives in
+  the TEXT now and one `renderTools()` draws the list.
+- **The retry wording differed and the reading list had the worse half**: `"Retrying in
+  60s…"` against `"AI busy — retrying in 60s (attempt 1/60)"`. Seven of the first in a row
+  say nothing about whether anything is happening; seven of the second count 1/60 to 7/60
+  and name the cap. The better one was on the page nobody watches during a wikify.
+
+`inbox.html` also went through `innerHTML` **without escaping**, on a string containing a
+path the model chose; `chat.html` had escaped since it was written. Both escape now.
+
+**A test that greps for a string the code and a COMMENT both contain proves nothing.** The
+first assertion here checked that `"attempt "` appears in `base.html` — it does, in the
+comment explaining this bug — so `mutate.py` deleted the attempt counter from the code and
+the test still passed. It runs the lifted function under `node` now and reads the output.
+
 **A `fetch` must get JSON back even when it is refused** (`_wants_json`,
 `_auth_required_response`, `apiFetch` in `base.html`). Reported as *"I copied and pasted an
 article and can't save it"*, with the message `Save failed: JSON.parse: unexpected
