@@ -419,6 +419,88 @@ class SchemaTest(unittest.TestCase):
         """Or a model reading it would conclude a damaged page cannot be repaired."""
         self.assertIn("stays editable", self.src)
 
+    def test_the_event_itself_is_named_as_an_entity(self):
+        """The gap behind the thin city sections: the list named the participants and not
+        the story, so the story had nowhere to live."""
+        self.assertIn("The EVENT is an entity", self.src)
+
+    def test_the_schema_does_not_limit_events_to_slow_burning_ones(self):
+        """Every example used to be a slow process — outbreak, election, trial,
+        investigation — so a single remark read as not qualifying."""
+        self.assertIn("A single incident", self.src)
+        self.assertRegex(self.src, r"a remark, a raid, a resignation")
+
+    def test_the_schema_says_a_page_title_may_carry_a_date(self):
+        """A model that has just been refused for a dated HEADING will otherwise
+        over-generalize and decline to name the event at all."""
+        self.assertIn("a page title may carry\n  a date", self.src)
+
+    def test_the_schema_gives_the_linking_reason(self):
+        """Editorial taste is arguable; this is mechanical. Only a page title is matched
+        by the autolinker, so only a page is found everywhere it is mentioned."""
+        self.assertIn("the only thing this wiki can link", self.src)
+
+
+class EventDeservesAPageTest(TempWikiTestCase):
+    """A president saying on the record that enemies should destroy two American cities
+    produced a 224-character paragraph on los-angeles.md, a 222-character paragraph on
+    san-diego.md, and no page for the remark itself.
+
+    The guard was right that it did not belong in Overview. Option 3 was the right move and
+    the model did not take it, because every example the refusal and the schema gave was a
+    slow-burning event — an outbreak, an election, a trial — so a single day's remark read
+    as not qualifying.
+    """
+
+    def _refusal(self):
+        self.w.page("entities/los-angeles.md", title="Los Angeles", type="entity",
+                    body="## Overview\n\nLos Angeles is a city in California.\n")
+        agent.init_session()
+        agent._read_file("wiki/entities/los-angeles.md")
+        return agent.TOOL_FNS["update_section"]({
+            "path": "wiki/entities/los-angeles.md", "section": "Overview",
+            "content": ("Los Angeles is a city in California. On October 5, 2026, "
+                        "President Trump said enemies should be allowed to destroy it.")})
+
+    def test_option_three_is_not_limited_to_slow_burning_events(self):
+        r = self._refusal()
+        self.assertIn("Not only slow-burning events", r)
+        self.assertIn("a remark", r)
+
+    def test_option_three_names_the_participant_test(self):
+        """The discriminator the model needed: this page is a participant in what
+        happened, not the subject of it."""
+        self.assertIn("PARTICIPANT", self._refusal())
+
+    def test_option_three_gives_the_linking_reason(self):
+        self.assertIn("autolinker", self._refusal())
+
+    def test_a_page_for_the_event_is_linked_from_a_later_unrelated_page(self):
+        """What a page buys that a section cannot: every future mention, anywhere, linked
+        without anyone deciding to. This is the whole argument for giving the event a page
+        rather than a paragraph on each participant."""
+        self.w.page("entities/let-em-take-out-los-angeles-remarks.md",
+                    title="Let Em Take Out Los Angeles Remarks", type="entity",
+                    body="## Overview\n\nRemarks made at an October 2026 rally.\n")
+        p = self.w.wiki / "entities" / "unrelated.md"
+        p.write_text("---\ntitle: Unrelated\ntype: entity\n---\n\n# Unrelated\n\n"
+                     "## Overview\n\nCritics cited the Let Em Take Out Los Angeles "
+                     "Remarks months afterwards.\n", encoding="utf-8")
+        agent._autolink_now(p)
+        self.assertIn("[Let Em Take Out Los Angeles Remarks]"
+                      "(../entities/let-em-take-out-los-angeles-remarks.md)",
+                      p.read_text(encoding="utf-8"))
+
+    def test_a_dated_page_title_is_accepted(self):
+        """The heading rule refuses '## 2026 Outbreak'. A model that over-generalizes from
+        it will not name the event at all, so the page-title case has to work."""
+        agent.init_session()
+        r = agent.TOOL_FNS["create_file"]({
+            "path": "wiki/entities/2026-irkutsk-plague-outbreak.md",
+            "title": "2026 Irkutsk Plague Outbreak", "type": "entity",
+            "body": "## Overview\n\nAn outbreak in Siberia.\n"})
+        self.assertFalse(r.startswith("Error:"), r)
+
 
 if __name__ == "__main__":
     unittest.main()

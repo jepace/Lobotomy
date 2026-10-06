@@ -832,6 +832,15 @@ MUTATIONS = [
     ('summary: the refusal warns that the new heading must carry no date',
      '        f"name must contain NO year and NO date',
      '        f"name is up to you. ("'),
+    # Every example was a slow-burning event — outbreak, election, trial — so a single
+    # day's remark read as not qualifying, and the most consequential claim in a source
+    # ended up as 224 characters on a city page with no page of its own.
+    ('summary: a single incident is a story in its own right too',
+     '        f"remark, a raid, a resignation, a verdict, an order signed all qualify. If this "',
+     '        f"outbreak, an election or a trial qualifies. If this "'),
+    ('summary: the refusal gives the participant-vs-subject test',
+     '        f"page is a PARTICIPANT in what happened rather than the subject of it, the event "',
+     '        f"page is involved, the event "'),
     ('summary: the refusal names the moves',
      '        f"  1. It is a standing feature of the subject → append_section(path, "',
      '        f"  1. Put it somewhere else. ("'),

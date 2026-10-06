@@ -168,7 +168,15 @@ Sources, and replace the middle sections with ones that actually fit the subject
 force-fit a subject into headings built for someone else, and never drop a subject from
 the wiki because the default template doesn't suit it.
 
-**Unfolding event** (an outbreak, election, trial, investigation — an entity page):
+**Event** (an entity page). Two kinds, and the second is the one that gets missed:
+
+- **Unfolding** over weeks or months — an outbreak, an election, a trial, an investigation.
+  Arrives across many sources, so Overview is revised and the Timeline accumulates.
+- **A single incident** — a remark, a raid, a resignation, a crash, a verdict, an order
+  signed. It happened once, on one day, and a source is usually about it rather than
+  mentioning it. **It still gets a page**, for the same reason: the people and places in it
+  already have pages of their own, and that is not where an account of what happened
+  belongs. A Timeline here holds the reaction and consequences, which arrive later.
 - Overview *(what the situation is **now** — rewritten each time, not appended to)*
 - Timeline *(maintained by `add_timeline_entry`, never by hand)*
 - Background *(what led up to it — this stops changing once written)*
@@ -370,6 +378,32 @@ Required sections:
 
   This list drives page creation in Step 5, so apply real judgement here — the bar is
   **central to the story**, not merely present in it.
+
+  **The EVENT is an entity, and it is the one most often left off.** When a source reports
+  that something *happened*, the thing that happened belongs on this list beside the people
+  and places caught up in it. Not only slow-burning events like an outbreak or a trial — a
+  single remark, a raid, a resignation, a crash, a verdict, an order signed. If the source
+  is about an event, the event is the subject; Trump, Los Angeles and Iran are its
+  participants.
+
+  Leave the event off and the material has **nowhere to live**. It gets split into a
+  sentence on each participant's page, which is how the most consequential claim in a
+  source ends up as two hundred characters on a city page while the thing itself is
+  recorded nowhere. Observed exactly that way: a president saying on the record that
+  enemies should be allowed to destroy Los Angeles and San Diego produced a 224-character
+  paragraph on `los-angeles.md`, a 222-character paragraph on `san-diego.md`, and no page.
+
+  **A page is also the only thing this wiki can link.** The autolinker matches page titles,
+  so a subject with a page is linked from every page that mentions it, in every future
+  ingest, forever — and a subject with only a section is remembered in the one place
+  somebody happened to put it. If a fact should be findable everywhere it is relevant, it
+  needs a page; there is no other mechanism.
+
+  Name the event the way a reader would refer to it, and note that **a page title may carry
+  a date even though a section heading may not** — "2026 Irkutsk Plague Outbreak" is a fine
+  page title. The no-dates rule in §3 is about headings *inside* a page, for a different
+  reason: a section gets revised in place forever, whereas a page is about one thing that
+  happened once.
 
   **What the source is ABOUT always goes on this list — no judgement call, no exceptions.**
   If the source is an encyclopedia entry, profile, or report on one subject, that subject

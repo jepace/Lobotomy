@@ -765,6 +765,40 @@ obvious name carries its year. Both refusals now say the name must carry no date
 example. The lesson generalises — **a refusal that tells the model to write something new
 has to respect the rules the OTHER guards will apply to it.**
 
+**The guard decides WHERE material goes; it says nothing about what deserves recording,
+and the first thing it steered produced an under-recorded page.** The same ingest put a
+224-character paragraph on `los-angeles.md` and a 222-character one on `san-diego.md`,
+because a president had said on the record that enemies should be allowed to destroy both
+cities. This entry first called that "a passing rhetorical mention" and asked whether it
+should have touched those pages at all. **That was wrong, and wrong in a way worth naming:
+it inferred the importance of an event from the number of bytes the model wrote about it.**
+The raw file was `trump-on-war-in-iran-let-em-take-out-los-angeles-let-em-take.md` — the
+remark was not mentioned in the article, it WAS the article.
+
+The real defect is the inverse. The source page's `## Entities` list named Donald Trump,
+Los Angeles, San Diego and Iran — **the participants, and not the story** — so the account
+of what happened had nowhere to live and was split into a sentence per participant. The
+guard was right that it did not belong in Overview; option 3 (a page of its own) was the
+right move and the model did not take it, because every example the refusal and the schema
+gave was a SLOW-BURNING event — an outbreak, an election, a trial, an investigation — so a
+single day's remark read as not qualifying.
+
+**A page is the only thing this wiki can link**, and that is the mechanical argument rather
+than an editorial one: the autolinker matches page titles, so a subject with a page is
+linked from every page that mentions it in every future ingest, forever, while a subject
+with only a section is remembered in the one place somebody happened to put it. "Findable
+everywhere it is relevant" is precisely what a page buys and a section cannot. LOBOTOMY.md
+Step 3 now says the event itself belongs on the entity list beside the people and places in
+it, the event template covers a single incident as well as an unfolding one, and option 3
+names the discriminator the model actually needed: **is this page the subject of what
+happened, or a participant in it?**
+
+One trap closed with it: a model freshly refused for the dated HEADING `## 2026 Senate
+Campaign` will over-generalize and decline to name the event at all, so the schema says
+outright that a page TITLE may carry a date — "2026 Irkutsk Plague Outbreak" is fine. The
+heading rule exists because a section is revised in place forever; a page is about one thing
+that happened once.
+
 **The sentence splitter was the fiddly part.** "U.S. Senate" split in two and the fragment
 then opened with a capital, so no heuristic about the FOLLOWING text could repair it — the
 test has to be on what precedes the dot. A fixed-width two-character lookbehind rejects a
