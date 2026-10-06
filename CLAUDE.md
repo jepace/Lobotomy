@@ -282,6 +282,35 @@ logged it. Both halves were wrong and both are fixed.
 Together those make silence diagnostic: **nothing in the log now means the request never
 got here**, which points at the proxy rather than at Flask.
 
+**A scan could not be told from the owner, and it buried the log.** Asked *"im being
+probed — are we cool?"* over thirty `GET /admin.php -> 404` lines interleaved with a
+running ingest. Cool on that scan — every path is a `.php` file, this is Flask, so no
+interpreter is in the request path and probing cannot put one there; `debug=False`, so the
+Werkzeug console (the one real RCE in a Flask app) is off; both `send_file` handlers are
+`@require_login` and resolve-then-contain; and the fifteen unauthenticated routes are the
+login/share flows plus `/api/*`, which all go through `_api_auth()` — **which fails closed**,
+answering 501 when no key is set rather than letting `"" == ""` authenticate everyone.
+
+But the log could not say any of that, for two separate reasons.
+
+- **It could not say WHO.** Everything arrives through nginx, so `request.remote_addr` is
+  the PROXY on every line — the same `192.168.x.x` for the scan and for the owner loading
+  `/reading-list`, which is how you can tell it is the proxy. The real address existed only
+  in nginx's log. `_client_ip()` reads `X-Forwarded-For` **only when the immediate peer is
+  private or loopback**, because that header is attacker-controlled: reached directly it
+  returns the real peer rather than believing it. The **rightmost** entry is the one our
+  proxy observed; anything to its left the client supplied and could have invented.
+- **And it drowned the thing being asked about.** This project has already had its disk
+  filled once by its own log volume, so a line per probe is not a safe default — but
+  dropping them silently is worse, because then the next "am I being probed?" has no answer.
+  The first is logged in full, the rest counted, a summary per window: **32 probes → 2
+  lines.** The discriminator is `request.url_rule is None`, which Flask sets only when
+  NOTHING matched; a 404 from a route that exists is a real answer to a real request and
+  keeps its own line.
+
+`_api_auth` also compares with `hmac.compare_digest` now — a plain `!=` leaks the key a
+character at a time to anyone who can measure the reply, on a route that needs no login.
+
 **THE DISK WAS FULL, and this code filled it.** Long articles would not save; short notes
 would. The cause, found in nginx's log after days of looking at the application:
 

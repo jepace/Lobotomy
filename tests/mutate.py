@@ -791,6 +791,43 @@ MUTATIONS = [
      '    // would delete the #item-count span it writes into.\n    applyFilters();',
      '    ;',
      'tools/templates/inbox.html'),
+    # A scan is 30+ requests in 15s, each for a path matching no route. One line apiece
+    # buries a running ingest, and this project has already had its disk filled by its own
+    # log volume — but dropping them makes "am I being probed?" unanswerable.
+    ('probe: an unmatched path is aggregated, not one line each',
+     '        if resp.status_code == 404 and request.url_rule is None:',
+     '        if False:',
+     'tools/serve.py'),
+    ('probe: a 404 from a REAL route keeps its own line',
+     '        if resp.status_code == 404 and request.url_rule is None:',
+     '        if resp.status_code == 404:',
+     'tools/serve.py'),
+    # NOTE: the first attempt here was `return None or (...)`, which is a NO-OP — None or
+    # X is X — so it reported MISSED against correct code. A mutation that does not change
+    # behaviour tests nothing and lies about coverage.
+    ('probe: a scan is never silent',
+     '            return (f"probe: {path} from {ip} matched no route \u2014 scanning for someone "\n'
+     '                    f"else\'s backdoor. Further probes from this address are summarized.")',
+     '            return None',
+     'tools/serve.py'),
+    # X-Forwarded-For is attacker-controlled; trusted only from our own proxy.
+    ('probe: the forwarded address is read, so the log names the prober',
+     '    fwd = request.headers.get("X-Forwarded-For", "")\n    return fwd.split(",")[-1].strip() or peer',
+     '    return peer',
+     'tools/serve.py'),
+    ('probe: a public peer cannot forge its address',
+     '    if not (addr.is_private or addr.is_loopback):\n        return peer',
+     '    if False:\n        return peer',
+     'tools/serve.py'),
+    # The rightmost entry is what OUR proxy saw; anything left of it the client supplied.
+    ('probe: only the hop our proxy observed is believed',
+     '    return fwd.split(",")[-1].strip() or peer',
+     '    return fwd.split(",")[0].strip() or peer',
+     'tools/serve.py'),
+    ('api key: the comparison is constant time',
+     '    if not hmac.compare_digest(auth[7:].strip(), push_key):',
+     '    if auth[7:].strip() != push_key:',
+     'tools/serve.py'),
     # /inbox/add had no duplicate check, and the filename is derived deterministically —
     # so a second add resolved to the same path and silently OVERWROTE it. Re-adding a URL
     # wiped pasted text and reset wikified:true; two different articles from one site

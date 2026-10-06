@@ -98,10 +98,22 @@ class RequestLineTest(unittest.TestCase):
 
     def test_the_line_carries_a_duration(self):
         """A proxy read timeout shows up as a request that ran long, so the number is the
-        point rather than decoration."""
+        point rather than decoration.
+
+        No longer anchored at end-of-line: the client address was appended after it, and
+        `$` here failed against a line that had gained information rather than lost any.
+        The duration is still required to be there, which is what this test is for.
+        """
         self.c.post("/inbox/edit", json={"filename": "x.md", "content": "hi"})
         line = next(l for l in self._lines() if l.startswith("POST /inbox/edit"))
-        self.assertRegex(line, r"in \d+ms$")
+        self.assertRegex(line, r"in \d+ms\b")
+
+    def test_the_line_names_who_made_the_request(self):
+        """Everything arrives through nginx, so without this every line in the log reads
+        as the proxy — a scan and the owner's own browsing are indistinguishable."""
+        self.c.post("/inbox/edit", json={"filename": "x.md", "content": "hi"})
+        line = next(l for l in self._lines() if l.startswith("POST /inbox/edit"))
+        self.assertRegex(line, r"from \S+$")
 
     def test_the_inbox_poll_is_not_logged(self):
         """It runs every 8 seconds while a tab is open and would bury everything else."""

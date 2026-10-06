@@ -18,6 +18,8 @@ Usage:
 import datetime
 import difflib
 import functools
+import hmac
+import ipaddress
 import json
 import logging
 import logging.handlers
@@ -311,6 +313,66 @@ def _warn_low_disk(path=None) -> int:
     return free
 
 
+# ---------------------------------------------------------------------------
+# Who is actually talking to us, and keeping a port scan out of the one log
+# this project reads.
+# ---------------------------------------------------------------------------
+
+def _client_ip() -> str:
+    """The address that actually made the request, not the proxy's.
+
+    Everything arrives through nginx, so `request.remote_addr` is the PROXY on every
+    single line — the same 192.168.x.x for a scan and for the owner loading
+    /reading-list. Asked "am I being probed, are we cool?", the application log could not
+    say where any of it came from; only nginx's log could.
+
+    **X-Forwarded-For is attacker-controlled**, so it is trusted only when the immediate
+    peer is private or loopback — i.e. our own proxy. Reached directly, this returns the
+    real peer rather than believing a header anyone can send. The RIGHTMOST entry is the
+    one our proxy observed; anything to the left of it was supplied by the client and is
+    not evidence of anything.
+    """
+    peer = (request.remote_addr or "").strip()
+    try:
+        addr = ipaddress.ip_address(peer)
+    except ValueError:
+        return peer or "?"
+    if not (addr.is_private or addr.is_loopback):
+        return peer
+    fwd = request.headers.get("X-Forwarded-For", "")
+    return fwd.split(",")[-1].strip() or peer
+
+
+# A scan is 30+ requests in 15 seconds, each for a path that matches no route. Logged one
+# line apiece they bury an ingest in progress — and this project has already had its disk
+# filled once by its own log volume, so "every probe gets a line" is not a safe default.
+# They are not dropped either: silence would make the next question unanswerable. The
+# first is logged, the rest are counted, and a summary lands per window.
+_PROBE_WINDOW_S = 30.0
+_PROBE_BURST = 25
+_probe_lock = threading.Lock()
+_probe_state = {}          # ip -> [count_since_summary, window_started, latest_path]
+
+
+def _note_probe(ip: str, path: str) -> "str | None":
+    """Record one unmatched-route request. Returns a line to log, or None to stay quiet."""
+    now = time.monotonic()
+    with _probe_lock:
+        st = _probe_state.get(ip)
+        if st is None or now - st[1] > _PROBE_WINDOW_S:
+            _probe_state[ip] = [0, now, path]
+            return (f"probe: {path} from {ip} matched no route — scanning for someone "
+                    f"else's backdoor. Further probes from this address are summarized.")
+        st[0] += 1
+        st[2] = path
+        if st[0] >= _PROBE_BURST:
+            n, started = st[0], st[1]
+            _probe_state[ip] = [0, now, path]
+            return (f"probe: {n} more unmatched paths from {ip} in {now - started:.0f}s "
+                    f"(latest {path})")
+    return None
+
+
 @app.after_request
 def _log_request(resp):
     """One line per state-changing request: method, path, status, milliseconds.
@@ -330,13 +392,20 @@ def _log_request(resp):
     the likeliest downstream cause and it shows up as a request that ran long.
     """
     try:
-        if request.method != "GET" or resp.status_code >= 400:
+        # A 404 where NO route matched is a scanner asking for /admin.php, not a user
+        # reaching a page that is gone. Flask tells them apart: url_rule is None only when
+        # nothing matched at all. The second kind still gets its own line.
+        if resp.status_code == 404 and request.url_rule is None:
+            line = _note_probe(_client_ip(), request.path)
+            if line:
+                log.warning("%s", line)
+        elif request.method != "GET" or resp.status_code >= 400:
             if not request.path.startswith(_QUIET_PATHS):
                 ms = (time.monotonic() - g.get("_t0", time.monotonic())) * 1000
                 log.log(logging.WARNING if (resp.status_code >= 400 or ms > _SLOW_REQUEST_MS)
                         else logging.INFO,
-                        "%s %s -> %d in %dms", request.method, request.path,
-                        resp.status_code, ms)
+                        "%s %s -> %d in %dms from %s", request.method, request.path,
+                        resp.status_code, ms, _client_ip())
     except Exception:           # logging must never break the response it describes
         pass
     return resp
@@ -2495,7 +2564,9 @@ def _api_auth():
     if not auth.startswith("Bearer "):
         return False, ({"error": "Authorization header required: Bearer <token>",
                         "code": "UNAUTHORIZED"}, 401)
-    if auth[7:].strip() != push_key:
+    # Constant-time: a plain != leaks the key one character at a time to anyone
+    # who can measure the reply, and this route needs no login.
+    if not hmac.compare_digest(auth[7:].strip(), push_key):
         return False, ({"error": "Invalid API key", "code": "FORBIDDEN"}, 403)
     return True, None
 
