@@ -132,6 +132,42 @@ poll — the per-file frontmatter parse is paid once when you save a story. `add
 already refused to overwrite (`if dest.exists(): return 1`); the web route, the one anybody
 actually uses, had no check at all.
 
+**The reading list's status markers, colours and filter** (`.wikified-badge`,
+`.act-btn.wikipage`, `markRowWikified`, `applyFilters`). Three complaints at once, and the
+most expensive thing was none of them.
+
+- **"The Wikified tag is smaller than a button and sometimes I can't hit it."** It was
+  `font-size: 10px` in `padding: 1px 6px` — about 14px tall against the ~44px a finger
+  needs — **and it was a link**, so the element too small to hit was also the only way to
+  reach the page the article became. It is a marker now; the clickable job moved to a real
+  `.act-btn` in the action row at the same size as every other control.
+- **"The colours are confusing, do they mean something?"** Partly, and the confusing part
+  was real rather than taste: `--accent` blue was Read AND Wikify — the free instant one
+  and the one that spends ~40 minutes and a per-day quota, identical to look at — while
+  `--success` green was Archive (an action) AND the Wikified badge (a state). One meaning
+  per colour now: blue the free primary action, grey neutral and reversible, **amber the
+  expensive one**, red destructive, **green a state and never an action**. `--warn` had to
+  be added to all three theme blocks — a button that vanishes in dark mode is worse than a
+  confusing one.
+- **A status filter** (All / To read / Wikified). The trap is that search already wrote
+  `style.display` directly, so clearing the search box set every row visible including the
+  ones the filter had hidden. **`applyFilters()` is the only writer** and reads both
+  predicates — the same "one answer in one place" shape as `_write_route`. It also owns the
+  count, because the poll used to overwrite that whole element and would have deleted the
+  span it writes into.
+
+**Found while doing it, and worse than any of the three: nothing disabled Wikify on an
+article already wikified.** `item.wikified` rendered the badge and nothing else, so one
+click on a finished item started another ~40-minute ingest re-folding the same source into
+the same pages — and the badge was the only thing saying it was done. Marking a row
+wikified is now one helper (`markRowWikified`) called by both paths that reach that state,
+the 30-second poll and `wikifyItem`'s own completion; each had its own copy of the badge
+code, and the half missing from BOTH was the disable. `saveEdit` removes the View page
+button along with the badge, since that page was built from the text the edit replaced.
+
+**Both renderers, always.** Every row exists twice — the Jinja loop and the poll's prepend
+path — so a change to one is a bug in the other, and the tests assert the pair.
+
 **A `fetch` must get JSON back even when it is refused** (`_wants_json`,
 `_auth_required_response`, `apiFetch` in `base.html`). Reported as *"I copied and pasted an
 article and can't save it"*, with the message `Save failed: JSON.parse: unexpected

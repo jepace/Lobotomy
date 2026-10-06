@@ -41,10 +41,15 @@
     margin-bottom: 3px;
   }
   .item-meta { font-size: 12px; color: var(--text2); margin-bottom: 4px; }
+  /* A STATE, not a control. It used to be a link — 10px text in 1px of padding, about
+     14px tall against the 44px a finger needs — so it was the only way to reach the wiki
+     page and could not reliably be hit. The clickable job moved to a real .act-btn in the
+     action row, and this went back to being a marker you read while scanning the list.
+     Green means "done" here and nowhere else. */
   .wikified-badge {
-    display: inline-block; font-size: 10px; font-weight: 700;
+    display: inline-block; font-size: 11px; font-weight: 700;
     background: var(--success); color: #fff;
-    padding: 1px 6px; border-radius: 10px; margin-left: 6px;
+    padding: 2px 7px; border-radius: 10px; margin-left: 6px;
     vertical-align: middle; letter-spacing: .03em; text-decoration: none;
   }
   .item-excerpt {
@@ -66,12 +71,29 @@
     cursor: pointer; border: 1px solid var(--border);
     background: var(--bg); color: var(--text); white-space: nowrap;
   }
-  .act-btn.read    { background: var(--accent);  color: #fff; border: none; text-decoration: none; }
-  .act-btn.open    { background: var(--bg3);    color: var(--text); }
-  .act-btn.archive { background: var(--success); color: #fff; border: none; }
-  .act-btn.wikify  { background: var(--accent); color: #fff; border: none; }
+  /* ONE MEANING PER COLOUR. They used to carry two each and so carried none: blue was
+     Read AND Wikify — the free instant one and the one that spends ~40 minutes and a
+     per-day quota, identical to look at — while green was Archive (an action) AND the
+     Wikified badge (a state). Now:
+         blue   the main thing you came to do, and it is free      Read
+         grey   neutral and reversible                             Open, Edit, Archive
+         amber  spends real time and quota; think before clicking  Wikify
+         red    destroys something                                 Delete
+         green  a STATE, never an action                           Wikified ✓            */
+  .act-btn.read    { background: var(--accent); color: #fff; border: none; text-decoration: none; }
+  .act-btn.open    { background: var(--bg3); color: var(--text); text-decoration: none; }
+  .act-btn.archive { background: var(--bg3); color: var(--text); }
+  .act-btn.wikify  { background: var(--warn); color: #fff; border: none; }
   .act-btn.wikify:disabled { opacity: .5; cursor: default; }
   .act-btn.delete  { color: var(--danger); border-color: var(--danger); background: transparent; }
+  /* The page this article became. A real control, full size, where every other control
+     is — the badge above only says that it exists. */
+  .act-btn.wikipage {
+    background: transparent; color: var(--success);
+    border-color: var(--success); text-decoration: none;
+  }
+  /* Save, inside the edit panel, is a primary action rather than an expensive one. */
+  .item-edit-actions .act-btn.wikify { background: var(--accent); }
 
   /* Inline wikify progress */
   .item-progress {
@@ -128,6 +150,19 @@
     border-radius: 8px; padding: 8px; box-sizing: border-box; margin-bottom: 8px;
   }
   .item-edit-actions { display: flex; gap: 6px; }
+
+  /* Status filter. Buttons rather than a <select> so the current state is readable
+     without opening anything, and so each is a full tap target. */
+  .seg { display: inline-flex; flex-shrink: 0; border: 1px solid var(--border);
+         border-radius: 8px; overflow: hidden; }
+  .seg-btn {
+    padding: 5px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
+    border: none; background: var(--bg); color: var(--text2); white-space: nowrap;
+  }
+  .seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+  .seg-btn.active { background: var(--accent); color: #fff; }
+  .filter-empty { display: none; padding: 28px 14px; text-align: center;
+                  color: var(--text2); font-size: 14px; }
 </style>
 {% endblock %}
 
@@ -141,9 +176,14 @@
              style="flex:1; min-width:0; max-width:220px; padding:5px 9px; border-radius:8px;
                     border:1px solid var(--border); background:var(--bg); color:var(--text);
                     font-size:13px; outline:none;">
+      <div class="seg" role="group" aria-label="Filter by status">
+        <button class="seg-btn active" data-filter="all"  onclick="setStatusFilter('all')">All</button>
+        <button class="seg-btn"        data-filter="todo" onclick="setStatusFilter('todo')">To read</button>
+        <button class="seg-btn"        data-filter="done" onclick="setStatusFilter('done')">Wikified</button>
+      </div>
     </div>
     <div style="display:flex; gap:8px; align-items:center; flex-shrink:0;">
-      <span class="text-sm text2">{{ items|length }} {% if show_archived %}archived{% else %}saved{% endif %}</span>
+      <span class="text-sm text2"><span id="item-count">{{ items|length }}</span> {% if show_archived %}archived{% else %}saved{% endif %}</span>
       <a class="btn btn-ghost btn-sm" href="/inbox?archived={{ '0' if show_archived else '1' }}">
         {{ 'Hide archived' if show_archived else 'Archived' }}
       </a>
@@ -181,7 +221,7 @@
               {{ item.title }}
             {%- endif -%}
           </div>
-          <div class="item-meta">{{ item.date }} &middot; {{ item.name }}{% if item.wikified %}{% if item.wiki_path %}<a href="/wiki/{{ item.wiki_path }}" onclick="event.stopPropagation()" class="wikified-badge">Wikified ✓</a>{% else %}<span class="wikified-badge">Wikified ✓</span>{% endif %}{% endif %}</div>
+          <div class="item-meta">{{ item.date }} &middot; {{ item.name }}{% if item.wikified %}<span class="wikified-badge">Wikified ✓</span>{% endif %}</div>
           {% if item.excerpt %}<div class="item-excerpt">{{ item.excerpt }}</div>{% endif %}
         </div>
         <span class="item-chevron">▶</span>
@@ -194,12 +234,20 @@
         {% if item.source_url %}
           <a class="act-btn open" href="{{ item.source_url }}" target="_blank" rel="noopener">Open ↗</a>
         {% endif %}
+        {% if item.wikified and item.wiki_path %}
+          <a class="act-btn wikipage" href="/wiki/{{ item.wiki_path }}">View page →</a>
+        {% endif %}
         {% if item.archived %}
           <button class="act-btn archive" onclick="unarchiveItem('{{ item.name | e }}')">Unarchive</button>
         {% else %}
           <button class="act-btn archive" onclick="archiveItem('{{ item.name | e }}')">Archive</button>
-          <button class="act-btn wikify"
-                  onclick="wikifyItem('{{ item.name | e }}')">Wikify</button>
+          {# Disabled once it is done. Nothing stopped a second Wikify on an article
+             already in the wiki: another ~40-minute ingest at max_rpm 1, re-folding the
+             same source into the same pages. The badge was the only thing saying so, and
+             it was too small to see. #}
+          <button class="act-btn wikify" {% if item.wikified %}disabled
+                  title="Already wikified — use View page"{% endif %}
+                  onclick="wikifyItem('{{ item.name | e }}')">{{ 'Wikified ✓' if item.wikified else 'Wikify' }}</button>
           <button class="act-btn" onclick="editItem('{{ item.name | e }}')">Edit</button>
         {% endif %}
         <button class="act-btn delete" onclick="deleteItem('{{ item.name | e }}')">Delete</button>
@@ -220,6 +268,13 @@
       </div>
     </div>
     {% endfor %}
+    {# Shown when the filter hides everything, so an empty list never reads as an empty
+       reading list. #}
+    <div class="filter-empty" id="filter-empty">
+      Nothing matches this filter.
+      <button class="seg-btn" style="border:1px solid var(--border); border-radius:8px; margin-left:8px;"
+              onclick="document.getElementById('search-input').value=''; filterItems(''); setStatusFilter('all');">Show all</button>
+    </div>
   {% else %}
   <div class="empty-state">
     <div style="font-size:36px; margin-bottom:12px;">📖</div>
@@ -267,7 +322,7 @@ const itemState = {}; // name -> {has_content, wikified, wiki_path}
     itemState[name] = {
       has_content: !!el.querySelector('.act-btn.read'),
       wikified:    !!el.querySelector('.wikified-badge'),
-      wiki_path:   el.querySelector('a.wikified-badge')?.getAttribute('href')?.replace('/wiki/', '') || '',
+      wiki_path:   el.querySelector('a.act-btn.wikipage')?.getAttribute('href')?.replace('/wiki/', '') || '',
     };
   });
 })();
@@ -296,28 +351,46 @@ function patchItemStatus(item) {
 
   // Wikified badge
   if (item.wikified && !prev.wikified) {
-    const meta = card.querySelector('.item-meta');
-    if (meta && !meta.querySelector('.wikified-badge')) {
-      if (item.wiki_path) {
-        const a = document.createElement('a');
-        a.className = 'wikified-badge';
-        a.href = '/wiki/' + item.wiki_path;
-        a.onclick = e => e.stopPropagation();
-        a.textContent = 'Wikified ✓';
-        meta.appendChild(a);
-      } else {
-        const span = document.createElement('span');
-        span.className = 'wikified-badge';
-        span.textContent = 'Wikified ✓';
-        meta.appendChild(span);
-      }
-    }
+    markRowWikified(item.name, item.wiki_path);
     prev.wikified = true;
     prev.wiki_path = item.wiki_path;
     changed = true;
   }
 
   return changed;
+}
+
+// Mark one row as wikified: the badge, the View page button, and the Wikify button going
+// dead. TWO paths reach this state — the 30s poll noticing a job someone else started,
+// and wikifyItem finishing its own — and they had a copy each of the badge code. Two
+// copies drift, and the half that was missing from both is the part that matters: nothing
+// disabled Wikify, so a finished article still offered a second ~40-minute ingest.
+function markRowWikified(name, wikiPath) {
+  const row = rowFor(name);
+  if (!row) return;
+  const meta = row.querySelector('.item-meta');
+  if (meta && !meta.querySelector('.wikified-badge')) {
+    const badge = document.createElement('span');
+    badge.className = 'wikified-badge';
+    badge.textContent = 'Wikified \u2713';
+    meta.appendChild(badge);
+  }
+  const actions = row.querySelector('.item-actions');
+  if (actions && wikiPath && !actions.querySelector('.act-btn.wikipage')) {
+    const a = document.createElement('a');
+    a.className = 'act-btn wikipage';
+    a.href = '/wiki/' + wikiPath;
+    a.textContent = 'View page \u2192';
+    actions.insertBefore(a, actions.firstChild);
+  }
+  const w = row.querySelector('.act-btn.wikify');
+  if (w) {
+    w.disabled = true;
+    w.textContent = 'Wikified \u2713';
+    w.title = 'Already wikified \u2014 use View page';
+  }
+  // A row that just became wikified may no longer belong under the current filter.
+  if (typeof applyFilters === 'function') applyFilters();
 }
 
 async function pollInbox() {
@@ -358,7 +431,7 @@ async function pollInbox() {
           <div class="item-title">${item.source_url
             ? `<a href="${item.source_url.replace(/"/g,'&quot;')}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:inherit;text-decoration:none;">${item.title.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</a>&#8202;<a href="${item.source_url.replace(/"/g,'&quot;')}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;color:var(--text2);text-decoration:none;">↗</a>`
             : item.title.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
-          <div class="item-meta">${item.date} &middot; ${item.name.replace(/</g,'&lt;').replace(/>/g,'&gt;')}${item.wikified ? (item.wiki_path ? `<a href="/wiki/${item.wiki_path}" onclick="event.stopPropagation()" class="wikified-badge">Wikified ✓</a>` : `<span class="wikified-badge">Wikified ✓</span>`) : ''}</div>
+          <div class="item-meta">${item.date} &middot; ${item.name.replace(/</g,'&lt;').replace(/>/g,'&gt;')}${item.wikified ? `<span class="wikified-badge">Wikified ✓</span>` : ''}</div>
           ${item.excerpt ? `<div class="item-excerpt">${item.excerpt.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>` : ''}
         </div>
         <span class="item-chevron">&#9654;</span>
@@ -367,9 +440,10 @@ async function pollInbox() {
       <div class="item-actions">
         ${item.has_content ? `<a class="act-btn read" href="/inbox/read/${encodeURIComponent(item.name)}">Read</a>` : ''}
         ${item.source_url ? `<a class="act-btn open" href="${item.source_url.replace(/"/g, '&quot;')}" target="_blank" rel="noopener">Open &#8599;</a>` : ''}
+        ${item.wikified && item.wiki_path ? `<a class="act-btn wikipage" href="/wiki/${item.wiki_path}">View page &#8594;</a>` : ''}
         <button class="act-btn archive" onclick="archiveItem('${item.name.replace(/'/g, "\\'")}')">Archive</button>
-        <button class="act-btn wikify"
-                onclick="wikifyItem('${item.name.replace(/'/g, "\\'")}')">Wikify</button>
+        <button class="act-btn wikify" ${item.wikified ? 'disabled title="Already wikified &#8212; use View page"' : ''}
+                onclick="wikifyItem('${item.name.replace(/'/g, "\\'")}')">${item.wikified ? 'Wikified &#10003;' : 'Wikify'}</button>
         <button class="act-btn delete"  onclick="deleteItem('${item.name.replace(/'/g, "\\'")}')">Delete</button>
         <button class="act-btn" onclick="editItem('${item.name.replace(/'/g, "\\'")}')">Edit</button>
       </div>
@@ -394,11 +468,10 @@ async function pollInbox() {
       firstItem.parentNode.insertBefore(div.firstElementChild, firstItem);
     });
 
-    // Update item count
-    const countEl = document.querySelector('.text-sm.text2');
-    if (countEl) {
-      countEl.textContent = items.length + ' saved';
-    }
+    // Newly inserted rows have to obey the filter that is already on, and applyFilters
+    // owns the count. The old code here replaced the whole counter element's text, which
+    // would delete the #item-count span it writes into.
+    applyFilters();
   } catch(e) {
     console.error('Auto-refresh error:', e);
   }
@@ -615,25 +688,70 @@ async function toggleItem(name) {
 }
 
 const SHOW_ARCHIVED = {{ 'true' if show_archived else 'false' }};
-let _searchTimer = null;
+let _searchTimer   = null;
+let _searchMatches = null;    // null = no search term; otherwise a Set of matching names
+let _statusFilter  = 'all';   // 'all' | 'todo' | 'done'
+
+// ONE function decides whether a row is visible, because two things writing
+// style.display disagree: search used to set it directly, so clearing the search box
+// revealed every row including the ones the status filter had hidden. Both predicates
+// are read here and nowhere else.
+function applyFilters() {
+  let shown = 0, total = 0;
+  for (const el of document.querySelectorAll('.reading-item')) {
+    total++;
+    // The same signal patchItemStatus uses, so the filter and the badge cannot disagree.
+    const done = !!el.querySelector('.wikified-badge');
+    const ok = (_searchMatches === null || _searchMatches.has(el.dataset.name))
+            && (_statusFilter === 'all'
+                || (_statusFilter === 'done' ? done : !done));
+    el.style.display = ok ? '' : 'none';
+    if (ok) shown++;
+  }
+  const c = document.getElementById('item-count');
+  if (c) c.textContent = (shown === total ? `${total}` : `${shown} of ${total}`);
+  const empty = document.getElementById('filter-empty');
+  if (empty) empty.style.display = (total && !shown) ? '' : 'none';
+}
+
+function setStatusFilter(v) {
+  _statusFilter = v;
+  for (const b of document.querySelectorAll('.seg-btn')) {
+    b.classList.toggle('active', b.dataset.filter === v);
+  }
+  // A convenience, not a record — storage can be absent or throw.
+  try { localStorage.setItem('inbox-filter', v); } catch(e) {}
+  applyFilters();
+}
+
 function filterItems(q) {
   clearTimeout(_searchTimer);
   const term = q.trim();
   if (!term) {
-    document.querySelectorAll('.reading-item').forEach(el => el.style.display = '');
+    _searchMatches = null;
+    applyFilters();
     return;
   }
   _searchTimer = setTimeout(async () => {
     try {
       const url = '/inbox/search?q=' + encodeURIComponent(term) + (SHOW_ARCHIVED ? '&archived=1' : '');
       const data = await apiFetch(url);
-      const matchedNames = new Set((data.results || []).map(r => r.name));
-      document.querySelectorAll('.reading-item').forEach(el => {
-        el.style.display = matchedNames.has(el.dataset.name) ? '' : 'none';
-      });
-    } catch(e) { console.error('Search error:', e); }
+      _searchMatches = new Set((data.results || []).map(r => r.name));
+      applyFilters();
+    } catch(e) {
+      // A failed search must not silently leave the previous query's rows on screen
+      // looking like an answer — the same trap the wiki search spinner fixed.
+      console.error('Search error:', e);
+      alert('Search failed: ' + (e.message || 'Unknown'));
+    }
   }, 200);
 }
+
+(function restoreFilter() {
+  let saved = null;
+  try { saved = localStorage.getItem('inbox-filter'); } catch(e) {}
+  if (saved === 'todo' || saved === 'done') setStatusFilter(saved);
+})();
 
 async function unarchiveItem(name) {
   const data = await apiFetch('/inbox/unarchive', {
@@ -789,6 +907,10 @@ async function saveEdit(name) {
     // Remove wikified badge — content replaced, needs re-ingestion
     const card = rowFor(name);
     card?.querySelector('.wikified-badge')?.remove();
+    // The wiki page was built from the OLD text, so stop pointing at it as this item's
+    // page. Same reason the badge goes.
+    card?.querySelector('.act-btn.wikipage')?.remove();
+    if (typeof applyFilters === 'function') applyFilters();
     if (itemState[name]) itemState[name].wikified = false;
     // Refresh the inline reader if it was open
     if (card && card.classList.contains('expanded')) {
@@ -889,22 +1011,7 @@ async function wikifyItem(name) {
     const wikiHref = wikiData && wikiData.wiki_path ? `/wiki/${wikiData.wiki_path}` : '/wiki/sources/';
     progress.innerHTML += `<div class="prog-done">Done — <a href="${wikiHref}" style="color:inherit">view in wiki</a></div>`;
     if (navChat) navChat.classList.remove('ai-busy');
-    const metaEl = partFor(name, '.item-meta');
-    if (metaEl && !metaEl.querySelector('.wikified-badge')) {
-      if (wikiData && wikiData.wiki_path) {
-        const link = document.createElement('a');
-        link.href = '/wiki/' + wikiData.wiki_path;
-        link.onclick = e => e.stopPropagation();
-        link.className = 'wikified-badge';
-        link.textContent = 'Wikified ✓';
-        metaEl.appendChild(link);
-      } else {
-        const badge = document.createElement('span');
-        badge.className = 'wikified-badge';
-        badge.textContent = 'Wikified ✓';
-        metaEl.appendChild(badge);
-      }
-    }
+    markRowWikified(name, wikiData && wikiData.wiki_path);
   } catch(e) {
     progress.innerHTML += `<div class="prog-error">Failed: ${e.message}</div>`;
     btn.disabled = false;

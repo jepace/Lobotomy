@@ -753,6 +753,44 @@ MUTATIONS = [
      '  if (window.wikifying.has(name)) return;\n  window.wikifying.add(name);',
      '  window.wikifying.add(name);',
      'tools/templates/inbox.html'),
+    # The Wikified badge was 10px of text in 1px of padding — about 14px against the ~44px
+    # a finger needs — and it was the only way to reach the page the article became.
+    ('inbox ui: the page an article became has a full-size button',
+     '          <a class="act-btn wikipage" href="/wiki/{{ item.wiki_path }}">View page →</a>',
+     '          <span class="wikified-badge">done</span>',
+     'tools/templates/inbox.html'),
+    # Nothing disabled Wikify on an article already wikified: one click started another
+    # ~40-minute ingest re-folding the same source into the same pages.
+    ('inbox ui: Wikify is dead once the article is wikified',
+     '          <button class="act-btn wikify" {% if item.wikified %}disabled',
+     '          <button class="act-btn wikify" {% if False %}disabled',
+     'tools/templates/inbox.html'),
+    ('inbox ui: the poll-rendered row disables it too',
+     '        <button class="act-btn wikify" ${item.wikified ? \'disabled',
+     '        <button class="act-btn wikify" ${false ? \'disabled',
+     'tools/templates/inbox.html'),
+    # Blue was Read AND Wikify — the free one and the ~40-minute one, identical to look at.
+    ('inbox ui: the expensive action is not the colour of the free one',
+     '  .act-btn.wikify  { background: var(--warn); color: #fff; border: none; }',
+     '  .act-btn.wikify  { background: var(--accent); color: #fff; border: none; }',
+     'tools/templates/inbox.html'),
+    # Search used to write style.display directly, so clearing the box revealed rows the
+    # status filter had hidden. One writer, both predicates.
+    ('inbox ui: the status filter composes with search',
+     "            && (_statusFilter === 'all'",
+     "            && (true",
+     'tools/templates/inbox.html'),
+    ('inbox ui: clearing the search box does not escape the filter',
+     '    _searchMatches = null;\n    applyFilters();',
+     "    document.querySelectorAll('.reading-item').forEach(el => el.style.display = '');",
+     'tools/templates/inbox.html'),
+    # The poll PREPENDS arrivals, which otherwise appear regardless of the filter.
+    ('inbox ui: rows the poll adds obey the filter',
+     '    // Newly inserted rows have to obey the filter that is already on, and applyFilters\n'
+     '    // owns the count. The old code here replaced the whole counter element\'s text, which\n'
+     '    // would delete the #item-count span it writes into.\n    applyFilters();',
+     '    ;',
+     'tools/templates/inbox.html'),
     # /inbox/add had no duplicate check, and the filename is derived deterministically —
     # so a second add resolved to the same path and silently OVERWROTE it. Re-adding a URL
     # wiped pasted text and reset wikified:true; two different articles from one site
