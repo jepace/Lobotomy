@@ -91,6 +91,12 @@
     max-width: 82%;
   }
   .tool-item { padding: 1px 0; font-family: "SF Mono", monospace; }
+  /* The page each write touched. Underlined rather than recoloured: these sit in a
+     muted block and an accent-coloured run would pull the eye away from the tool
+     name, which is what you scan for. */
+  .tool-link { color: inherit; text-decoration: underline; text-underline-offset: 2px;
+               text-decoration-color: var(--text2); }
+  .tool-link:hover { color: var(--accent); text-decoration-color: var(--accent); }
 
   /* typing indicator */
   .typing span {
@@ -195,7 +201,7 @@
       <div class="bubble">{{ msg.content }}</div>
     </div>
     {% if msg.tools %}
-    <div class="tool-list" style="display:block">
+    <div class="tool-list static" style="display:block">
       {% for t in msg.tools %}<div class="tool-item">⚙ {{ t }}</div>{% endfor %}
       <div class="tool-item">✓ Done</div>
     </div>
@@ -304,7 +310,7 @@ async function readStream(streamResp, toolsEl, bubbleEl) {
         var ev = JSON.parse(line);
         // ONE way to draw the list, so no branch can redraw it differently.
         function renderTools() {
-          return tools.map(function(t){ return '<div class="tool-item">' + escHtml(t) + '</div>'; }).join('');
+          return tools.map(function(t){ return '<div class="tool-item">' + window.toolLineHtml(t) + '</div>'; }).join('');
         }
         if (ev.type === 'ping') {
           continue;
@@ -561,6 +567,12 @@ async function clearChat() {
 
 // On load: scroll to bottom, check for active job, and apply any pending prompt
 window.addEventListener('load', function() {
+  // Completed turns come from Jinja rather than the event stream, so they need their own
+  // pass — through the SAME function, or the two drift exactly as the labels did.
+  // Scoped to .static so it can never touch a list the live renderer owns.
+  document.querySelectorAll('.tool-list.static .tool-item').forEach(function(el) {
+    el.innerHTML = window.toolLineHtml(el.textContent);
+  });
   scrollToBottom();
   checkActiveJob();
   const pending = localStorage.getItem('pendingChatPrompt');

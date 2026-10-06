@@ -102,6 +102,9 @@
   }
   .item-progress.active { display: block; }
   .prog-tool  { font-size: 11px; font-family: monospace; color: var(--text2); padding: 1px 0; }
+  .prog-tool .tool-link { color: inherit; text-decoration: underline;
+                          text-underline-offset: 2px; text-decoration-color: var(--text2); }
+  .prog-tool .tool-link:hover { color: var(--accent); text-decoration-color: var(--accent); }
   .prog-done  { font-size: 12px; font-weight: 700; color: var(--success); margin-top: 6px; }
   .prog-error { font-size: 12px; font-weight: 700; color: var(--danger);  margin-top: 6px; }
 
@@ -934,8 +937,9 @@ window.wikifying = window.wikifying || new Set();
 // Draw the progress list. Escapes, because ev.arg is a path the MODEL chose and this goes
 // into innerHTML — chat.html has escaped since it was written and this had not.
 function renderProgress(lines) {
-  return lines.map(t => `<div class="prog-tool">${String(t).replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`).join('');
+  // toolLineHtml escapes AND links the page path — one implementation for this list and
+  // the chat page's, because these two have drifted apart twice already.
+  return lines.map(t => `<div class="prog-tool">${window.toolLineHtml(t)}</div>`).join('');
 }
 
 async function wikifyItem(name) {

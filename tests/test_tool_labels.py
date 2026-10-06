@@ -288,7 +288,10 @@ class EventLineTest(unittest.TestCase):
         self.assertIn("\\u2699", self.base)
 
     def test_chat_has_exactly_one_render_expression(self):
-        self.assertEqual(self.chat.count("""'<div class="tool-item">' + escHtml(t)"""), 1)
+        """Two expressions drawing one array is the bug this module exists for. Matched on
+        the <div> rather than on whichever helper escapes, because the helper changed when
+        the paths became links and this assertion should not have to."""
+        self.assertEqual(self.chat.count("""'<div class="tool-item">' + """), 1)
         self.assertIn("function renderTools()", self.chat)
 
     def test_the_server_rendered_history_still_draws_its_own_gear(self):
@@ -299,3 +302,119 @@ class EventLineTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _run_tool_line(line):
+    """Execute the REAL window.toolLineHtml from base.html under node."""
+    import json as _json
+    import shutil as _shutil
+    import subprocess as _subprocess
+    if _shutil.which("node") is None:
+        raise unittest.SkipTest("node not installed")
+    src = (TPL / "base.html").read_text(encoding="utf-8")
+    i = src.index("    function _esc(t) {")
+    j = src.index("    window.agentEventLine")
+    script = ("var window = {};\n" + src[i:j]
+              + "\nprocess.stdout.write(String(window.toolLineHtml("
+              + _json.dumps(line) + ")));")
+    r = _subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20)
+    if r.returncode != 0:
+        raise AssertionError("node failed: " + r.stderr)
+    return r.stdout
+
+
+class ToolLineLinkTest(unittest.TestCase):
+    """The logs name the file every write touched; reading one meant copying the path into
+    the URL bar by hand."""
+
+    def test_a_page_path_becomes_a_link(self):
+        out = _run_tool_line("read_file  wiki/concepts/measles.md")
+        self.assertIn('href="/wiki/concepts/measles.md"', out)
+
+    def test_a_section_edit_links_to_the_section(self):
+        """The line already says which section was edited, and that is where you want to
+        land. python-markdown's toc extension gives every heading that id."""
+        out = _run_tool_line("update_section  wiki/entities/alberta.md \u00a7 Overview")
+        self.assertIn('href="/wiki/entities/alberta.md#overview"', out)
+
+    def test_the_slug_matches_what_the_renderer_emits(self):
+        out = _run_tool_line(
+            "update_section  wiki/concepts/measles.md \u00a7 Resurgence & Elimination Status")
+        self.assertIn("#resurgence-elimination-status", out)
+
+    def test_a_slash_in_the_heading_slugs_the_same_way(self):
+        out = _run_tool_line("read_section  wiki/entities/x.md \u00a7 Key Works / Products")
+        self.assertIn("#key-works-products", out)
+
+    def test_the_tool_name_is_left_outside_the_link(self):
+        out = _run_tool_line("read_file  wiki/concepts/measles.md")
+        self.assertTrue(out.startswith("read_file"), out)
+
+    def test_a_search_query_is_not_linked(self):
+        out = _run_tool_line("search_wiki  measles outbreak")
+        self.assertNotIn("<a", out)
+
+    def test_a_retry_line_is_not_linked(self):
+        out = _run_tool_line("\u23f3 AI busy \u2014 retrying in 60s (attempt 1/60)")
+        self.assertNotIn("<a", out)
+
+    def test_an_empty_line_is_safe(self):
+        self.assertEqual(_run_tool_line(""), "")
+
+    def test_markup_in_the_text_is_escaped(self):
+        """Every one of these strings is a path or a section name the MODEL chose."""
+        out = _run_tool_line("create_file  <img src=x onerror=alert(1)>")
+        self.assertNotIn("<img", out)
+        self.assertIn("&lt;img", out)
+
+    def test_a_hostile_path_is_not_turned_into_a_link(self):
+        out = _run_tool_line("create_file  wiki/entities/<script>alert(1)</script>.md")
+        self.assertNotIn("<a", out)
+        self.assertNotIn("<script", out)
+
+    def test_a_quote_in_a_section_name_cannot_break_out_of_the_href(self):
+        out = _run_tool_line('update_section  wiki/entities/x.md \u00a7 A" onmouseover="x')
+        self.assertNotIn('onmouseover="x"', out)
+        self.assertNotIn('" onmouseover', out)
+
+
+class LinkWiringTest(unittest.TestCase):
+    """Three views show these lines; one function links them."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.base = (TPL / "base.html").read_text(encoding="utf-8")
+        cls.chat = (TPL / "chat.html").read_text(encoding="utf-8")
+        cls.inbox = (TPL / "inbox.html").read_text(encoding="utf-8")
+
+    def test_it_is_defined_once(self):
+        self.assertEqual(self.base.count("window.toolLineHtml = function"), 1)
+
+    def test_the_chat_live_stream_uses_it(self):
+        self.assertIn("window.toolLineHtml(t)", self.chat)
+
+    def test_the_reading_list_uses_it(self):
+        self.assertIn("window.toolLineHtml(t)", self.inbox)
+
+    def test_completed_turns_are_linkified_too(self):
+        """They come from Jinja rather than the event stream — the half that was missing
+        the sections in the first place."""
+        self.assertIn('class="tool-list static"', self.chat)
+        self.assertIn(".tool-list.static .tool-item", self.chat)
+        self.assertIn("window.toolLineHtml(el.textContent)", self.chat)
+
+    def test_the_static_pass_cannot_touch_a_live_list(self):
+        """Scoped to .static so it never re-processes what the live renderer owns."""
+        m = re.search(r"querySelectorAll\('([^']*tool-item[^']*)'\)", self.chat)
+        self.assertIsNotNone(m)
+        self.assertIn(".static", m.group(1))
+
+    def test_neither_page_escapes_by_hand_any_more(self):
+        """Hand-rolled escaping beside a helper that also escapes is how one of them ends
+        up doing neither."""
+        self.assertNotIn("replace(/</g, '&lt;')", self.inbox)
+
+    def test_the_link_is_styled_in_both_lists(self):
+        self.assertIn(".tool-link", self.chat)
+        self.assertIn(".tool-link", self.inbox)
+

@@ -407,6 +407,45 @@
     // whichever event arrived LAST decided how every earlier line was drawn: a single
     // retry stripped the gear off every tool line above it. Putting the icon in the TEXT
     // rather than in one branch's markup is what makes that impossible.
+    // Escape text for innerHTML. Everything below runs over strings the MODEL chose
+    // (a page path, a section name), so nothing reaches the DOM unescaped.
+    function _esc(t) {
+      return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                      .replace(/"/g, '&quot;');
+    }
+
+    // python-markdown's toc extension slugifies a heading the same way: drop everything
+    // that is not a word character, whitespace or hyphen; lowercase; collapse runs to one
+    // hyphen. "Resurgence & Elimination Status" -> "resurgence-elimination-status".
+    //
+    // JS \w is ASCII-only where Python's is not, so a heading with accented letters can
+    // slug differently. That costs nothing: a wrong anchor lands at the top of the right
+    // page, which is exactly where no anchor would have landed.
+    function _headingSlug(s) {
+      return String(s).replace(/[^\w\s-]/g, '').trim().toLowerCase().replace(/[-\s]+/g, '-');
+    }
+
+    // A tool-call line with its page path turned into a link.
+    //
+    // The logs name the file every write touched — "update_section  wiki/entities/foo.md
+    // § Overview" — and reading one meant copying the path into the URL bar by hand. The
+    // link goes to the SECTION where there is one, because the line already says which
+    // section was edited and that is where you want to land.
+    //
+    // ESCAPE FIRST, then build the anchor from the parsed pieces: the display text is
+    // escaped and the href is assembled from a restricted character class, so neither
+    // the path nor the section name can carry markup into the page.
+    window.toolLineHtml = function(line) {
+      var text = String(line == null ? '' : line);
+      var m = text.match(/(wiki\/[A-Za-z0-9._\/-]*\.md)(\s+\u00a7\s+(\S.*?))?\s*$/);
+      if (!m) return _esc(text);
+      var href = '/wiki/' + m[1].replace(/^wiki\//, '');
+      if (m[3]) href += '#' + _headingSlug(m[3]);
+      var before = text.slice(0, m.index);
+      return _esc(before) + '<a class="tool-link" href="' + _esc(href) + '">'
+           + _esc(m[0].trim()) + '</a>';
+    };
+
     window.agentEventLine = function(ev) {
       if (!ev) return null;
       if (ev.type === 'tool') {

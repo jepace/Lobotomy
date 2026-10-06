@@ -828,6 +828,32 @@ MUTATIONS = [
      '    if not hmac.compare_digest(auth[7:].strip(), push_key):',
      '    if auth[7:].strip() != push_key:',
      'tools/serve.py'),
+    # The logs name the file every write touched and reading one meant copying the path
+    # into the URL bar by hand.
+    ('tool link: the page path becomes a link',
+     "      var m = text.match(/(wiki\\/[A-Za-z0-9._\\/-]*\\.md)(\\s+\\u00a7\\s+(\\S.*?))?\\s*$/);",
+     "      var m = null;",
+     'tools/templates/base.html'),
+    # The line already says which section was edited; that is where you want to land.
+    ('tool link: a section edit links to the section',
+     "      if (m[3]) href += '#' + _headingSlug(m[3]);",
+     "      if (false) href += '#' + _headingSlug(m[3]);",
+     'tools/templates/base.html'),
+    ('tool link: the slug matches what the renderer emits',
+     "      return String(s).replace(/[^\\w\\s-]/g, '').trim().toLowerCase().replace(/[-\\s]+/g, '-');",
+     "      return String(s).toLowerCase();",
+     'tools/templates/base.html'),
+    # These strings are a path and a section name the MODEL chose.
+    ('tool link: the display text is escaped',
+     "      return _esc(before) + '<a class=\"tool-link\" href=\"' + _esc(href) + '\">'\n           + _esc(m[0].trim()) + '</a>';",
+     "      return before + '<a class=\"tool-link\" href=\"' + href + '\">' + m[0].trim() + '</a>';",
+     'tools/templates/base.html'),
+    # Completed turns come from Jinja, not the event stream — the half that was missing
+    # the sections in the first place.
+    ('tool link: completed turns are linkified too',
+     "    el.innerHTML = window.toolLineHtml(el.textContent);",
+     "    ;",
+     'tools/templates/chat.html'),
     # Three places built the tool-call label and serve.py's saved display log was the odd
     # one out: path only, no section. The live view was right; the record of it was not.
     ('tool label: a section tool names its section',

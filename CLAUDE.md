@@ -198,6 +198,28 @@ Two more drifts fell out of the same comparison:
 `inbox.html` also went through `innerHTML` **without escaping**, on a string containing a
 path the model chose; `chat.html` had escaped since it was written. Both escape now.
 
+**The path in each line is a link, to the SECTION where there is one** (`toolLineHtml`).
+The logs name the file every write touched and reading one meant copying the path into the
+URL bar by hand. The line already says which section was edited, so that is where it lands:
+`update_section wiki/entities/alberta.md § Overview` links to
+`/wiki/entities/alberta.md#overview`. python-markdown's `toc` extension gives every heading
+that id, and `_headingSlug` reproduces its rule — drop everything that is not a word
+character, whitespace or hyphen, lowercase, collapse runs to one hyphen. JS `\w` is
+ASCII-only where Python's is not, so an accented heading can slug differently; that costs
+nothing, because a wrong anchor lands at the top of the right page, which is where no anchor
+would have landed.
+
+**Escape first, then build the anchor from the parsed pieces.** Every string here — the
+path, the section name — is one the MODEL chose. The display text goes through `_esc` and
+the href is assembled from a restricted character class, so `wiki/entities/<script>…</script>.md`
+matches no path, is never linked, and renders as escaped text.
+
+Three views show these lines and one function links them: the chat page's live stream, the
+reading list's progress block, and the chat page's COMPLETED turns — which come from Jinja
+rather than the event stream and need their own pass, scoped to `.tool-list.static` so it
+can never re-process a list the live renderer owns. That third one is the same view that was
+missing the sections to begin with.
+
 **A test that greps for a string the code and a COMMENT both contain proves nothing.** The
 first assertion here checked that `"attempt "` appears in `base.html` — it does, in the
 comment explaining this bug — so `mutate.py` deleted the attempt counter from the code and
