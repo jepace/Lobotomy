@@ -2403,6 +2403,145 @@ def _unlinked_len(text: str) -> int:
     return len(_MD_LINK_RE.sub(r"\1", text))
 
 
+# The summary sections. An entity page's Overview and a concept page's Definition do the
+# same job — say what the subject IS — and both are the section the model reaches for when
+# its material fits nothing else.
+_SUMMARY_SECTIONS = ("overview", "definition")
+
+# A sentence that opens by placing itself in time is a news item, not a summary line.
+# Deliberately narrow: it must OPEN with the qualifier, and the qualifier must name a month,
+# a year or a season. "The 2026 primary season saw…" is not matched, and that is the right
+# call — the whole value of this check is in not crying wolf, the bleeding_titles lesson.
+_DATED_OPENER_RE = re.compile(
+    r"^(?:In|On|As of|By|During|Since|Throughout|Following|Amid)\s+"
+    r"(?:the\s+)?(?:early|mid|late)?[- ]?"
+    r"(?:January|February|March|April|May|June|July|August|September|October|November|"
+    r"December|spring|summer|autumn|fall|winter|\d{1,2}\s+\w+\s+\d{4}|[12]\d{3})\b",
+    re.IGNORECASE)
+# Years run 1000–2999 rather than 19xx/20xx: "In 1845 Florida was admitted to the Union"
+# is bolted on by exactly the same mechanism, and option 4 of the refusal — resend the
+# summary rewritten to include it — is the right answer for a historical fact as much as
+# for a news item. The cost of the wider pattern is that "In 1000 cases…" opening a
+# sentence also trips it, which one round resolves.
+
+# Sentence split. The hard part is not finding boundaries, it is NOT finding them inside
+# the abbreviations these pages are full of — "U.S. Senate" split into two "sentences" and
+# the second one then opened with a capital, so no heuristic about the FOLLOWING text could
+# repair it. The test has to be on what precedes the dot.
+#
+# The lookbehind is two characters wide, which is fixed, so Python accepts it: a dot
+# preceded by a single capital letter is an initialism (U.S., J.D., F.B.I.) and not a
+# boundary. The cost is that a sentence genuinely ending in a capital ("…based in the
+# USA. Then…") does not split, which is the right way round to be wrong here.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<![A-Z]\.)(?<=[.!?])\s+(?=[\"'\[(]?[A-Z])")
+
+# Titles and the like, where the dot is followed by a capitalised NAME — the one shape the
+# lookbehind above cannot see, since "Sen." ends in a lowercase letter.
+_ABBREV_TAIL_RE = re.compile(
+    r"\b(?:Mr|Mrs|Ms|Dr|Prof|Sen|Rep|Gov|Pres|Sgt|Lt|Col|Gen|Capt|Rev|Hon|St|Mt|Ft"
+    r"|Jr|Sr|vs|etc|al|Inc|Ltd|Co|Corp|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\.$")
+
+
+def _sentences(text: str) -> "list[str]":
+    """Prose split into sentences, with link syntax flattened first.
+
+    Flattened because a link's URL carries dots, slashes and brackets that a splitter reads
+    as punctuation, and every one of these pages is autolinked on disk.
+    """
+    flat = _MD_LINK_RE.sub(r"\1", text)
+    out = []
+    for part in _SENTENCE_SPLIT_RE.split(flat):
+        part = part.strip()
+        if not part:
+            continue
+        if out and _ABBREV_TAIL_RE.search(out[-1]):
+            out[-1] += " " + part
+        else:
+            out.append(part)
+    return out
+
+
+def _norm_prose(text: str) -> str:
+    """Prose with links flattened and whitespace collapsed — for comparing two versions of
+    a section that were written in different notations. The page on disk is autolinked and
+    what the agent sends is plain text, so a byte comparison says 'changed' for a section
+    nobody touched."""
+    return " ".join(_MD_LINK_RE.sub(r"\1", text).split())
+
+
+def _accreted_dated_sentences(section: str, old_text: str, new_text: str) -> "list[str]":
+    """The dated news sentences an edit BOLTS ON to a summary section, or [].
+
+    This is the other half of the shrink guard, and the failure it catches is the one that
+    guard's own comment already names — "the pile the wiki is not supposed to become".
+    Shrinking a section is caught; growing it by one unrelated sentence per ingest never
+    was, and that is how a page's Overview stops being an overview:
+
+        Florida is a U.S. state located in the southeastern region. In August 2026,
+        housing market data showed typical home values at $375,470… In 2026, amid
+        nationwide redistricting battles… As of October 2026, the state is also battling
+        a significant dengue outbreak… In October 2026, state officials announced that
+        Florida would discontinue the use of Flock Safety…
+
+    Measured on that page: one paragraph, seven sentences, 1,723 characters, 18 links, and
+    only the FIRST sentence is about Florida. The other six are six different articles,
+    each appended by the ingest that read it, four of them opening with a date. Nothing
+    was malformed and no guard fired — every individual write was a legitimate-looking
+    addition to a section that permits additions.
+
+    Two conditions, and both are needed. **The old text must survive verbatim**, which is
+    the accretion signature: a genuine Overview revision rewrites the summary to account
+    for the new material, so the old text does NOT come through unchanged. And **the added
+    text must open a sentence with a date**, which is what distinguishes a news item from
+    a summary line. Either alone is ordinary editing.
+
+    Returns the offending sentences so the refusal can quote them — a refusal that names
+    the text it is talking about is one the model can act on.
+    """
+    if _norm_heading(section) not in _SUMMARY_SECTIONS:
+        return []
+    old_norm, new_norm = _norm_prose(old_text), _norm_prose(new_text)
+    if not old_norm or old_norm not in new_norm or len(new_norm) <= len(old_norm):
+        return []
+    added = (new_norm.split(old_norm, 1)[0] + " " +
+             new_norm.split(old_norm, 1)[1]).strip()
+    return [s for s in _sentences(added) if _DATED_OPENER_RE.match(s)]
+
+
+def _summary_accretion_refusal(tool: str, path: str, section: str,
+                               dated: "list[str]", others: "list[str]") -> str:
+    """One refusal, shared by update_section and append_section so they cannot disagree
+    about what a summary section is for.
+
+    Principle 4: name the move, not the constraint. There are three, and which one fits
+    depends on something only the model knows — whether this fact is a standing feature of
+    the subject, one entry in a sequence, or a story of its own — so all three are named
+    and the text is explicitly not thrown away.
+    """
+    _quoted = "\n".join(f"  • {s[:110]}{'…' if len(s) > 110 else ''}" for s in dated[:3])
+    _elsewhere = (f"\n\nThe page's other sections: {', '.join(others)}."
+                  if others else "")
+    return (
+        f"Error: {tool} refused — this adds a dated news sentence to '{section}' without "
+        f"revising it. {'That sentence is' if len(dated) == 1 else 'Those sentences are'} "
+        f"below:\n\n{_quoted}\n\n"
+        f"A summary section says what the subject IS. It is rewritten to account for new "
+        f"material, never used as the place to put a fact that fits nowhere else — do that "
+        f"once per ingest and it becomes a list of unrelated headlines in one paragraph, "
+        f"which is what this page is becoming.\n\n"
+        f"Your text is not wasted. Pick the one that fits:\n"
+        f"  1. It is a standing feature of the subject → append_section(path, "
+        f"section='<a name for that subject>', text=…) to give it its own section.\n"
+        f"  2. It is one entry in an unfolding sequence → add_timeline_entry(path, date, "
+        f"text) if this page has a Timeline.\n"
+        f"  3. It is a story in its own right (an outbreak, an election, a trial) → "
+        f"create_file for a page about THAT, and link it from here.\n"
+        f"  4. It genuinely belongs in the summary → resend {section!r} REWRITTEN to "
+        f"include it, rather than with it bolted on the end."
+        f"{_elsewhere}"
+    )
+
+
 def _normalize_quote(s: str) -> str:
     """The same normalization applied to what the agent quoted."""
     return re.sub(r"\s+", " ", _MD_LINK_RE.sub(r"\1", s)).strip()
@@ -2738,6 +2877,17 @@ def _update_section(args: dict) -> str:
             f"its new home FIRST and confirm that call succeeded, then shrink this one."
         )
 
+    # The opposite failure to the one above, and the one nothing caught: a summary section
+    # grown by one dated news sentence per ingest until it is a pile. See
+    # _accreted_dated_sentences.
+    _dated = _accreted_dated_sentences(section, old_text, new_text)
+    if _dated:
+        log.warning("update_section: refused %s '%s' — %d dated sentence(s) bolted onto a "
+                    "summary section", path, section, len(_dated))
+        _others = [n for _lvl, n in _page_section_names(body, _fm_title(frontmatter))
+                   if _norm_heading(n) != _norm_heading(section)]
+        return _summary_accretion_refusal("update_section", path, section, _dated, _others)
+
     # The content is placed UNDER the existing heading, so a copy of that heading at the
     # top of it lands directly beneath the real one — "## Key Policies" twice, with the
     # resent section body under the second. Asking for "the section's full new text"
@@ -2901,6 +3051,22 @@ def _append_section(args: dict) -> str:
         nxt = re.compile(r"^#{1," + str(level) + r"}[ \t]*\S", re.MULTILINE)
         nxt_m = nxt.search(body, head_m.end())
         at = nxt_m.start() if nxt_m else len(body)
+        # Appending to a summary section is accretion BY CONSTRUCTION — this tool cannot
+        # revise what is there — so the same check applies, through the same helper. Guard
+        # one write path and the model simply reaches the section by the other.
+        _existing_text = body[head_m.end():at]
+        # `section` is the caller's spelling, and the fallback above matched on normalized
+        # equality, so it is the right name to test — the two regexes do not even have the
+        # same group count, which makes reading the heading back out of the match fragile.
+        _dated = _accreted_dated_sentences(section, _existing_text,
+                                           _existing_text + "\n\n" + addition)
+        if _dated:
+            log.warning("append_section: refused %s '%s' — %d dated sentence(s) bolted "
+                        "onto a summary section", path, section, len(_dated))
+            _others = [n for _lvl, n in _page_section_names(body, _fm_title(frontmatter))
+                       if _norm_heading(n) != _norm_heading(section)]
+            return _summary_accretion_refusal("append_section", path, section,
+                                              _dated, _others)
         new_body = body[:at].rstrip() + "\n\n" + addition + "\n\n" + body[at:].lstrip("\n")
         where = f"appended to '{section}'"
         _created_note = ""

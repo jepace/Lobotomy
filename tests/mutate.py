@@ -753,6 +753,39 @@ MUTATIONS = [
      '  if (window.wikifying.has(name)) return;\n  window.wikifying.add(name);',
      '  window.wikifying.add(name);',
      'tools/templates/inbox.html'),
+    # A summary section grown by one dated news sentence per ingest. The size guard is the
+    # mirror image — it catches a section that SHRINKS — and this failure is the one its
+    # own comment already names, "the pile the wiki is not supposed to become".
+    ('summary: a dated sentence bolted onto Overview is refused',
+     '    _dated = _accreted_dated_sentences(section, old_text, new_text)\n    if _dated:',
+     '    _dated = _accreted_dated_sentences(section, old_text, new_text)\n    if False:'),
+    # Guard one write path and the model simply reaches the section by the other.
+    ('summary: append_section is guarded too',
+     '        if _dated:\n            log.warning("append_section: refused',
+     '        if False:\n            log.warning("append_section: refused'),
+    # Both conditions are needed: the old text surviving verbatim is the accretion
+    # signature, and a genuine rewrite must pass.
+    ('summary: only an edit that preserves the old text verbatim is accretion',
+     '    if not old_norm or old_norm not in new_norm or len(new_norm) <= len(old_norm):',
+     '    if not old_norm:'),
+    # Only Overview/Definition. A dated sentence in Background is where it belongs.
+    ('summary: only summary sections are policed',
+     '    if _norm_heading(section) not in _SUMMARY_SECTIONS:\n        return []',
+     '    if False:\n        return []'),
+    # The page on disk is autolinked and the agent sends plain text, so a byte comparison
+    # reports "changed" for a sentence nobody touched.
+    ('summary: links are flattened before the versions are compared',
+     '    return " ".join(_MD_LINK_RE.sub(r"\\1", text).split())',
+     '    return text'),
+    # "U.S. Senate" split in two, and the fragment then opened with a capital — so no
+    # heuristic about the following text could repair it.
+    ('summary: an initialism is not a sentence boundary',
+     '_SENTENCE_SPLIT_RE = re.compile(r"(?<![A-Z]\\.)(?<=[.!?])\\s+(?=[\\"\'\\[(]?[A-Z])")',
+     '_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\\s+(?=[\\"\'\\[(]?[A-Z])")'),
+    # Principle 4: the refusal has to name the calls that work, not just the constraint.
+    ('summary: the refusal names the moves',
+     '        f"  1. It is a standing feature of the subject → append_section(path, "',
+     '        f"  1. Put it somewhere else. ("'),
     # The bottom row of the history view is either the page's first version or the oldest
     # one that survived pruning, and calling both "origin unknown" lied about the first.
     ('history: an unpruned bottom row is the original, not merely the earliest kept',

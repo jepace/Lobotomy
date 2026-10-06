@@ -205,7 +205,7 @@ in the prose of the section it concerns.
 - Open Questions
 - Sources *(auto-generated — do not write)*
 
-**Four of these rules are enforced, not suggested.** Every write tool refuses a page
+**Five of these rules are enforced, not suggested.** Every write tool refuses a page
 that breaks them, so it costs a round-trip to discover them the hard way:
 
 1. **Every entity page has `## Overview`; every concept page has `## Definition`.** The
@@ -233,8 +233,37 @@ that breaks them, so it costs a round-trip to discover them the hard way:
    `## Relation to Christianity`; the link belongs in the prose underneath, where you do
    not write it by hand either — the autolinker adds it.
 
+5. **A summary section is rewritten, never appended to.** `## Overview` and
+   `## Definition` say what the subject IS. They are not the place to put a fact that fits
+   nowhere else on the page, and a sentence that opens by placing itself in time — "In
+   August 2026, …", "As of October 2026, …" — is a news item, not a summary line. Adding
+   one without revising the rest is refused.
+
+   This is the rule that stops a broad standing page rotting. Each ingest has one fact
+   about its own source, Overview is the section that accepts anything, and one appended
+   sentence per visit is invisible at the time and ruinous after six:
+
+       Florida is a U.S. state located in the southeastern region. In August 2026,
+       housing market data showed typical home values at $375,470… In 2026, amid
+       nationwide redistricting battles… As of October 2026, the state is also battling
+       a significant dengue outbreak… In October 2026, state officials announced that
+       Florida would discontinue the use of Flock Safety…
+
+   Seven sentences, one paragraph, and only the first is about Florida. **When your
+   material fits no existing section, the answer is a new section, not Overview** —
+   `append_section(path, section='Housing Market', text=…)` and the page gains a place
+   that will still be right next year. If the material is one entry in an unfolding
+   sequence, it is `add_timeline_entry`. If it is a story in its own right — an outbreak,
+   an election, a trial — it is a page of its own, linked from here.
+
+   Write any section longer than a few sentences as **more than one paragraph**. A blank
+   line between them costs nothing and is the difference between a section a reader can
+   scan and a wall.
+
 The update tools apply 2, 3 and 4 only to headings your edit introduces, so a page that
-already carries one stays editable — including by the edit that folds it away.
+already carries one stays editable — including by the edit that folds it away. Rule 5 is
+likewise only about what your edit ADDS: a summary that is already a pile stays editable,
+and the edit that rewrites it into shape is exactly the one to make.
 
 ---
 

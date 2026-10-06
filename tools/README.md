@@ -222,6 +222,36 @@ otherwise reverting would discard the ingest that came after, so the page is lis
 state before the pass started. `index.md` and `log.md` keep no history and cannot be
 restored from here; it says so. The revert is itself recorded, so it can be undone too.
 
+### `overview_drift.py` — which summaries have stopped being summaries
+An entity page's `## Overview` and a concept page's `## Definition` are supposed to say what
+the subject IS. They are also the section the model reaches for when its material fits
+nothing else on the page, so on a broad standing page they accumulate one unrelated dated
+sentence per ingest. A live `florida.md` measured one paragraph, seven sentences, 1,723
+characters and 18 links, of which only the FIRST sentence was about Florida — the other six
+were six different articles.
+
+```sh
+python3 tools/overview_drift.py                  # the worst 40, by dated sentences
+python3 tools/overview_drift.py --limit 200
+python3 tools/overview_drift.py --show florida   # one page's summary in full
+python3 tools/overview_drift.py --wall 1200 --sentences 8
+python3 tools/overview_drift.py --csv > drift.csv
+```
+
+Three signals, reported separately because they call for different work. **DATED** is
+sentences that OPEN by placing themselves in time — the signal that matters, because each
+one is a news item that belongs in a named section, a Timeline, or on a page of its own.
+**WALL** is one paragraph over the threshold, which is only a reflow. **LONG** is sentence
+count, which mostly agrees with DATED. A page is listed on DATED alone, or on WALL and LONG
+together — one long paragraph that is genuinely about its subject is not drift, and a report
+that cries wolf gets ignored.
+
+`agent._accreted_dated_sentences` refuses the write that causes this, so the wiki stops
+acquiring it; this is for what is already on disk. **It reads and never writes, and offers
+no repair deliberately** — where a dated sentence belongs is a judgement about what the page
+is for, and where to break a wall is a judgement about what belongs together. A DATED page
+wants the Regenerate Workflow or a human; a WALL-only page wants a blank line.
+
 ### `bleeding_titles.py` — which titles are common words
 A page titled "Lost" links the word *lost* in "the hikers were lost for three days".
 "Agency", "Power" and "Mission" do the same. The autolinker matches case-insensitively, and

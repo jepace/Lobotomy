@@ -26,6 +26,7 @@ before adding another one.** The maintenance CLIs need no LLM and no API cost: `
 existed), `rename_page.py`, `unlink_headings.py`, `repair_links.py`,
 `repair_frontmatter.py`, `rebuild_sources.py`, `section_inventory.py`,
 `promote_openers.py`, `rename_section.py`, `merge_page.py`, `find_duplicate_pages.py`, `find_duplicate_sections.py`,
+`overview_drift.py` (which summary sections have turned into piles of dated headlines),
 `undo_pass.py` (put back everything one named pass wrote, skipping pages something
 wrote after it), `add_story.py` (put an article into the reading list without the browser,
 for when the paste box will not take it), `prune_history.py` (what the history store costs,
@@ -665,6 +666,59 @@ subject and reported success — `_heading_dupes` cannot see that, because the *
 differ. That one **reports rather than refuses**, because creating a section is legitimate
 and a refusal would have no escape hatch: there is no "yes, really" argument, so the model
 would loop or give up (principle 4).
+
+**A summary section is rewritten, never appended to** (`_accreted_dated_sentences`,
+`_summary_accretion_refusal`). Reported by showing a live `florida.md` and asking *"does
+this read like an Overview to you?"*:
+
+    Florida is a U.S. state located in the southeastern region. In August 2026, housing
+    market data showed typical home values at $375,470… In 2026, amid nationwide
+    redistricting battles… As of October 2026, the state is also battling a significant
+    dengue outbreak… In October 2026, state officials announced that Florida would
+    discontinue the use of Flock Safety…
+
+Measured: one paragraph, seven sentences, 1,723 characters, 18 links — and **only the first
+sentence is about Florida.** The other six are six different articles, each appended by the
+ingest that read it, four opening with a date.
+
+**Nothing was malformed and no guard fired.** Every individual write was a small, legal
+addition to a section that permits additions. This is the exact mirror of the shrink guard
+— which refuses a section that CONDENSES — and that guard's own comment already named this
+failure as "the pile the wiki is not supposed to become". Growing by a sentence at a time
+was never checked. It is also not a formatting problem: reflowing it into paragraphs gives
+five tidy paragraphs about housing, redistricting, primaries, dengue and surveillance, none
+of which is an overview of Florida.
+
+Two conditions, and both are needed or the check is useless or a nuisance. **The old text
+must survive verbatim** — the accretion signature, since a genuine revision rewrites the
+summary to account for the new material. And **the added text must open a sentence with a
+date**, which is what separates a news item from a summary line. It deliberately does NOT
+fire on a sentence that merely contains a year ("The 2026 primary season saw…"); the value
+of a check like this is in not crying wolf, the `bleeding_titles` lesson. Compared with
+links flattened and whitespace collapsed, because the page is autolinked and the agent
+writes plain text, so a byte comparison reports "changed" for a sentence nobody touched.
+
+Both write paths go through the one helper — guard `update_section` alone and the damage
+simply arrives via `append_section`, where appending to a summary is accretion by
+construction. Scoped to the ADDED text only, so a page that is already a pile stays
+editable and the write that repairs it is the one to make (principle 2; an earlier
+whole-page heading guard deadlocked 176 pages by forgetting this).
+
+The refusal names four moves, because which one fits depends on something only the model
+knows: a new named section, `add_timeline_entry`, a page of its own, or the summary resent
+rewritten. It quotes the offending sentences, since a refusal that names the text it is
+objecting to is one the model can act on.
+
+**The sentence splitter was the fiddly part.** "U.S. Senate" split in two and the fragment
+then opened with a capital, so no heuristic about the FOLLOWING text could repair it — the
+test has to be on what precedes the dot. A fixed-width two-character lookbehind rejects a
+dot preceded by a single capital (U.S., J.D.), and a short abbreviation list covers
+"Sen."/"Dr."/"Aug.", where the dot follows a lowercase letter.
+
+`tools/overview_drift.py` is the other half, for the ~11,400 pages already written: the
+guard stops the wiki acquiring more, and nothing else could say how many already have it.
+It reads, never writes, and **offers no repair on purpose** — where a dated sentence
+belongs is a judgement about what the page is for.
 
 **Four refusals hand the needed content back in the same response** — `update_section`
 (unread section), `update_file` (unread page, and stale page), `create_file` (page
