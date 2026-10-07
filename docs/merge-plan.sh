@@ -13,6 +13,11 @@
 #   major-oak entity / concept       a tree, and a page made because the slug was taken
 #
 # Run with --dry-run first. Drop --dry-run when it reads right.
+#
+# --carry folds the losers' summaries into the survivor under a visible TODO marker and
+# flags the page `todo:` in frontmatter, so no group blocks on a summary rewrite. Afterwards:
+#   grep -rl '^todo:' wiki/entities wiki/concepts     # the pages whose summary needs folding
+# Add --strict-summary to any line you would rather handle properly by hand.
 set -e
 DRY="$1"
 

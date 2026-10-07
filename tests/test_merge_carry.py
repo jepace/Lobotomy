@@ -190,7 +190,160 @@ class CarryTest(unittest.TestCase):
             self.assertFalse((w.wiki / "entities" / "loser.md").exists())
 
 
-class SummaryIsNeverAppendedTest(unittest.TestCase):
+class SummaryIsCarriedAndMarkedTest(unittest.TestCase):
+    """The default: a summary delta is carried, marked, and does not block the merge.
+
+    Asked for after the strict version was used in anger — *"could you just carry into the
+    overview / definition so I don't have to fucking do this one at a time. Mark the page
+    with TODO or something, but just do it?"* Across 28 duplicate groups the refusal meant
+    28 separate summary rewrites, each one blocking the merge behind it, which is exactly
+    the hand work `--carry` exists to remove.
+
+    **The marker is what makes this different from the accretion the write guards refuse.**
+    `_accreted_dated_sentences` refuses a summary growing by a sentence per ingest with
+    NOTHING recording that it happened — the page then reads as though someone wrote it that
+    way, and only `overview_drift.py` ever notices. A carried summary is declared in the
+    body, flagged in frontmatter and listable in one command, so it is a temporary state
+    somebody chose. Both halves are asserted here: a marker only a grep can see is one
+    nobody acts on, and a marker only a reader can see cannot be listed.
+    """
+
+    EXTRA = ("It does not operate as a political action committee despite the name it "
+             "carries, which is a common and persistent misunderstanding.")
+
+    def _merged(self, w):
+        loser = LOSER.replace("States Congress.", "States Congress. " + self.EXTRA)
+        w.page("entities/survivor.md",
+               title="American Israel Public Affairs Committee", body=SURV)
+        w.page("entities/loser.md",
+               title="American Israel Public Affairs Committee (AIPAC)",
+               aliases=["AIPAC"], body=loser)
+        r = agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+        return r, (w.wiki / "entities" / "survivor.md").read_text()
+
+    def test_the_merge_completes_instead_of_refusing(self):
+        """The whole point. One command finishes the group."""
+        with TempWiki() as w:
+            r, _text = self._merged(w)
+            self.assertIsNone(r["error"], r["error"])
+            self.assertFalse((w.wiki / "entities" / "loser.md").exists())
+
+    def test_the_summary_delta_is_in_the_survivors_summary_section(self):
+        with TempWiki() as w:
+            _r, text = self._merged(w)
+            overview = text.split("## Overview", 1)[1].split("\n## ", 1)[0]
+            self.assertIn("political action committee", overview)
+
+    def test_it_lands_in_the_SURVIVORS_summary_not_the_losers_heading(self):
+        """The same principle-4 trap as the refusal had: both losers of the live Iran-war
+        merge were concept pages, so carrying under their `## Definition` would have put
+        that heading onto an entity page."""
+        with TempWiki() as w:
+            w.page("entities/us-iran-war.md", title="US-Iran War", type="entity",
+                   body="## Overview\n\nA conflict between two states begun in 2026.\n")
+            w.page("concepts/war-in-iran.md", title="War in Iran", type="concept",
+                   body="## Definition\n\nThe war in Iran refers to the military "
+                        "conflict involving the United States and Iran that escalated "
+                        "sharply in February 2026 after a long stand-off.\n")
+            r = agent.merge_page("concepts/war-in-iran.md", "entities/us-iran-war.md",
+                                 carry=True)
+            self.assertIsNone(r["error"], r["error"])
+            text = (w.wiki / "entities" / "us-iran-war.md").read_text()
+            self.assertNotIn("## Definition", text,
+                             "a concept's heading must not be carried onto an entity")
+            self.assertIn("escalated sharply in February 2026",
+                          text.split("## Overview", 1)[1])
+
+    def test_a_visible_marker_says_the_summary_needs_folding(self):
+        with TempWiki() as w:
+            _r, text = self._merged(w)
+            self.assertIn("**TODO", text)
+            self.assertIn("merged from loser.md", text)
+            overview = text.split("## Overview", 1)[1].split("\n## ", 1)[0]
+            self.assertLess(overview.index("**TODO"),
+                            overview.index("political action committee"),
+                            "the marker has to precede what it is marking")
+
+    def test_the_survivor_is_flagged_in_frontmatter_so_it_can_be_listed(self):
+        """`grep -rl '^todo:' wiki/entities wiki/concepts` is the whole interface."""
+        with TempWiki() as w:
+            r, text = self._merged(w)
+            fm = text.split("---", 2)[1]
+            self.assertIn("todo:", fm)
+            self.assertIn("summary needs rewriting", fm)
+            self.assertEqual(r["todo"], agent._CARRY_TODO_FM)
+
+    def test_one_marker_per_merge_not_one_per_sentence(self):
+        with TempWiki() as w:
+            extra2 = ("Its political action committee affiliate is a separate "
+                      "organisation with separate reporting obligations entirely.")
+            loser = LOSER.replace("States Congress.",
+                                  f"States Congress. {self.EXTRA} {extra2}")
+            w.page("entities/survivor.md",
+                   title="American Israel Public Affairs Committee", body=SURV)
+            w.page("entities/loser.md", title="AIPAC Alt", aliases=["AIPAC"], body=loser)
+            agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+            text = (w.wiki / "entities" / "survivor.md").read_text()
+            self.assertEqual(text.count("**TODO"), 1)
+
+    def test_a_merge_with_no_summary_delta_is_not_marked(self):
+        """The flag has to mean something, so a clean merge must not set it — otherwise
+        the listing is every page that was ever merged and tells you nothing."""
+        with TempWiki() as w:
+            w.page("entities/survivor.md",
+                   title="American Israel Public Affairs Committee", body=SURV)
+            w.page("entities/loser.md", title="AIPAC", aliases=["AIPAC"], body=LOSER)
+            r = agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+            self.assertIsNone(r["error"], r["error"])
+            self.assertIsNone(r["todo"])
+            text = (w.wiki / "entities" / "survivor.md").read_text()
+            self.assertNotIn("todo:", text)
+            self.assertNotIn("**TODO", text)
+
+    def test_an_existing_todo_is_not_duplicated(self):
+        with TempWiki() as w:
+            _r, _t = self._merged(w)
+            w.page("entities/loser.md", title="AIPAC Third", aliases=["AIPAC"],
+                   body=LOSER.replace("States Congress.",
+                                      "States Congress. The organisation also files "
+                                      "separate annual lobbying disclosures each year."))
+            agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+            text = (w.wiki / "entities" / "survivor.md").read_text()
+            self.assertEqual(text.split("---", 2)[1].count("todo:"), 1)
+
+    def test_a_dry_run_marks_nothing(self):
+        with TempWiki() as w:
+            loser = LOSER.replace("States Congress.", "States Congress. " + self.EXTRA)
+            w.page("entities/survivor.md",
+                   title="American Israel Public Affairs Committee", body=SURV)
+            surv = w.wiki / "entities" / "survivor.md"
+            before = surv.read_text()
+            w.page("entities/loser.md", title="AIPAC Alt", aliases=["AIPAC"], body=loser)
+            r = agent.merge_page("entities/loser.md", "entities/survivor.md",
+                                 carry=True, dry_run=True)
+            self.assertEqual(r["todo"], agent._CARRY_TODO_FM)
+            self.assertEqual(surv.read_text(), before)
+
+    def test_the_marker_survives_heal_pages(self):
+        """`heal_pages` runs at startup and after every ingest, so a marker it stripped
+        would be gone within minutes of being written."""
+        with TempWiki() as w:
+            self._merged(w)
+            agent.heal_pages()
+            text = (w.wiki / "entities" / "survivor.md").read_text()
+            self.assertIn("todo:", text)
+            self.assertIn("**TODO", text)
+
+
+class StrictSummaryTest(unittest.TestCase):
+    """`--strict-summary`: the refusal that WAS the default, kept as an opt-in.
+
+    It is right about the accretion and it was wrong about the cost. Refusing a summary
+    delta made a 28-group cleanup into 28 separate summary rewrites, each one blocking the
+    merge behind it — *"could you just carry into the overview / definition so I don't have
+    to do this one at a time"*. The default marks and carries; this still refuses, for
+    anyone who would rather do it page by page.
+    """
     EXTRA = ("\n\nIt does not operate as a political action committee despite the name "
              "it carries, which is a common and persistent misunderstanding.")
 
@@ -200,10 +353,11 @@ class SummaryIsNeverAppendedTest(unittest.TestCase):
     def test_a_summary_delta_refuses_the_merge_rather_than_appending(self):
         with TempWiki() as w:
             surv = _pair(w, loser_body=self._loser_with_summary_delta())
-            r = agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+            r = agent.merge_page("entities/loser.md", "entities/survivor.md",
+                                 carry=True, strict_summary=True)
             self.assertIsNotNone(r["error"])
             self.assertNotIn("political action committee", surv.read_text(),
-                             "appending to a summary is the accretion the guards refuse")
+                             "strict mode must not append to a summary")
             self.assertTrue((w.wiki / "entities" / "loser.md").exists(),
                             "a refused merge must not delete the page it refused")
 
@@ -212,7 +366,8 @@ class SummaryIsNeverAppendedTest(unittest.TestCase):
         and this one has a single right answer to point at."""
         with TempWiki() as w:
             _pair(w, loser_body=self._loser_with_summary_delta())
-            r = agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+            r = agent.merge_page("entities/loser.md", "entities/survivor.md",
+                                 carry=True, strict_summary=True)
             self.assertIn("update_section(", r["error"])
             self.assertIn("section='Overview'", r["error"])
             self.assertIn("entities/survivor.md", r["error"])
@@ -222,7 +377,8 @@ class SummaryIsNeverAppendedTest(unittest.TestCase):
         placeable has already been placed and re-running after one rewrite completes."""
         with TempWiki() as w:
             surv = _pair(w, loser_body=self._loser_with_summary_delta())
-            r = agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+            r = agent.merge_page("entities/loser.md", "entities/survivor.md",
+                                 carry=True, strict_summary=True)
             self.assertIsNotNone(r["error"])
             self.assertEqual(list(r["carried"]), ["Positions"])
             self.assertIn("military assistance to Israel", surv.read_text())
@@ -235,7 +391,8 @@ class SummaryIsNeverAppendedTest(unittest.TestCase):
                    body="## Definition\n\nThe total market value of goods produced. It "
                         "is measured quarterly by the statistical agency of each "
                         "country and revised afterwards.\n")
-            r = agent.merge_page("concepts/loser.md", "concepts/survivor.md", carry=True)
+            r = agent.merge_page("concepts/loser.md", "concepts/survivor.md",
+                                 carry=True, strict_summary=True)
             self.assertIsNotNone(r["error"])
             self.assertIn("section='Definition'", r["error"])
 
@@ -245,7 +402,7 @@ class SummaryIsNeverAppendedTest(unittest.TestCase):
         with TempWiki() as w:
             _pair(w, loser_body=self._loser_with_summary_delta())
             r = agent.merge_page("entities/loser.md", "entities/survivor.md",
-                                 carry=True, force=True)
+                                 carry=True, force=True, strict_summary=True)
             self.assertIsNone(r["error"], r["error"])
             self.assertFalse((w.wiki / "entities" / "loser.md").exists())
 
@@ -277,7 +434,7 @@ class RefusalNamesTheSurvivorsSectionTest(unittest.TestCase):
         w.page("concepts/war-in-iran.md", title="War in Iran", type="concept",
                body=self.LOSER)
         return agent.merge_page("concepts/war-in-iran.md", "entities/us-iran-war.md",
-                                carry=True)
+                                carry=True, strict_summary=True)
 
     def test_the_refusal_names_the_survivors_summary_not_the_losers(self):
         with TempWiki() as w:
@@ -313,7 +470,7 @@ class RefusalNamesTheSurvivorsSectionTest(unittest.TestCase):
             w.page("concepts/war-in-iran.md", title="War in Iran", type="concept",
                    body=self.LOSER)
             r = agent.merge_page("concepts/war-in-iran.md", "entities/us-iran-war.md",
-                                 carry=True)
+                                 carry=True, strict_summary=True)
             self.assertIn("section='Definition'", r["error"])
             self.assertIn("update_section(", r["error"])
 
@@ -324,7 +481,8 @@ class RefusalNamesTheSurvivorsSectionTest(unittest.TestCase):
             w.page("concepts/loser.md", title="War", type="concept",
                    body="## Definition\n\nAn organised armed conflict between states or "
                         "factions, pursued for political ends.\n")
-            r = agent.merge_page("concepts/loser.md", "concepts/survivor.md", carry=True)
+            r = agent.merge_page("concepts/loser.md", "concepts/survivor.md",
+                                 carry=True, strict_summary=True)
             self.assertIn("section='Definition'", r["error"])
             self.assertIn("append_section(", r["error"])
 
@@ -444,7 +602,11 @@ class SentenceLevelDeltaTest(unittest.TestCase):
         with TempWiki() as w:
             _pair(w, loser_body=LOSER.replace("States Congress.",
                                               "States Congress. " + extra))
-            r = agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+            # strict_summary, because the default now CARRIES the summary delta, so
+            # `outstanding_detail` is empty and there is nothing left to inspect. The
+            # sentence-level split this asserts is the same either way.
+            r = agent.merge_page("entities/loser.md", "entities/survivor.md",
+                                 carry=True, strict_summary=True)
             d = r["outstanding_detail"]
             self.assertEqual(len(d), 1)
             self.assertIn("political action committee", d[0]["new"])
@@ -496,7 +658,8 @@ class CarriedTextReachesDiskTest(unittest.TestCase):
         with TempWiki() as w:
             surv = _pair(w, loser_body=LOSER.replace("States Congress.",
                                                      "States Congress." + extra))
-            r = agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+            r = agent.merge_page("entities/loser.md", "entities/survivor.md",
+                                 carry=True, strict_summary=True)
             self.assertIsNotNone(r["error"])
             self.assertTrue(r.get("carried"))
             self.assertIn("military assistance to Israel", surv.read_text(),

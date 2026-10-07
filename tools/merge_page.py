@@ -36,13 +36,26 @@ survivor's section of the same name, or to a new section if it has none — and 
 had to create is reported, because the two pages naming one section differently
 ("Positions" against "Political Stances") is a judgement no string comparison can make.
 
-**Except a summary.** An `## Overview` or `## Definition` delta is never appended, because
-appending a sentence to a summary is exactly the accretion `_accreted_dated_sentences`
-refuses and `overview_drift.py` reports on 11,000 pages. A tool that did it in the name of
-convenience would be manufacturing the wiki's worst existing defect one merge at a time.
-Those lines come back with the `update_section` call that resolves them, and there are
-usually one or two — so `--carry` turns "move every delta by hand" into "rewrite one
-paragraph", and the paragraph is the judgement half.
+**The summary is carried too, and MARKED.** An `## Overview` or `## Definition` delta
+lands under a visible `**TODO — merged from <page>, fold into the summary above:**` line,
+and the survivor gets `todo: "merge: summary needs rewriting"` in its frontmatter. List
+every page waiting on one:
+
+```sh
+grep -rl '^todo:' wiki/entities wiki/concepts
+```
+
+This was the strict half until it was used in anger. Refusing a summary delta is right
+about the accretion — but it made a 28-group cleanup into 28 separate summary rewrites,
+each one blocking the merge behind it, which is the hand work `--carry` exists to remove.
+The objection the marker answers: what `_accreted_dated_sentences` refuses is a summary
+growing by a sentence per ingest with **nothing recording that it happened**, so the page
+reads as though someone wrote it that way and only `overview_drift.py` ever notices. A
+carried summary is declared in the body, flagged in frontmatter and listable in one
+command — a temporary state somebody chose, which is a different thing from silent drift.
+
+`--strict-summary` restores the refusal, with the `update_section` call named, for when you
+would rather do it properly page by page.
 
 `--force` skips the outstanding check entirely, for when you have read the remainder and
 decided it is redundant. It is the only mode that can lose text.
@@ -70,8 +83,10 @@ args = sys.argv[1:]
 DRY_RUN = "--dry-run" in args
 FORCE = "--force" in args
 CARRY = "--carry" in args
+STRICT = "--strict-summary" in args
 ALL = "--all" in args
-args = [a for a in args if a not in ("--dry-run", "--force", "--carry", "--all")]
+args = [a for a in args if a not in ("--dry-run", "--force", "--carry", "--all",
+                                     "--strict-summary")]
 
 
 def _take(flag):
@@ -101,9 +116,13 @@ for n, loser in enumerate(args):
     # the SURVIVOR, not for each loser, and adding them once per loser would be harmless
     # but would report them repeatedly as though something new had happened each time.
     r = merge_page(loser, into[0], extra_aliases=(aliases if n == 0 else ()),
-                   force=FORCE, dry_run=DRY_RUN, carry=CARRY)
+                   force=FORCE, dry_run=DRY_RUN, carry=CARRY,
+                   strict_summary=STRICT)
 
     made = set(r.get("new_sections") or ())
+    if r.get("todo"):
+        print(f"  {tag}summary carried under a TODO marker; survivor flagged "
+              f"todo: {r['todo']!r}")
     for section, lines in (r.get("carried") or {}).items():
         note = "  (NEW section — check it is not the survivor's own under another name)" \
             if section in made else ""
@@ -144,6 +163,8 @@ if not DRY_RUN and refused < len(args):
     _rebuild_index({})
     print("Index rebuilt. Run `python3 tools/relink.py` to re-link bare prose "
           "under the survivor's new aliases.")
+    print("Pages whose summary still needs folding together:\n"
+          "  grep -rl '^todo:' wiki/entities wiki/concepts")
 if DRY_RUN and len(args) > 1:
     print("A multi-loser dry run is an upper bound: nothing was written, so each loser was\n"
           "compared against the unchanged survivor. In a real run the first carry is on\n"

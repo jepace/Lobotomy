@@ -787,12 +787,29 @@ as such would make every merge refuse.
 `--carry` then appends each non-summary line to the survivor's section of the same name.
 Three things it had to get right:
 
-- **A summary is never appended to.** Appending a sentence to an `## Overview` is precisely
-  the accretion `_accreted_dated_sentences` refuses and `overview_drift.py` reports on
-  11,000 pages. A convenience that manufactured the wiki's worst existing defect one merge
-  at a time would be a bad trade at any price. Those deltas come back with the
-  `update_section` call that resolves them — usually one or two sentences, so the hand work
-  becomes *rewrite one paragraph*, which is the judgement half and nothing else.
+- **A summary delta is carried and MARKED, and refusing it was the wrong call.** The first
+  version refused, on the grounds that appending to an `## Overview` is precisely the
+  accretion `_accreted_dated_sentences` refuses and `overview_drift.py` reports on 11,000
+  pages. That reasoning is sound about the accretion and was wrong about the cost: across
+  28 duplicate groups it meant 28 separate summary rewrites, **each one blocking the merge
+  behind it**, which is exactly the hand work `--carry` exists to remove — *"could you just
+  carry into the overview / definition so I don't have to do this one at a time. Mark the
+  page with TODO or something, but just do it?"*
+
+  **The marker is the whole difference.** What the write guards refuse is a summary growing
+  by a sentence per ingest with **nothing recording that it happened** — the page then reads
+  as though somebody wrote it that way, and only a drift report ever notices. A carried
+  summary gets a visible `**TODO — merged from <page>, fold into the summary above:**` line
+  AND `todo: "merge: summary needs rewriting"` in frontmatter, so it is a declared,
+  listable, temporary state: `grep -rl '^todo:' wiki/entities wiki/concepts`. Both halves
+  are needed and each has its own mutation — a marker only a grep can see is one nobody
+  acts on, and a marker only a reader can see cannot be listed. A clean merge is **not**
+  flagged, or the listing is every page ever merged and says nothing.
+
+  The generalisable part: **a guard against silent drift is not a guard against drift that
+  announces itself.** Where the objection is "this will be forgotten", a marker answers it
+  and a refusal just moves the work. `--strict-summary` keeps the refusal for anyone who
+  would rather do it page by page.
 - **A differently-named section is created and REPORTED, not mapped.** The first version of
   this claimed it would land `## Political Stances` in the survivor's `## Positions`, and
   said so in its docstring and its test. It cannot: deciding those two headings name one

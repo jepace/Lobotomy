@@ -4615,11 +4615,12 @@ _READER_URL_RE = re.compile(r"about:reader\?url=[^\s\"'<>)\]]+", re.IGNORECASE)
 
 
 def merge_page(loser_rel: str, survivor_rel: str, extra_aliases=(),
-               force: bool = False, dry_run: bool = False, carry: bool = False) -> dict:
+               force: bool = False, dry_run: bool = False, carry: bool = False,
+               strict_summary: bool = False) -> dict:
     """Fold one page into another. See _merge_page_impl for the detail."""
     with write_reason("merge"):
         return _merge_page_impl(loser_rel, survivor_rel, extra_aliases, force, dry_run,
-                                carry)
+                                carry, strict_summary)
 
 
 # Where a carried line goes, given the section it came from. Returning the survivor's own
@@ -4633,6 +4634,22 @@ def _carry_destination(surv_body: str, loser_section: str) -> "str | None":
         if _norm_heading(name) == want:
             return name
     return None
+
+
+_CARRY_TODO_FM = "merge: summary needs rewriting"
+_CARRY_TODO_RE = re.compile(r"^\*\*TODO — merged from [^\n]*\*\*$", re.MULTILINE)
+
+
+def _carry_todo_line(loser_rel: str) -> str:
+    """The visible marker a carried summary gets.
+
+    Visible on purpose. The frontmatter `todo:` makes the page findable by a tool; this
+    makes it obvious to anyone reading the page that the summary is a pile awaiting a
+    rewrite rather than something somebody wrote. Both halves are needed — a marker only
+    a grep can see is a marker nobody acts on, and a marker only a reader can see cannot
+    be listed.
+    """
+    return f"**TODO \u2014 merged from {Path(loser_rel).name}, fold into the summary above:**"
 
 
 def _carry_block(lines: "list[str]") -> str:
@@ -4738,7 +4755,8 @@ def _carry_lines(surv_text: str, groups: dict) -> "tuple[str, list]":
 
 
 def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
-               force: bool = False, dry_run: bool = False, carry: bool = False) -> dict:
+               force: bool = False, dry_run: bool = False, carry: bool = False,
+               strict_summary: bool = False) -> dict:
     """Fold one page into another: repoint every link, carry the names and sources over,
     then delete the loser.
 
@@ -4766,6 +4784,7 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
     """
     result = {"repointed": [], "aliases": [], "sources_added": [], "outstanding": [],
               "outstanding_detail": [], "carried": {}, "new_sections": [],
+              "todo": None,
               "deleted": None, "error": None}
     loser = (WIKI_DIR / loser_rel) if not str(loser_rel).startswith("wiki/") else REPO_ROOT / loser_rel
     surv = (WIKI_DIR / survivor_rel) if not str(survivor_rel).startswith("wiki/") else REPO_ROOT / survivor_rel
@@ -4912,10 +4931,30 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
         # merge at a time. Those sentences are handed back with the call that resolves
         # them, and they are usually one or two — so this turns "move every delta by hand"
         # into "rewrite one paragraph", which is the judgement half and nothing else.
-        groups = {}
+        # **The summary is carried too, under a TODO marker.** It is NOT appended blind:
+        # asked for this directly — *"could you just carry into the overview / definition
+        # so I don't have to do this one at a time. Mark the page with TODO or something,
+        # but just do it?"* — after the strict version turned a 28-group cleanup into 28
+        # separate summary rewrites, each one blocking the merge behind it.
+        #
+        # The objection it overrides was real and the answer is the marker. What
+        # `_accreted_dated_sentences` refuses is a summary growing by a sentence per
+        # ingest with **nothing recording that it happened**, so the page reads as though
+        # someone wrote it that way and only `overview_drift.py` ever notices. A carried
+        # summary is marked in the body AND flagged in frontmatter, so it is a declared,
+        # listable, temporary state. That is a different thing from silent accretion, and
+        # `--strict-summary` keeps the old refusal for anyone who wants it.
+        groups, summary_carried = {}, False
         for c in detail:
-            if not c["summary"]:
-                groups.setdefault(c["section"] or "Background", []).append(c["new"])
+            dest = c["section"] or "Background"
+            if c["summary"]:
+                if strict_summary:
+                    continue
+                dest = _survivor_summary(s_text)[0]
+                if not summary_carried:
+                    groups.setdefault(dest, []).append(_carry_todo_line(loser_rel))
+                    summary_carried = True
+            groups.setdefault(dest, []).append(c["new"])
         if groups:
             carried, made = _carry_lines(s_text, groups)
             result["new_sections"] = made
@@ -4930,7 +4969,15 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
                 if not dry_run:
                     _atomic_write(surv, s_text)
                     s_on_disk = s_text
-        left = [c for c in detail if c["summary"]]
+        if summary_carried:
+            result["todo"] = _CARRY_TODO_FM
+            if not re.search(r"^todo:", s_text, re.MULTILINE):
+                s_text = _set_fm_field(s_text, "todo",
+                                       f"todo: {fm_quote(_CARRY_TODO_FM)}")
+            if not dry_run:
+                _atomic_write(surv, s_text)
+                s_on_disk = s_text
+        left = [c for c in detail if c["summary"] and strict_summary]
         result["outstanding"] = [c["norm"] for c in left]
         result["outstanding_detail"] = left
         detail = left

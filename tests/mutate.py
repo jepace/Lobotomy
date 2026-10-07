@@ -1070,6 +1070,23 @@ MUTATIONS = [
      '                 if len(_fold(sent)) > 25\n'
      '                 and not any(_fold(sent) in sc for sc in s_claims)]',
      '        fresh = []'),
+    # The summary carry is only defensible because it is MARKED. Each half of the marker
+    # gets a mutation: one a grep can see, one a reader can.
+    ('merge-carry: a carried summary is marked in the body',
+     '                    groups.setdefault(dest, []).append(_carry_todo_line(loser_rel))',
+     '                    pass'),
+    ('merge-carry: a carried summary flags the page in frontmatter',
+     '            result["todo"] = _CARRY_TODO_FM',
+     '            result["todo"] = None'),
+    ('merge-carry: a clean merge is not flagged todo',
+     '        if summary_carried:\n            result["todo"] = _CARRY_TODO_FM',
+     '        if True:\n            result["todo"] = _CARRY_TODO_FM'),
+    ('merge-carry: --strict-summary still refuses',
+     '                if strict_summary:\n                    continue',
+     '                if False:\n                    continue'),
+    ('merge-carry: a summary lands in the SURVIVOR\'s section, not the loser\'s',
+     '                dest = _survivor_summary(s_text)[0]',
+     '                pass'),
     ('merge-carry: a created section is reported, not slipped in',
      '        made.append(section)',
      '        pass'),
