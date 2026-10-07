@@ -370,13 +370,34 @@ appends each outstanding line to the survivor's section of the same name, or cre
 section and **reports that it did** — two pages naming one section differently ("Positions"
 against "Political Stances") is a judgement no string comparison can make, so it is yours.
 
-**Except a summary.** An `## Overview` or `## Definition` delta is never appended, because
-appending a sentence to a summary is exactly the accretion `_accreted_dated_sentences`
-refuses and `overview_drift.py` reports on 11,000 pages — a convenience that manufactured
-the wiki's worst existing defect one merge at a time would be a bad trade at any price.
-Those lines come back with the `update_section` call that resolves them, and there are
-usually one or two, so the hand work is **rewrite one paragraph** rather than move every
-delta. `--force` still skips the check entirely, and is the only mode that can lose text.
+**The summary is carried too, and MARKED.** An `## Overview` or `## Definition` delta
+lands under a visible `**TODO — merged from <page>, fold into the summary above:**` line;
+the survivor gets `todo: "merge: summary needs rewriting"` in frontmatter **and the `_todo`
+tag**, so nothing blocks on a summary rewrite and the pages waiting on one are listable:
+
+```sh
+python3 tools/search.py 'tag:_todo'     # or /wiki/tags/_todo in the browser
+grep -rl '^todo:' wiki/entities wiki/concepts
+```
+
+**A leading underscore marks a tag as machinery rather than subject matter**, and the
+namespace is the point — the next utility tag costs a name and no code. These tags are kept
+out of the vocabulary `orientation_message` offers each ingest: a tag the model is told to
+prefer is one it copies onto unrelated pages, which would fill the single listing the tag
+exists to produce. The tag pages still show them.
+
+This was the strict half until it was used in anger. Refusing a summary delta is right
+about the accretion — but it made a 28-group cleanup into 28 separate summary rewrites,
+each one blocking the merge behind it, which is the hand work `--carry` exists to remove.
+What `_accreted_dated_sentences` refuses is a summary growing by a sentence per ingest with
+**nothing recording that it happened**, so the page reads as though someone wrote it that
+way and only `overview_drift.py` ever notices; a carried summary is declared in the body,
+flagged in frontmatter, tagged, and listable in one command. **A guard against silent drift
+is not a guard against drift that announces itself.**
+
+`--strict-summary` restores the refusal, with the `update_section` call named, for when you
+would rather do it properly page by page. `--force` skips the outstanding check entirely
+and is the only mode that can lose text.
 
 **The delta reported is the new SENTENCES, not the paragraph holding them.** A section's
 prose is one line per paragraph, so an Overview that repeats the survivor's first sentence
