@@ -18,6 +18,12 @@ some of them are not pairs — Pacific Gas and Electric had five pages. Each is 
 the survivor in turn, and a refusal on one does not stop the rest; the exit code is
 non-zero if any was refused.
 
+**A `--dry-run` over several losers OVERSTATES the carry**, and it has to. Each loser is
+compared against the survivor as it is on disk, and a dry run writes nothing — so two
+losers that both say a thing the survivor does not are each reported as carrying it. In a
+real run the first merge's carry is on disk before the second is compared, so the second
+sees it and carries nothing. Read a multi-loser dry run as the upper bound.
+
     python3 tools/merge_page.py wiki/entities/pge.md wiki/entities/pacific-gas-electric.md \\
         wiki/entities/pacific-gas-and-electric.md \\
         --into wiki/entities/pacific-gas-and-electric-company.md --carry
@@ -138,6 +144,10 @@ if not DRY_RUN and refused < len(args):
     _rebuild_index({})
     print("Index rebuilt. Run `python3 tools/relink.py` to re-link bare prose "
           "under the survivor's new aliases.")
+if DRY_RUN and len(args) > 1:
+    print("A multi-loser dry run is an upper bound: nothing was written, so each loser was\n"
+          "compared against the unchanged survivor. In a real run the first carry is on\n"
+          "disk before the second loser is compared.")
 if refused:
     print(f"{refused} of {len(args)} refused." if len(args) > 1 else "", end="")
     if not CARRY:

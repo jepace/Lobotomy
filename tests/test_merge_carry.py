@@ -250,6 +250,190 @@ class SummaryIsNeverAppendedTest(unittest.TestCase):
             self.assertFalse((w.wiki / "entities" / "loser.md").exists())
 
 
+class RefusalNamesTheSurvivorsSectionTest(unittest.TestCase):
+    """**Reported from a live run, a day after the flag shipped.** Merging
+    `concepts/war-in-iran.md` and `concepts/iran-war.md` into `entities/us-iran-war.md`,
+    the refusal said:
+
+        update_section(path='wiki/entities/us-iran-war.md', section='Definition', ...)
+
+    `Definition` is the LOSERS' heading — they are concept pages. The survivor is an
+    entity, whose summary is `## Overview`, so following that instruction is either refused
+    for a section that does not exist or, through `append_section`, puts a `## Definition`
+    onto an entity page. Principle 4's documented worst case: a refusal that renames one
+    violation into another.
+
+    Nineteen tests passed over this, because every one of them merged an entity into an
+    entity, so the loser's heading and the survivor's were the same word.
+    """
+
+    LOSER = ("## Definition\n\nThe war in Iran refers to the military conflict involving "
+             "the United States and Iran that escalated sharply in February 2026, "
+             "characterised by airstrikes and naval confrontations.\n")
+
+    def _concept_into_entity(self, w, surv_body):
+        w.page("entities/us-iran-war.md", title="US-Iran War", type="entity",
+               body=surv_body)
+        w.page("concepts/war-in-iran.md", title="War in Iran", type="concept",
+               body=self.LOSER)
+        return agent.merge_page("concepts/war-in-iran.md", "entities/us-iran-war.md",
+                                carry=True)
+
+    def test_the_refusal_names_the_survivors_summary_not_the_losers(self):
+        with TempWiki() as w:
+            r = self._concept_into_entity(
+                w, "## Overview\n\nA conflict between two states that began in 2026.\n")
+            self.assertIn("section='Overview'", r["error"])
+            self.assertNotIn("section='Definition'", r["error"])
+            self.assertIn("update_section(", r["error"])
+
+    def test_the_losers_heading_is_still_quoted_as_the_source_of_the_delta(self):
+        """Both names are needed and they are different things: where the text is now, and
+        where it has to go."""
+        with TempWiki() as w:
+            r = self._concept_into_entity(
+                w, "## Overview\n\nA conflict between two states that began in 2026.\n")
+            self.assertIn("## Definition", r["error"])
+
+    def test_a_survivor_with_no_summary_section_is_told_to_append_one(self):
+        """`update_section` on a section that is not there is a wasted round. The name
+        comes from `_OPENER`, so an entity is told Overview and a concept Definition."""
+        with TempWiki() as w:
+            r = self._concept_into_entity(
+                w, "## Background\n\nIt began after a long period of sanctions.\n")
+            self.assertIn("append_section(", r["error"])
+            self.assertIn("section='Overview'", r["error"])
+
+    def test_the_survivors_own_heading_wins_over_the_template(self):
+        """A page calling its summary something unusual must not be told to grow a second
+        one beside it."""
+        with TempWiki() as w:
+            w.page("entities/us-iran-war.md", title="US-Iran War", type="entity",
+                   body="## Definition\n\nA conflict that began in 2026 and continues.\n")
+            w.page("concepts/war-in-iran.md", title="War in Iran", type="concept",
+                   body=self.LOSER)
+            r = agent.merge_page("concepts/war-in-iran.md", "entities/us-iran-war.md",
+                                 carry=True)
+            self.assertIn("section='Definition'", r["error"])
+            self.assertIn("update_section(", r["error"])
+
+    def test_a_concept_survivor_with_no_summary_is_told_Definition(self):
+        with TempWiki() as w:
+            w.page("concepts/survivor.md", title="Warfare", type="concept",
+                   body="## Origins & History\n\nIt has been studied since antiquity.\n")
+            w.page("concepts/loser.md", title="War", type="concept",
+                   body="## Definition\n\nAn organised armed conflict between states or "
+                        "factions, pursued for political ends.\n")
+            r = agent.merge_page("concepts/loser.md", "concepts/survivor.md", carry=True)
+            self.assertIn("section='Definition'", r["error"])
+            self.assertIn("append_section(", r["error"])
+
+
+class CarriedListStaysAListTest(unittest.TestCase):
+    """**Also reported from that run.** `"\\n\\n".join` looked obviously right and broke
+    every list it touched. The losers' `## Contradictions` is a claim followed by its
+    status, and carrying them with a blank line between made three one-item lists out of
+    one structure, orphaning each status from the claim it belongs to:
+
+        - **Claim**: The administration characterised the agreement as a step toward stability.
+
+        - **Claim**: Critics characterise the deal as a cynical failure.
+
+        - **Status**: unresolved as of 2026-07-10.
+    """
+
+    CONTRADICTIONS = (
+        "## Contradictions\n\n"
+        "- **Claim**: The administration has characterised the agreement as a step "
+        "toward regional stability and a win.\n"
+        "  Status: unresolved as of 2026-07-10\n"
+        "- **Claim**: Critics including columnist Thomas L. Friedman characterise the "
+        "deal as a cynical and failed bargain.\n"
+        "  Status: unresolved as of 2026-07-10\n")
+
+    def test_consecutive_list_items_are_not_separated_by_blank_lines(self):
+        with TempWiki() as w:
+            w.page("entities/survivor.md", title="US-Iran War",
+                   body="## Overview\n\nA conflict between two states, begun in 2026.\n")
+            w.page("entities/loser.md", title="US-Iran War Conflict",
+                   body="## Overview\n\nA conflict between two states, begun in 2026.\n"
+                        "\n" + self.CONTRADICTIONS)
+            r = agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+            self.assertIsNone(r["error"], r["error"])
+            text = (w.wiki / "entities" / "survivor.md").read_text()
+            body = text.split("## Contradictions", 1)[1]
+            self.assertNotIn("\n\n- **Claim**", body.lstrip(),
+                             "a blank line between items makes one list into several")
+            self.assertNotIn("stability and a win.\n\n", body,
+                             "a Status line must stay attached to its Claim")
+
+    def test_a_status_line_stays_with_the_claim_above_it(self):
+        with TempWiki() as w:
+            w.page("entities/survivor.md", title="US-Iran War",
+                   body="## Overview\n\nA conflict between two states, begun in 2026.\n")
+            w.page("entities/loser.md", title="US-Iran War Conflict",
+                   body="## Overview\n\nA conflict between two states, begun in 2026.\n"
+                        "\n" + self.CONTRADICTIONS)
+            agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+            text = (w.wiki / "entities" / "survivor.md").read_text()
+            for line in text.split("\n"):
+                if line.strip().startswith("Status:"):
+                    idx = text.split("\n").index(line)
+                    prev = text.split("\n")[idx - 1].strip()
+                    self.assertTrue(prev.startswith("- **Claim**"),
+                                    f"Status orphaned; line above was {prev!r}")
+
+    def test_an_indented_continuation_keeps_its_indentation(self):
+        """The third layer of the same bug. Fixing the join was not enough, because the
+        carry uses the sentence-filtered text and every sentence had been `.strip()`ed —
+        so a `  Status:` line arrived with no leading spaces and stopped being a
+        continuation of the `- **Claim**:` above it whatever it was joined with. A line
+        with nothing dropped is now carried VERBATIM."""
+        with TempWiki() as w:
+            w.page("entities/survivor.md", title="US-Iran War",
+                   body="## Overview\n\nA conflict between two states, begun in 2026.\n")
+            w.page("entities/loser.md", title="US-Iran War Conflict",
+                   body="## Overview\n\nA conflict between two states, begun in 2026.\n"
+                        "\n" + self.CONTRADICTIONS)
+            agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+            text = (w.wiki / "entities" / "survivor.md").read_text()
+            self.assertIn("\n  Status: unresolved as of 2026-07-10\n", text,
+                          "the two-space indent is what makes it a continuation")
+
+    def test_a_partial_carry_keeps_the_lines_own_list_marker(self):
+        """When sentences ARE dropped the line has to be rebuilt, and rebuilding it bare
+        turns a bullet into a paragraph in the middle of a list."""
+        with TempWiki() as w:
+            shared = ("The agreement was signed in June 2026 after months of talks.")
+            w.page("entities/survivor.md", title="Survivor",
+                   body=f"## Overview\n\nA conflict begun in 2026 between two states.\n"
+                        f"\n## Terms\n\n- {shared}\n")
+            w.page("entities/loser.md", title="Survivor Alt",
+                   body=f"## Overview\n\nA conflict begun in 2026 between two states.\n"
+                        f"\n## Terms\n\n- {shared} It also set a sixty-day window for "
+                        f"commercial vessels to pass through the strait safely.\n")
+            r = agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+            self.assertIsNone(r["error"], r["error"])
+            text = (w.wiki / "entities" / "survivor.md").read_text()
+            self.assertIn("- It also set a sixty-day window", text,
+                          "a carried fragment of a bullet is still a bullet")
+
+    def test_separate_paragraphs_still_get_a_blank_line(self):
+        """Two paragraphs run together are one paragraph, so the list fix must not apply
+        to prose."""
+        with TempWiki() as w:
+            w.page("entities/survivor.md", title="US-Iran War",
+                   body="## Overview\n\nA conflict between two states, begun in 2026.\n")
+            w.page("entities/loser.md", title="US-Iran War Conflict",
+                   body="## Overview\n\nA conflict between two states, begun in 2026.\n\n"
+                        "## Background\n\nThe first paragraph describes how the long "
+                        "sanctions regime preceded the fighting.\n\nThe second paragraph "
+                        "describes the naval confrontations that followed it.\n")
+            agent.merge_page("entities/loser.md", "entities/survivor.md", carry=True)
+            text = (w.wiki / "entities" / "survivor.md").read_text()
+            self.assertIn("preceded the fighting.\n\nThe second paragraph", text)
+
+
 class SentenceLevelDeltaTest(unittest.TestCase):
     def test_the_delta_is_the_new_sentences_not_the_paragraph_holding_them(self):
         """The complaint, restated: a section's prose is one line per paragraph, so an

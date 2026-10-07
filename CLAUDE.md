@@ -800,6 +800,32 @@ Three things it had to get right:
   section about policy into one about appointments. So it does what `append_section` does —
   create it and say so — because creating a section is legitimate and a refusal would have
   no escape hatch.
+- **The refusal has to name the SURVIVOR's summary section.** Reported from a live run a
+  day after this shipped, merging `concepts/war-in-iran.md` and `concepts/iran-war.md` into
+  `entities/us-iran-war.md`: the refusal said `update_section(section='Definition')`, which
+  is the LOSERS' heading, because they are concept pages. The survivor is an entity, so its
+  summary is `## Overview` — following that instruction is either refused for a section
+  that does not exist or, through `append_section`, puts a `## Definition` onto an entity
+  page. **Principle 4's documented worst case, shipped**: a refusal that renames one
+  violation into another. Nineteen tests passed over it, because every one of them merged an
+  entity into an entity, so the two headings were the same word. `_survivor_summary` reads
+  the survivor's own heading where it has one and falls back to `_OPENER` for its type,
+  naming `append_section` rather than `update_section` when the section is not there yet.
+- **A carried list has to stay a list, and that took three fixes.** From the same run. The
+  losers' `## Contradictions` is `- **Claim**: …` followed by its indented `Status:` line.
+  `"\n\n".join` looked obviously right and made three one-item lists out of one structure;
+  joining tightly was not enough, because the carry used the sentence-filtered text and
+  every sentence had been `.strip()`ed, so `  Status:` arrived with no indent and stopped
+  being a continuation whatever it was joined with. A line with nothing dropped is carried
+  **verbatim** now, and a partial carry keeps its own leading marker. The general lesson:
+  **a tool that rebuilds a line from its parts has to put the markup back, and markdown's
+  markup is whitespace.**
+- **And `_fold` was not stripping the list marker.** `_claims` strips a line's marker before
+  comparing, so a survivor bullet is stored as bare prose — while a loser *sentence* kept
+  its `- `, never matched anything, and the bullet was carried whole. **Every list item
+  whose first sentence the survivor already had was duplicated on merge.** Found by a test
+  written for the indent fix, which is the second time this week a bug surfaced from a test
+  aimed at something else.
 - **The carried text has to reach disk on the refusing path.** `_merge_page_impl` writes the
   survivor once, near the bottom, after the aliases and sources are folded in — and a
   summary delta `return`s before that point, so a carry was computed, reported in

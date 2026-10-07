@@ -4635,6 +4635,60 @@ def _carry_destination(surv_body: str, loser_section: str) -> "str | None":
     return None
 
 
+def _carry_block(lines: "list[str]") -> str:
+    """Carried lines joined the way their own markup requires.
+
+    `"\\n\\n".join` looked obviously right and broke every list it touched. A
+    `## Contradictions` section is `- **Claim**: ...` followed by its `Status:` line, and a
+    blank line between them makes three one-item lists out of one structure and orphans
+    each status from the claim it belongs to. Observed on a live merge of two Iran-war
+    pages, in the first hour the flag existed.
+
+    Consecutive list items are joined with a single newline; a paragraph gets a blank line
+    before it, because two paragraphs run together are one paragraph.
+    """
+    out, in_list = "", False
+    for line in lines:
+        is_item = bool(re.match(r"^\s*[-*+]\s", line))
+        # A continuation of the item above: markdown's own rule, an indented line, plus the
+        # schema's unindented `Status:` form, which `## Contradictions` is full of.
+        is_cont = bool(re.match(r"^(?:\s+\S|\w[^:\n]{0,40}:\s)", line))
+        if not out:
+            out, in_list = line, is_item
+            continue
+        # One newline keeps a list a list: an item joining a list already open, or a
+        # continuation line joining the item it belongs to. Everything else is a new
+        # paragraph, and two paragraphs run together are one paragraph.
+        tight = (is_item and in_list) or (is_cont and in_list)
+        out += ("\n" if tight else "\n\n") + line
+        in_list = is_item or (in_list and is_cont)
+    return out
+
+
+def _survivor_summary(surv_text: str) -> "tuple[str, str]":
+    """The survivor's own summary section, and the call that writes it.
+
+    **Naming the LOSER's section here was a principle-4 bug of the documented worst kind.**
+    Merging two `concepts/` pages into an `entities/` one, the refusal said
+    `update_section(section='Definition')` -- the losers' heading -- so following it either
+    gets refused for a section that does not exist or, through `append_section`, puts a
+    `## Definition` onto an entity page. A refusal that renames one violation into another
+    is exactly what principle 4 exists to stop, and this one was reported from a live run
+    on `us-iran-war.md` within a day of the flag shipping.
+
+    The survivor's own heading wins where it has one, so a page calling its summary
+    something unusual is not told to grow a second one. Otherwise the type's template
+    opener (`_OPENER`), with `append_section` rather than `update_section`, because the
+    section is not there to update.
+    """
+    for want in _SUMMARY_SECTIONS:
+        found = _find_section(surv_text, want)
+        if found:
+            return found[0].lstrip("# ").strip(), "update_section"
+    t_m = re.search(r"^type:\s*(\S+)", surv_text, re.MULTILINE)
+    return _OPENER.get(t_m.group(1).strip() if t_m else "", "Overview"), "append_section"
+
+
 def _carry_lines(surv_text: str, groups: dict) -> "tuple[str, list]":
     """Append each group of carried lines to the survivor's matching section.
 
@@ -4665,7 +4719,7 @@ def _carry_lines(surv_text: str, groups: dict) -> "tuple[str, list]":
     made = []
 
     for section, lines in groups.items():
-        block = "\n\n".join(lines)
+        block = _carry_block(lines)
         dest = _carry_destination(body, section)
         if dest:
             found = _find_section(body, dest)
@@ -4788,13 +4842,24 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
                 norm = " ".join(line.split()).lower()
                 if _subject_re:
                     norm = _subject_re.sub("\u00absubject\u00bb", norm)
-                out.append({"norm": norm, "raw": raw.strip(), "section": section})
+                # rstrip, not strip: leading whitespace is what makes an indented
+                # `Status:` line a continuation of the `- **Claim**:` above it, and
+                # stripping it orphaned every one of them on carry.
+                out.append({"norm": norm, "raw": raw.rstrip(), "section": section})
         return out
 
     s_claims = [c["norm"] for c in _claims(s_text)]
 
     def _fold(text):
-        n = " ".join(_MD_LINK_RE.sub(r"\1", text).split()).lower()
+        """One sentence reduced to the same form `_claims` reduces a line to.
+
+        The `lstrip` is load-bearing and was missing: `_claims` strips a line's list marker
+        before comparing, so a survivor bullet is stored as bare prose — while a loser
+        sentence kept its `- `, never matched, and the bullet was carried whole. Every list
+        item whose first sentence the survivor already had was duplicated on merge.
+        """
+        n = _MD_LINK_RE.sub(r"\1", text).strip().lstrip("-*\u2022 ").strip()
+        n = " ".join(n.split()).lower()
         return _subject_re.sub("\u00absubject\u00bb", n) if _subject_re else n
 
     # **A claim is compared SENTENCE by sentence, not line by line, and that is a data-loss
@@ -4818,12 +4883,23 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
         # A line the splitter cannot divide is judged whole, with the old symmetric test:
         # a one-sentence paragraph reflowed or re-punctuated is not new material, and
         # treating it as such would make every merge refuse.
+        all_sents = [x for x in _sentences(c["raw"]) if len(_fold(x)) > 25]
         if not fresh:
             if any(c["norm"] in sc or sc in c["norm"] for sc in s_claims):
                 continue
             fresh = [c["raw"]]
         c["summary"] = _norm_heading(c["section"]) in _SUMMARY_SECTIONS
-        c["new"] = " ".join(fresh)
+        if len(fresh) == len(all_sents) and all_sents:
+            # Nothing was dropped, so the line is carried VERBATIM. Rebuilding it from
+            # stripped sentences loses the leading whitespace and the list marker, and a
+            # `  Status:` line without its two spaces is no longer a continuation of the
+            # `- **Claim**:` above it — which is how the carried Contradictions list came
+            # out flat on the live run.
+            c["new"] = c["raw"]
+        else:
+            # A partial carry keeps the line's own prefix, for the same reason.
+            pre = re.match(r"^\s*(?:[-*+]\s+)?", c["raw"]).group(0)
+            c["new"] = pre + " ".join(fresh)
         detail.append(c)
     result["outstanding"] = [c["norm"] for c in detail]
     result["outstanding_detail"] = detail
@@ -4861,13 +4937,14 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
 
     if detail and not force:
         if carry:
-            sec = detail[0]["section"] or "Overview"
+            sec, verb = _survivor_summary(s_text)
+            lsec = detail[0]["section"] or "its summary"
             result["error"] = (
-                f"{len(detail)} line(s) of {loser_rel}'s ## {sec} are not on "
+                f"{len(detail)} line(s) of {loser_rel}'s ## {lsec} are not on "
                 f"{survivor_rel}, and a summary is rewritten, never appended to — "
                 f"appending there is the accretion the write guards refuse. Rewrite it to "
                 f"account for them:\n"
-                f"  update_section(path='{survivor_rel}', section='{sec}', "
+                f"  {verb}(path='{survivor_rel}', section='{sec}', "
                 f"content=<one summary covering both>)\n"
                 f"Then run this again. Everything outside the summary has already been "
                 f"carried over. --force if you have read these and decided they add "

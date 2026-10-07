@@ -1073,6 +1073,22 @@ MUTATIONS = [
     ('merge-carry: a created section is reported, not slipped in',
      '        made.append(section)',
      '        pass'),
+    # All four reported from one live run merging two concept pages into an entity page.
+    ("merge-carry: the refusal names the SURVIVOR's summary, not the loser's",
+     '            sec, verb = _survivor_summary(s_text)',
+     "            sec, verb = (detail[0]['section'] or 'Overview'), 'update_section'"),
+    ('merge-carry: a survivor lacking a summary is told to append one',
+     '            return found[0].lstrip("# ").strip(), "update_section"',
+     '            return found[0].lstrip("# ").strip(), "append_section"'),
+    ('merge-carry: a carried list stays one list',
+     '        block = _carry_block(lines)',
+     '        block = "\\n\\n".join(lines)'),
+    ("merge-carry: a line with nothing dropped is carried verbatim, indent and all",
+     '            c["new"] = c["raw"]',
+     '            c["new"] = " ".join(fresh)'),
+    ("merge: a bullet's list marker is stripped before comparing sentences",
+     '        n = _MD_LINK_RE.sub(r"\\1", text).strip().lstrip("-*\\u2022 ").strip()',
+     '        n = _MD_LINK_RE.sub(r"\\1", text)'),
 
     # page_report. A report's value is entirely in not crying wolf, so most of these
     # protect a filter rather than a finding.
