@@ -1131,6 +1131,59 @@ mechanically-correct answer, so absorbed per principle 1), and `serve.py`'s two 
 used it too — a backticked tag was splitting one subject's tag page in two. Case is folded
 for the same reason, since the schema already says lowercase.
 
+**A leading underscore marks a tag as machinery, not subject matter** (`is_utility_tag`,
+`_UTILITY_TAG_PREFIX`, `_TODO_TAG`). Asked for in two steps — *"add a Tag 'todo' for todo
+items, so I can dig them out quickly"*, then *"maybe special case '_todo' or other
+underscores so we can build some utility for the future"*, which is the better shape: a
+namespace, so the next utility tag costs a name and no code. `merge_page --carry` sets
+`_todo` on any page whose summary it folded, and `tag:_todo` or `/wiki/tags/_todo` lists
+them.
+
+**The trap is the backticked-tag loop exactly.** `_collect_tags` scans every page and
+`orientation_message` hands that list to every ingest as *"Prefer tags from this list"* — so
+adding `_todo` naively tells the model to prefer it, the model tags unrelated pages with it,
+and the one listing the tag exists to produce fills with noise. The filter is therefore in
+`orientation_message` and **deliberately not** in `_collect_tags`: the tag pages and
+`/wiki/tags/_todo` must still see it, and filtering at the source would have removed the
+feature while fixing the bug. A prefix rather than a list, because a list is a second place
+to forget. `LOBOTOMY.md` tells the model never to invent, copy or **remove** one — it is
+somebody's worklist — and the schema needs that line precisely because the tag is absent
+from the vocabulary, so the only way the model meets one is on a page it is already editing.
+
+**Search's two full-page substitutions ran before any keyword was tested** (`_prefilter_ok`,
+`lit_groups` in `search_wiki_core`). Reported as *"search is pretty slow; are there cheap
+optimizations we can be doing?"* Measured at 2,000 pages / 17.8 MB: **423ms for a query
+matching nothing**, because every page paid `_SYS_FIELDS.sub` and then the link-URL rewrite
+— two fresh copies of every page in the wiki, per query, to establish that none of them
+matched. This is the autolinker's token-prefilter lesson for the third time, in the one
+place that had never learned it.
+
+Both substitutions only DELETE text, so a keyword absent from the raw bytes is absent from
+the rewritten text: the raw test can only admit pages that still need the full check. That
+alone gave 3.9× on a miss and **10% SLOWER** on a query matching every page, because there
+the allocation is pure overhead — so the matching moved onto the lowered copy too. The
+substitutions run on it, the exact check is `in`, the score is `str.count`, and every
+`re.IGNORECASE` match and `findall` list-build is gone. One allocation now does three jobs
+instead of being charged on top of them: **3.6× / 2.7× / 1.4×** at 0%, 16% and ~100% hit
+rates, faster everywhere.
+
+**The gate is the part that is easy to get wrong.** The link rewrite turns `](URL)` into
+`]()`, so a deletion can forge an adjacency the original never had — a keyword containing
+`]`, `(` or `)` can match the rewritten text while being absent from the raw bytes, and a
+naive prefilter would skip a page that really matches. Dropping a `sources:` line joins two
+lines the same way, but a keyword cannot contain a newline because `query.split()` built it.
+So the fast path requires every keyword to be free of bracket characters; anything else
+takes the old route and is merely slow.
+
+**The benchmark was wrong before it was right, and that is worth keeping.** The first corpus
+drew from a 17-word vocabulary, so every page matched every query and the prefilter looked
+worthless — the measurement, not the code, was the thing being tested. A Zipfian vocabulary
+of 6,000 words gives realistic hit rates, and only then does the shape of the win appear.
+`tests/test_search_prefilter.py` carries a transcription of the ORIGINAL algorithm as an
+oracle and asserts the two agree on paths, scores **and order** across eighteen query
+shapes, because a faster search that returns something subtly different is not a faster
+search.
+
 **One reading and one rendering of a frontmatter scalar** (`fm_scalar`, `fm_quote`), which
 is the same lesson as the tags one, found by asking whether it had siblings. It did, two:
 

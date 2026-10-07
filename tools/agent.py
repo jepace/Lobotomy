@@ -4640,6 +4640,32 @@ _CARRY_TODO_FM = "merge: summary needs rewriting"
 _CARRY_TODO_RE = re.compile(r"^\*\*TODO — merged from [^\n]*\*\*$", re.MULTILINE)
 
 
+# **A leading underscore marks a tag as machinery, not subject matter.** `_todo` is the
+# first; the namespace is the point — *"maybe special case '_todo' or other underscores so
+# we can build some utility for the future"* — so the next one costs a name and nothing
+# else.
+#
+# These are real tags: `_collect_tags` sees them, the tag pages list them, and
+# `/wiki/tags/_todo` is the whole point of having one. What they must never do is reach
+# `orientation_message`'s "prefer tags from this list", because that list is the wiki's
+# vocabulary as offered to every future ingest. The backticked-tag episode is the precedent
+# and the mechanism is identical — a value read back as input becomes self-reinforcing — so
+# the model would start tagging unrelated pages `_todo` and the one listing this exists to
+# produce would fill with noise. Break the loop, not the value.
+#
+# A prefix rather than a list, because a list is a second place to forget: a utility tag
+# added next month is excluded the moment it is named, with nothing to keep in step.
+_UTILITY_TAG_PREFIX = "_"
+_TODO_TAG = "_todo"
+
+
+def is_utility_tag(tag: str) -> bool:
+    """True for a tag that marks machinery rather than subject matter — see
+    `_UTILITY_TAG_PREFIX`. Normalizes first, so a tag the model wrapped in backticks or
+    quotes is still recognised."""
+    return norm_tag(tag).startswith(_UTILITY_TAG_PREFIX)
+
+
 def _carry_todo_line(loser_rel: str) -> str:
     """The visible marker a carried summary gets.
 
@@ -4784,7 +4810,7 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
     """
     result = {"repointed": [], "aliases": [], "sources_added": [], "outstanding": [],
               "outstanding_detail": [], "carried": {}, "new_sections": [],
-              "todo": None,
+              "todo": None, "todo_tag": None,
               "deleted": None, "error": None}
     loser = (WIKI_DIR / loser_rel) if not str(loser_rel).startswith("wiki/") else REPO_ROOT / loser_rel
     surv = (WIKI_DIR / survivor_rel) if not str(survivor_rel).startswith("wiki/") else REPO_ROOT / survivor_rel
@@ -4974,6 +5000,17 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
             if not re.search(r"^todo:", s_text, re.MULTILINE):
                 s_text = _set_fm_field(s_text, "todo",
                                        f"todo: {fm_quote(_CARRY_TODO_FM)}")
+            # And a real `_todo` TAG, so the tag pages that already exist find them:
+            # *"add a Tag 'todo' for todo items, so I can dig them out quickly"*. The
+            # frontmatter field says WHY; the tag is the index. Through
+            # `parse_tags_line`/`render_tags_line` like every other tag writer, or this
+            # becomes the fifth place that disagrees about what a tag is.
+            _tag_m = re.search(r"^tags:[^\n]*$", s_text, re.MULTILINE)
+            _tags = parse_tags_line(_tag_m.group(0)) if _tag_m else []
+            if _TODO_TAG not in _tags:
+                _tags.append(_TODO_TAG)
+                s_text = _set_fm_field(s_text, "tags", render_tags_line(_tags))
+                result["todo_tag"] = _TODO_TAG
             if not dry_run:
                 _atomic_write(surv, s_text)
                 s_on_disk = s_text
@@ -6744,6 +6781,7 @@ def search_wiki_core(query: str, wiki_dir: Path) -> dict:
     _VALID_SUBDIRS = {"sources", "entities", "concepts", "synthesis"}
     _META_STEMS = {"log", "index", "lint"}
     _SYS_FIELDS = re.compile(r'^(sources|created|raw_source):[ \t].*', re.MULTILINE)
+    _LINK_URL_RE = re.compile(r'\]\([^)]*\)')
     _SKIP_SNIPPET = re.compile(r'^(sources|created|raw_source):')
 
     scope = None
@@ -6771,6 +6809,7 @@ def search_wiki_core(query: str, wiki_dir: Path) -> dict:
     # Split kw_tokens on literal "OR" to build AND-of-OR-groups.
     # "foo OR bar baz" → [[foo,bar],[baz]] — page must match (foo|bar) AND baz.
     or_groups: "list[list]" = []
+    lit_groups: "list[list]" = []        # the same keywords as lowercase literals
     prev_was_or = False
     for t in kw_tokens:
         if t.upper() == "OR":
@@ -6779,12 +6818,36 @@ def search_wiki_core(query: str, wiki_dir: Path) -> dict:
         p = re.compile(re.escape(t), re.IGNORECASE)
         if prev_was_or and or_groups:
             or_groups[-1].append(p)
+            lit_groups[-1].append(t.lower())
         else:
             or_groups.append([p])
+            lit_groups.append([t.lower()])
         prev_was_or = False
 
     # Flatten for display / scoring
     patterns = [p for g in or_groups for p in g]
+
+    # **The cheap prefilter.** Reported as "search is pretty slow". Measured at 2,000 pages
+    # / 17.8 MB: ~420ms for a query matching NOTHING, because every page paid two full-text
+    # regex substitutions — `_SYS_FIELDS`, then the link-URL rewrite — BEFORE a single
+    # keyword was tested. Two fresh copies of every page in the wiki, per query, to decide
+    # that none of them matched. The autolinker learned this exact lesson twice (the
+    # per-title token prefilter, then the per-line probe); search never did.
+    #
+    # Both substitutions only DELETE text, so a keyword absent from the raw bytes is absent
+    # from the rewritten text as well: testing the raw text first can only admit pages that
+    # still need the full check, never reject a real hit. One `.lower()` and a plain `in`
+    # stands in for both `re.sub` passes on every page that cannot match.
+    #
+    # **But a deletion can forge an adjacency, which is why this is gated rather than
+    # unconditional.** The link rewrite turns `](URL)` into `]()`, so a keyword containing
+    # `]`, `(` or `)` could match the rewritten text while being absent from the raw text,
+    # and the prefilter would then skip a page that really matches. Dropping a whole
+    # `sources:` line joins two lines the same way, but a keyword cannot contain a newline —
+    # `query.split()` guarantees that. So the prefilter runs only when every keyword is free
+    # of bracket characters, which is every ordinary query; anything else takes the old path
+    # and is merely slow, which is the right way round to be wrong.
+    _prefilter_ok = all(c not in t for g in lit_groups for t in g for c in "]()")
 
     if scope and scope in _VALID_SUBDIRS:
         search_root = wiki_dir / scope
@@ -6794,8 +6857,9 @@ def search_wiki_core(query: str, wiki_dir: Path) -> dict:
         exclude_sources = True
 
     results = []
+    _sources_dir = wiki_dir / "sources"      # hoisted: it was rebuilt once per page
     for f in wiki_pages(search_root):
-        if exclude_sources and f.is_relative_to(wiki_dir / "sources"):
+        if exclude_sources and f.is_relative_to(_sources_dir):
             continue
         if f.stem in _META_STEMS:
             continue
@@ -6803,6 +6867,13 @@ def search_wiki_core(query: str, wiki_dir: Path) -> dict:
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+
+        # The prefilter, ahead of everything else that allocates. A page none of the
+        # keywords appear in anywhere cannot match once text has been removed from it.
+        low = text.lower() if _prefilter_ok else ""
+        if _prefilter_ok and lit_groups:
+            if not all(any(lit in low for lit in g) for g in lit_groups):
+                continue
 
         fm = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
         fm_text = fm.group(1) if fm else ""
@@ -6832,12 +6903,29 @@ def search_wiki_core(query: str, wiki_dir: Path) -> dict:
             continue
 
         # Strip system fields and link URLs before keyword scoring.
-        searchable = _SYS_FIELDS.sub('', text)
-        searchable = re.sub(r'\]\([^)]*\)', ']()', searchable)
-
-        if or_groups and not all(any(p.search(searchable) for p in g) for g in or_groups):
-            continue
-        score = sum(len(p.findall(searchable)) for p in patterns) if patterns else 1
+        #
+        # On the literal path the substitutions run on the LOWERED copy and the matching is
+        # done with `in` and `str.count`, which is what actually made search fast: the
+        # expensive part was never the substitutions, it was `re.IGNORECASE` matching and
+        # `findall` building a list of every hit just to measure its length. One `.lower()`
+        # serves the prefilter, the exact check and the score, so the allocation the
+        # prefilter adds is paid back several times over.
+        if _prefilter_ok:
+            searchable = _SYS_FIELDS.sub('', low)
+            searchable = _LINK_URL_RE.sub(']()', searchable)
+            if lit_groups and not all(any(lit in searchable for lit in g)
+                                      for g in lit_groups):
+                continue
+            score = (sum(searchable.count(lit) for g in lit_groups for lit in g)
+                     if lit_groups else 1)
+        else:
+            searchable = _SYS_FIELDS.sub('', text)
+            searchable = _LINK_URL_RE.sub(']()', searchable)
+            if or_groups and not all(any(p.search(searchable) for p in g)
+                                     for g in or_groups):
+                continue
+            score = (sum(sum(1 for _ in p.finditer(searchable)) for p in patterns)
+                     if patterns else 1)
         if not score:
             continue
 
@@ -7856,7 +7944,10 @@ def orientation_message() -> str:
           "one call."
     )
 
-    tags = _collect_tags()
+    # Utility tags are filtered HERE rather than in `_collect_tags`, because the tag pages
+    # and `/wiki/tags` must still show them — this is the one place the list is handed to
+    # the model as a vocabulary to copy from.
+    tags = [t for t in _collect_tags() if not is_utility_tag(t)]
     if tags:
         snippets.append(
             "## Existing tags in this wiki\n"

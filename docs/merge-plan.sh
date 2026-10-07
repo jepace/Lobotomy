@@ -16,7 +16,8 @@
 #
 # --carry folds the losers' summaries into the survivor under a visible TODO marker and
 # flags the page `todo:` in frontmatter, so no group blocks on a summary rewrite. Afterwards:
-#   grep -rl '^todo:' wiki/entities wiki/concepts     # the pages whose summary needs folding
+#   python3 tools/search.py 'tag:_todo'   # the pages whose summary still needs folding
+#   (or /wiki/tags/_todo in the browser; grep -rl '^todo:' wiki/ works too)
 # Add --strict-summary to any line you would rather handle properly by hand.
 set -e
 DRY="$1"

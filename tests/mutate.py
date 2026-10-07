@@ -1087,6 +1087,40 @@ MUTATIONS = [
     ('merge-carry: a summary lands in the SURVIVOR\'s section, not the loser\'s',
      '                dest = _survivor_summary(s_text)[0]',
      '                pass'),
+    # The utility-tag namespace. Its whole value is that the model is never offered one.
+    ('tags: a utility tag is kept out of the vocabulary offered to the model',
+     '    tags = [t for t in _collect_tags() if not is_utility_tag(t)]',
+     '    tags = _collect_tags()'),
+    ('tags: is_utility_tag normalizes before deciding',
+     '    return norm_tag(tag).startswith(_UTILITY_TAG_PREFIX)',
+     '    return tag.startswith(_UTILITY_TAG_PREFIX)'),
+    ('merge-carry: a carried summary tags the page _todo',
+     '                result["todo_tag"] = _TODO_TAG',
+     '                pass'),
+    ("merge-carry: the page's existing tags are kept when _todo is added",
+     '            if _TODO_TAG not in _tags:\n                _tags.append(_TODO_TAG)',
+     '            if _TODO_TAG not in _tags:\n                _tags = [_TODO_TAG]'),
+
+    # Search. The prefilter is only safe because of its gate, and only useful if it is
+    # actually reached.
+    ('search: the keyword prefilter runs before the substitutions',
+     '        if _prefilter_ok and lit_groups:\n'
+     '            if not all(any(lit in low for lit in g) for g in lit_groups):\n'
+     '                continue',
+     '        if False and lit_groups:\n'
+     '            if not all(any(lit in low for lit in g) for g in lit_groups):\n'
+     '                continue'),
+    ('search: a bracket keyword falls off the fast path',
+     '    _prefilter_ok = all(c not in t for g in lit_groups for t in g for c in "]()")',
+     '    _prefilter_ok = True'),
+    ('search: the substitutions still reject a link-URL-only match',
+     "            searchable = _LINK_URL_RE.sub(']()', searchable)\n"
+     '            if lit_groups and not all(any(lit in searchable for lit in g)\n'
+     '                                      for g in lit_groups):\n'
+     '                continue',
+     "            searchable = _LINK_URL_RE.sub(']()', searchable)\n"
+     '            if False:\n'
+     '                continue'),
     ('merge-carry: a created section is reported, not slipped in',
      '        made.append(section)',
      '        pass'),
