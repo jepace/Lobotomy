@@ -422,6 +422,25 @@ MUTATIONS = [
      '    bleeds = [r for r in keep if r["type"] not in ("concept", "?")]',
      '    bleeds = keep',
      'tools/bleeding_titles.py'),
+    # A cross-directory move. Both halves were found while answering "are entities and
+    # concepts the same thing?" — the tool recommended for the fix had two defects.
+    ('rename: a cross-directory move carries the type: field',
+     '        new_text = re.sub(r"^type:[ \\t]*\\S+[ \\t]*$", f"type: {_new_type}",\n'
+     '                          new_text, count=1, flags=re.MULTILINE)',
+     '        pass',
+     'tools/rename_page.py'),
+    ('rename: the type change is reported, not silent',
+     '    print(f"type: {_type_changed[0]}  ->  {_type_changed[1]}   "',
+     '    print(f"" ',
+     'tools/rename_page.py'),
+    ('rename: a stale opener after a type change is reported',
+     '        print(f"  NOTE: the page still opens with \'## {_wrong}\'; a {_new_type} page wants "',
+     '        print(f"" ',
+     'tools/rename_page.py'),
+    ('rename: history dirs inherit ownership instead of mkdir(parents=True)',
+     '    _mkdir_inheriting(hist_dst.parent)',
+     '    hist_dst.parent.mkdir(parents=True, exist_ok=True)',
+     'tools/rename_page.py'),
     # rename_page's messages, which are the only guidance its callers get.
     ('rename: a bad slug is refused with the corrected one',
      '    _fix = re.sub(r"[^a-z0-9]+", "-", dst.stem.lower()).strip("-")',

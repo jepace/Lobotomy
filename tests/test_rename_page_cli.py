@@ -69,6 +69,84 @@ class RenamePageCliTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr or r.stdout)
         return r.stdout
 
+    def _move_dir(self, *extra, src="concepts/ebola.md", dst="entities/ebola.md"):
+        """A cross-DIRECTORY move, which is how a misfiled page gets corrected."""
+        (self.w / "concepts").mkdir(exist_ok=True)
+        (self.w / "concepts" / "ebola.md").write_text(
+            '---\ntitle: "Ebola"\ntype: concept\ntags: []\ncreated: 2026-01-01\n'
+            'updated: 2026-01-01\nsources: []\n---\n\n# Ebola\n\n## Definition\n\n'
+            'A viral haemorrhagic fever.\n', encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, str(self.root / "tools" / "rename_page.py"),
+             str(self.w / src), str(self.w / dst), *extra],
+            capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr or r.stdout)
+        return r.stdout
+
+    def test_a_cross_directory_move_carries_the_type_field(self):
+        """**The half-move.** This script moved `concepts/ebola.md` to
+        `entities/ebola.md` and left `type: concept` behind — and `_OPENER`,
+        `section_inventory.py` and `bleeding_titles.py` all read the FIELD, not the
+        directory. The result is worse than the misfile it was correcting: the page sits
+        where an entity lives while claiming to be a concept, so every tool that asks gets
+        the stale answer. Nine tests passed over this, all of them renames inside one
+        directory."""
+        self._move_dir()
+        text = (self.w / "entities" / "ebola.md").read_text()
+        self.assertIn("type: entity", text)
+        self.assertNotIn("type: concept", text)
+
+    def test_the_type_change_is_reported(self):
+        """Silently rewriting a frontmatter field the operator did not ask about is how a
+        tool becomes something you cannot reason about."""
+        out = self._move_dir()
+        self.assertIn("type: concept  ->  entity", out)
+
+    def test_a_move_within_one_directory_leaves_the_type_alone(self):
+        """The common case. A plain rename must not touch it — and a `synthesis/` page
+        moved inside `synthesis/` has a type the directory map would not change either."""
+        self._rename()
+        self.assertIn("type: entity",
+                      (self.w / "entities" / "united-airlines.md").read_text())
+
+    def test_the_stale_opener_is_reported_rather_than_rewritten(self):
+        """An entity page wants `## Overview`. Renaming the heading is a content edit with
+        a tool of its own (`rename_section.py`), and doing it silently inside a file move
+        would hide it; saying nothing leaves a page off-template with nothing pointing at
+        it. So it reports and names the call — principle 4."""
+        out = self._move_dir()
+        self.assertIn("## Definition", out)
+        self.assertIn("Overview", out)
+        self.assertIn("rename_section.py", out)
+        # and the heading itself is untouched
+        self.assertIn("## Definition", (self.w / "entities" / "ebola.md").read_text())
+
+    def test_the_history_directory_is_created_through_the_inheriting_helper(self):
+        """`mkdir(parents=True)` under `wiki/` is the one thing CLAUDE.md forbids outright,
+        and this file was the last place still doing it. Run as root beside a server
+        running as another user — which is how this tool is normally run — a root-owned
+        level inside `wiki/.history/` stops the server writing revisions for that page, and
+        `_snapshot_version` deliberately never raises, so the page just stops accumulating
+        history with nothing to say so.
+
+        Asserted structurally because ownership cannot be reproduced in a test that is not
+        root: what is checkable is that the call goes through the helper that exists for
+        this, which is also what `mutate.py` can break."""
+        src = (self.root / "tools" / "rename_page.py").read_text()
+        self.assertIn("_mkdir_inheriting(hist_dst.parent)", src)
+        self.assertNotIn("hist_dst.parent.mkdir(parents=True", src)
+
+    def test_history_moves_with_the_page(self):
+        """The behaviour the mkdir was there for, so the fix cannot have broken it."""
+        hist = self.w / ".history" / "concepts" / "ebola.md"
+        hist.mkdir(parents=True)
+        (hist / "20260101000000000000__ingest.md").write_text("old", encoding="utf-8")
+        self._move_dir()
+        moved = self.w / ".history" / "entities" / "ebola.md"
+        self.assertTrue(moved.is_dir(), "the page's revisions did not follow it")
+        self.assertEqual([f.name for f in moved.iterdir()],
+                         ["20260101000000000000__ingest.md"])
+
     def test_the_page_is_renamed(self):
         self._rename()
         self.assertTrue((self.w / "entities" / "united-airlines.md").is_file())

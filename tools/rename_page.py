@@ -34,7 +34,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from agent import (_fm_title, WIKI_DIR, HISTORY_DIR, wiki_pages, _atomic_write,
-                   begin_write_scope, is_generated_page, _rebuild_index)
+                   begin_write_scope, is_generated_page, _rebuild_index,
+                   _mkdir_inheriting)
 
 args = [a for a in sys.argv[1:] if not a.startswith("-")]
 DRY = "--dry-run" in sys.argv
@@ -91,7 +92,37 @@ if NEW_TITLE:
 
 old_rel = src.relative_to(WIKI_DIR.resolve())
 new_rel = dst.relative_to(WIKI_DIR.resolve())
+
+# **A move between directories has to carry `type:` with it.** This script happily moved
+# concepts/ebola.md to entities/ebola.md and left `type: concept` in the frontmatter — and
+# `_OPENER`, `section_inventory.py` and `bleeding_titles.py` all read the FIELD, not the
+# directory. So the half-move is worse than the misfile it was correcting: the page is
+# where an entity lives while claiming to be a concept, and every tool that asks reads the
+# stale answer. The directory is the one unambiguous signal here, so it wins.
+_DIR_TYPE = {"entities": "entity", "concepts": "concept", "synthesis": "synthesis"}
+_old_dir, _new_dir = old_rel.parts[0] if old_rel.parts[:-1] else "", \
+                     new_rel.parts[0] if new_rel.parts[:-1] else ""
+_new_type = _DIR_TYPE.get(_new_dir)
+_type_changed = None
+if _new_type and _old_dir != _new_dir:
+    _tm = re.search(r"^type:[ \t]*(\S+)[ \t]*$", new_text, re.MULTILINE)
+    if _tm and _tm.group(1) != _new_type:
+        _type_changed = (_tm.group(1), _new_type)
+        new_text = re.sub(r"^type:[ \t]*\S+[ \t]*$", f"type: {_new_type}",
+                          new_text, count=1, flags=re.MULTILINE)
+
 print(f"{old_rel}  ->  {new_rel}")
+if _type_changed:
+    print(f"type: {_type_changed[0]}  ->  {_type_changed[1]}   "
+          f"(the destination directory decides)")
+    _opener = {"entity": "Overview", "concept": "Definition"}.get(_new_type)
+    _wrong = {"entity": "Definition", "concept": "Overview"}.get(_new_type)
+    if _opener and _wrong and re.search(r"^#{2,6}[ \t]*" + _wrong + r"[ \t]*$",
+                                        new_text, re.MULTILINE):
+        print(f"  NOTE: the page still opens with '## {_wrong}'; a {_new_type} page wants "
+              f"'## {_opener}'.\n"
+              f"        python3 tools/rename_section.py '{_wrong}' '{_opener}' "
+              f"   # or fix it in the editor")
 print(f'title: "{old_title}"' + (f'  ->  "{NEW_TITLE}"' if NEW_TITLE else "  (unchanged)"))
 
 LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
@@ -142,7 +173,12 @@ _atomic_write(dst, new_text)
 src.unlink()
 hist_src, hist_dst = HISTORY_DIR / old_rel, HISTORY_DIR / new_rel
 if hist_src.is_dir():
-    hist_dst.parent.mkdir(parents=True, exist_ok=True)
+    # NOT mkdir(parents=True): CLAUDE.md's rule, and this file was the one place still
+    # breaking it. Run as root beside a server running as another user — which is how this
+    # tool is normally run — a root-owned level inside wiki/.history/ means the server can
+    # no longer write revisions for that page, and `_snapshot_version` deliberately never
+    # raises, so the page simply stops accumulating history and nothing says so.
+    _mkdir_inheriting(hist_dst.parent)
     shutil.move(str(hist_src), str(hist_dst))
     print(f"history moved: .history/{old_rel} -> .history/{new_rel}")
 
