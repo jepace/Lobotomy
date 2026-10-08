@@ -1084,6 +1084,60 @@ MUTATIONS = [
     ('timeline: a span is accepted by the tool',
      '    if not (_TL_DATE_RE.match(date) or _TL_SPAN_RE.match(date)):',
      '    if not _TL_DATE_RE.match(date):'),
+    # Queue persistence. The queue was in-memory only, so a deploy silently emptied a
+    # ~20-hour batch and the reading list then correctly showed every article as idle.
+    ('queue: a submitted job is recorded for a restart',
+     '        if key:\n'
+     '            with self._lock:\n'
+     '                self._pending_keys.append(key)\n'
+     '            self._save_pending()',
+     '        if False:\n'
+     '            with self._lock:\n'
+     '                self._pending_keys.append(key)\n'
+     '            self._save_pending()',
+     'tools/job_queue.py'),
+    ('queue: the RUNNING job is not re-queued on restart',
+     # Re-queueing it makes an article that crashes the server into a crash loop that
+     # survives restarts.
+     '                _k = self._job_keys.get(job_id)\n'
+     '                if _k in self._pending_keys:\n'
+     '                    self._pending_keys.remove(_k)',
+     '                pass',
+     'tools/job_queue.py'),
+    ('queue: draining clears the restart mirror',
+     '        if dropped:\n            self._save_pending()',
+     '        if dropped:\n            pass',
+     'tools/job_queue.py'),
+    ('queue: the mirror is cleared before any resume attempt',
+     # Left in place, a job that cannot be built is retried on every restart forever.
+     '        self._pending_keys = []\n        self._save_pending()\n        resumed = 0',
+     '        resumed = 0',
+     'tools/job_queue.py'),
+    ('queue: a resume builder that declines drops the job',
+     '            if not built:\n'
+     '                log.info("resume: %s is no longer queueable — dropping", key)\n'
+     '                continue',
+     '            if not built:\n'
+     '                built = (None, None, [], "", None, None)',
+     'tools/job_queue.py'),
+    ('queue: resume skips an article already wikified or archived',
+     '        if fm.get("wikified") or fm.get("archived"):\n            return None',
+     '        if False:\n            return None',
+     'tools/serve.py'),
+    ('queue: listing does not consume the queue',
+     '            waiting = [(j[0], None) for j in list(self._q.queue)]',
+     '            waiting = [(self._q.get_nowait()[0], None) for _ in range(self._q.qsize())]',
+     'tools/job_queue.py'),
+    ('queue: dropping one releases its key',
+     '        self._release_key(job_id)\n        self._save_pending()\n'
+     '        log.info("Dropped queued job %s from the queue", job_id)',
+     '        self._save_pending()\n'
+     '        log.info("Dropped queued job %s from the queue", job_id)',
+     'tools/job_queue.py'),
+    ('queue: drop leaves the running job alone',
+     '            keep = [j for j in self._q.queue if j[0] != job_id]',
+     '            keep = list(self._q.queue)',
+     'tools/job_queue.py'),
     # In-flight state. The browser used to guess it; three ways that was wrong, and the
     # one that matters is the direction nothing was watching — a drain freeing a row.
     ('in-flight: the running article is distinguished from the waiting ones',

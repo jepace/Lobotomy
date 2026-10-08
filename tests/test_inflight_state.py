@@ -44,22 +44,7 @@ import job_queue
 TEMPLATE = Path(__file__).resolve().parent.parent / "tools" / "templates" / "inbox.html"
 
 
-def _bare_queue(tmp):
-    """A real JobQueue with no worker thread, so submit() enqueues and nothing drains.
-
-    That is exactly the state a batch is in between the click and the first job finishing,
-    which is when every one of these faults was visible.
-    """
-    q = job_queue.JobQueue.__new__(job_queue.JobQueue)
-    q._q = queue.Queue()
-    q._lock = threading.Lock()
-    q._current_job_id = None
-    q._cancel_events = {}
-    q._keys = {}
-    q._job_keys = {}
-    q._dir = tmp
-    q._started = True
-    return q
+from harness import parked_job_queue as _bare_queue   # one shared fixture; see harness.py
 
 
 class InFlightTest(unittest.TestCase):

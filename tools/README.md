@@ -416,6 +416,15 @@ from the text — a capital in the MIDDLE of a sentence — falling back to `typ
 the text is silent. Pages whose opener no longer matches their healed type are listed at
 startup rather than rewritten; `promote_openers.py` is the tool for those.
 
+**`/queue` shows and manages the ingest queue** — what is being written, what is waiting
+in run order, remove one, clear the waiting list, or cancel the one running. The badge's
+"N articles queued" label links to it. A queued batch now **survives a server restart**:
+the waiting keys are mirrored to `wiki/.jobs/pending.json` and re-queued at startup, which
+matters because a deploy is a restart and a thirty-article batch is ~20 hours of work. The
+job that was RUNNING when the server stopped is deliberately not resumed — it is left in
+the reading list to re-run, so an article that crashes the server cannot become a crash
+loop.
+
 ### `page_report.py` — everything mechanically wrong with one page
 Written for `donald-trump.md`: 223,659 bytes, fourteen sections, 53.8s to autolink against
 13,195 titles, and "pretty much a complete mess". The mess was **nine separate defects**,

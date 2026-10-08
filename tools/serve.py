@@ -1857,6 +1857,78 @@ def chat_cancel():
     return {"ok": found}
 
 
+@app.route("/queue")
+@require_login
+def queue_view():
+    """The ingest queue: what is running, what is waiting, and how to change it.
+
+    Asked for as *"maybe a way to view and manage the queue is needed"*. Until now the
+    only thing that reported the queue at all was a count in the badge — and a count
+    cannot say which article is in flight, which are behind it, or let you drop one
+    without dropping all of them.
+
+    Server-rendered and polled, deliberately: the reading list's in-flight columns are a
+    VIEW of this queue, and the whole class of bug they just had came from the browser
+    keeping its own idea of queue state. One answer, from the queue, on every page that
+    shows it.
+    """
+    listing = job_queue.listing()
+
+    def _article(key):
+        """`ingest:<file>` → the article's title, so the page names things a human
+        recognises rather than a 16-hex job id."""
+        if not key or not key.startswith("ingest:"):
+            return None
+        name = key.split(":", 1)[1]
+        raw = RAW_DIR / Path(name).name
+        title = name
+        if raw.is_file():
+            try:
+                fm, body = _parse_frontmatter(raw.read_text(encoding="utf-8",
+                                                            errors="replace"))
+                title = (fm.get("title") or "").strip() or name
+            except Exception:
+                pass
+        return {"name": name, "title": title}
+
+    running = None
+    if listing["running"]:
+        running = dict(listing["running"])
+        running["article"] = _article(running.get("key"))
+    waiting = []
+    for w in listing["waiting"]:
+        row = dict(w)
+        row["article"] = _article(w.get("key"))
+        waiting.append(row)
+
+    return render_template("queue.html", running=running, waiting=waiting,
+                           total=len(waiting) + (1 if running else 0))
+
+
+@app.route("/chat/queue/drop", methods=["POST"])
+@require_login
+def chat_queue_drop():
+    """Drop ONE waiting job. The running one is untouched — `/chat/cancel` is for that,
+    and this is deliberately the safe action: nothing half-written is abandoned."""
+    data = request.get_json(silent=True) or {}
+    job_id = (data.get("job_id") or "").strip()
+    if not job_id:
+        return {"error": "Missing job_id"}, 400
+    found = job_queue.drop(job_id)
+    if found:
+        log.info("Queued job %s dropped by user", job_id)
+    return {"ok": found, "pending": job_queue.status()["pending"]}
+
+
+@app.route("/api/queue")
+@require_login
+def api_queue():
+    """The same listing as JSON, for the page's poll."""
+    listing = job_queue.listing()
+    return {"running": listing["running"], "waiting": listing["waiting"],
+            "pending": len(listing["waiting"])}
+
+
 @app.route("/chat/queue/drain", methods=["POST"])
 @require_login
 def chat_queue_drain():
@@ -3385,6 +3457,78 @@ def inbox_delete():
     return {"ok": True}
 
 
+def _ingest_job(filename: str):
+    """Everything needed to queue one article's ingest, or None if it cannot be read.
+
+    Hoisted out of `inbox_process_all` so **the route and the restart-resume path build an
+    ingest exactly one way.** Two copies of this would drift on the first change to the
+    prompt or the wikified-marking, and the resume path is the one nobody watches.
+
+    Returns `(history, setup, on_done)`. The caller owns the `submit` and the dedupe key,
+    because what to do about a duplicate differs: the route reports it, a resume ignores it.
+    """
+    import re as _re
+    import agent as _agent
+
+    inbox_path = RAW_DIR / Path(filename).name
+    try:
+        file_content = inbox_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        log.warning("ingest job: cannot read %s: %s", filename, e)
+        return None
+
+    inbox_path_str = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
+    inbox_url = ""
+    stripped = file_content.strip()
+    if stripped.startswith("http") and "\n" not in stripped:
+        inbox_url = stripped
+    else:
+        _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', file_content, _re.MULTILINE)
+        if _m:
+            inbox_url = _m.group(1).strip()
+
+    # Bound as DEFAULTS. Thirty of these are built in one loop, and late binding would
+    # hand every job the LAST article's session — invisible until you read the pages it
+    # wrote.
+    def _setup(_p=inbox_path_str, _u=inbox_url):
+        _agent.init_session(inbox_path=_p, inbox_url=_u)
+
+    history = [
+        {"role": "user",      "content": orientation_message()},
+        {"role": "assistant", "content": "Oriented. Ready."},
+        {"role": "user",      "content": (
+            f'Ingest raw/{inbox_path.name}.\n\n'
+            f'The complete contents of that file are below — this is the whole source. '
+            f'That satisfies Step 2: do NOT call read_file on it, go straight to Step 3.\n\n'
+            f'<file path="raw/{inbox_path.name}">\n{file_content}\n</file>'
+        )},
+    ]
+
+    def on_done(messages, _fname=filename):
+        save_history(messages, source="inbox")
+        ingested = any(
+            isinstance(m.get("content"), str) and m["content"].startswith("__ingested__:1")
+            for m in messages
+            if m.get("role") == "system"
+        )
+        if ingested:
+            raw_path = RAW_DIR / Path(_fname).name
+            try:
+                raw_fm, _ = _parse_frontmatter(raw_path.read_text(encoding="utf-8", errors="replace"))
+                if raw_fm.get("fetch_failed"):
+                    log.warning("ingest job: refusing to mark wikified — fetch_failed=true in %s", _fname)
+                    ingested = False
+            except Exception:
+                pass
+        if ingested:
+            _mark_inbox_wikified(_fname)
+            log.info("ingest job: marked wikified %s", _fname)
+        else:
+            log.warning("ingest job: no __ingested__:1 for %s — not marking wikified", _fname)
+
+    return history, _setup, on_done
+
+
 @app.route("/inbox/process-all", methods=["POST"])
 @require_login
 def inbox_process_all():
@@ -3428,87 +3572,20 @@ def inbox_process_all():
     if error:
         return {"error": error}, 503
 
-    import re as _re
-    import agent as _agent
-
     queued: list = []
     already: list = []
     unreadable: list = []
-    succeeded: list = []
-    failed: list = []
 
     for item in unprocessed:
         filename = item["filename"]
-        inbox_path = RAW_DIR / Path(filename).name
-        try:
-            file_content = inbox_path.read_text(encoding="utf-8", errors="replace")
-        except OSError as e:
-            log.warning("inbox/process-all: cannot read %s: %s", filename, e)
+        built = _ingest_job(filename)
+        if built is None:
             unreadable.append(filename)
             continue
-
-        inbox_path_str = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
-        inbox_url = ""
-        stripped = file_content.strip()
-        if stripped.startswith("http") and "\n" not in stripped:
-            inbox_url = stripped
-        else:
-            _m = _re.search(r'^url:\s*["\']?([^\s"\'\n]+)', file_content, _re.MULTILINE)
-            if _m:
-                inbox_url = _m.group(1).strip()
-
-        # Every closure below binds its item's values as DEFAULTS. Building N of them in
-        # one loop, a late-bound `inbox_path_str` would give all thirty jobs the last
-        # article's session — the classic version of this bug, and invisible until you
-        # read the ingested pages.
-        def _setup(_p=inbox_path_str, _u=inbox_url):
-            _agent.init_session(inbox_path=_p, inbox_url=_u)
-
-        history = [
-            {"role": "user",      "content": orientation_message()},
-            {"role": "assistant", "content": "Oriented. Ready."},
-            {"role": "user",      "content": (
-                f'Ingest raw/{inbox_path.name}.\n\n'
-                f'The complete contents of that file are below — this is the whole source. '
-                f'That satisfies Step 2: do NOT call read_file on it, go straight to Step 3.\n\n'
-                f'<file path="raw/{inbox_path.name}">\n{file_content}\n</file>'
-            )},
-        ]
-
-        def on_done(messages, _fname=filename):
-            save_history(messages, source="inbox")
-            ingested = any(
-                isinstance(m.get("content"), str) and m["content"].startswith("__ingested__:1")
-                for m in messages
-                if m.get("role") == "system"
-            )
-            if ingested:
-                raw_path = RAW_DIR / Path(_fname).name
-                try:
-                    raw_fm, _ = _parse_frontmatter(raw_path.read_text(encoding="utf-8", errors="replace"))
-                    if raw_fm.get("fetch_failed"):
-                        log.warning("inbox/process-all: refusing to mark wikified — fetch_failed=true in %s", _fname)
-                        ingested = False
-                except Exception:
-                    pass
-            if ingested:
-                _mark_inbox_wikified(_fname)
-                succeeded.append(_fname)
-                log.info("inbox/process-all: marked wikified %s", _fname)
-            else:
-                failed.append(_fname)
-                log.warning("inbox/process-all: no __ingested__:1 for %s — not marking wikified", _fname)
-            # The summary, when every job this request queued has reported. A CANCELLED
-            # job never calls on_done, so cancelling one item means no summary line — a
-            # missing log, not a stuck batch, which is the whole point of not tracking
-            # batch state in a flag.
-            if len(succeeded) + len(failed) >= len(queued):
-                log.info("inbox/process-all: done — %d succeeded, %d failed%s",
-                         len(succeeded), len(failed),
-                         ("; failed: " + ", ".join(failed)) if failed else "")
+        history, setup, on_done = built
 
         job_id, duplicate = job_queue.submit(
-            client, model, history, system_prompt(), on_done=on_done, setup=_setup,
+            client, model, history, system_prompt(), on_done=on_done, setup=setup,
             key=f"ingest:{Path(filename).name}")
         if duplicate:
             log.info("inbox/process-all: %s is already being ingested as job %s — skipping",
@@ -3852,6 +3929,40 @@ def _inbox_edit_write(p, content):
 job_queue = JobQueue(WIKI_DIR / ".jobs")
 
 
+def _resume_ingest(key: str):
+    """Rebuild one interrupted ingest from its dedupe key, for `resume_pending`.
+
+    The key is `ingest:<raw filename>` and that is all the queue persisted, which is the
+    whole point: the history, the setup and the on_done come from `_ingest_job`, the same
+    builder the route uses, so a resumed job and a freshly queued one cannot differ.
+
+    Returns None — dropping the job — when the article has since been wikified, archived
+    or deleted, because re-running it would spend ~40 minutes re-folding a source already
+    in the wiki.
+    """
+    if not key.startswith("ingest:"):
+        return None                       # a chat turn is not resumable
+    name = key.split(":", 1)[1]
+    raw = RAW_DIR / Path(name).name
+    if not raw.is_file():
+        return None
+    try:
+        fm, _ = _parse_frontmatter(raw.read_text(encoding="utf-8", errors="replace"))
+        if fm.get("wikified") or fm.get("archived"):
+            return None
+    except Exception:
+        return None
+    client, model, error = get_client_and_model()
+    if error:
+        log.warning("resume: no LLM client available (%s) — not resuming %s", error, key)
+        return None
+    built = _ingest_job(name)
+    if built is None:
+        return None
+    history, setup, on_done = built
+    return client, model, history, system_prompt(), on_done, setup
+
+
 def _migrate_raw_subdirs() -> None:
     """One-time migration: move files from raw/inbox/ and raw/sources/ into raw/."""
     for subdir_name in ("inbox", "sources"):
@@ -3939,6 +4050,13 @@ if __name__ == "__main__":
     _ver = deployed_version()
     log.info("Lobotomy starting — version: %s", _ver)
     _warn_low_disk()
+    # Re-queue what was waiting when this process last stopped. A deploy is a restart, and
+    # a thirty-article batch is ~20 hours of work at max_rpm 1 — it used to vanish, with
+    # the reading list then correctly showing every article as idle, which reads exactly
+    # like the display being wrong.
+    _resumed = job_queue.resume_pending(_resume_ingest)
+    if _resumed:
+        print(f"re-queued {_resumed} article(s) interrupted by the last restart")
     print(f"\nLobotomy  http://{host}:{port}  (provider: {provider})")
     print(f"version: {_ver}\n")
     app.run(host=host, port=port, debug=False, threaded=True)

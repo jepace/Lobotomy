@@ -241,3 +241,32 @@ class TempWikiTestCase(unittest.TestCase):
         self.addCleanup(lambda: self._tw.__exit__(None, None, None))
 
 
+def parked_job_queue(jobs_dir):
+    """A real `JobQueue` with its worker thread never started, so the test decides when a
+    job finishes and the queue stays full for inspection.
+
+    **One place, because three modules were each duplicating `__init__`'s attribute list**
+    and every attribute added to the real class broke all of them at once — fourteen
+    errors in one run when the pending-queue mirror landed, none of them about the thing
+    being tested. The real `__init__` is still the source of truth for behaviour; this
+    only skips the thread.
+    """
+    import queue as _queue
+    import threading as _threading
+    from pathlib import Path as _Path
+    import job_queue as _jq
+
+    d = _Path(jobs_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    q = _jq.JobQueue.__new__(_jq.JobQueue)
+    q._dir = d
+    q._q = _queue.Queue()
+    q._current_job_id = None
+    q._cancel_events = {}
+    q._lock = _threading.Lock()
+    q._keys = {}
+    q._job_keys = {}
+    q._pending_keys = []
+    q._pending_file = d / "pending.json"
+    q._started = True
+    return q

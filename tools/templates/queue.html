@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}Ingest Queue{% endblock %}
+
+{% block head %}
+<style>
+  .page-topbar {
+    position: sticky; top: 0;
+    background: var(--bg); border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    z-index: 100;
+  }
+  .page-topbar h1 { font-size: 17px; font-weight: 600; }
+
+  .q-empty { margin: 40px 16px; color: var(--text2); text-align: center; }
+
+  .q-section { margin: 16px 12px 8px; }
+  .q-section h2 {
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--text2); margin-bottom: 8px;
+  }
+
+  .q-row {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--bg2); border-radius: 12px;
+    padding: 12px 14px; margin-bottom: 8px;
+  }
+  /* Amber for the one actually spending the quota, matching the reading list's rule:
+     amber is the expensive action, and this is the row that is costing something. */
+  .q-row.running { border-left: 3px solid var(--warn); }
+  .q-pos {
+    flex: 0 0 auto; min-width: 26px;
+    font-size: 12px; color: var(--text2); font-variant-numeric: tabular-nums;
+  }
+  .q-body { flex: 1; min-width: 0; }
+  .q-title {
+    font-size: 15px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .q-meta { font-size: 12px; color: var(--text2); margin-top: 2px; }
+  .q-meta code { font-size: 11px; }
+
+  .q-state {
+    flex: 0 0 auto; font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 999px;
+  }
+  .q-state.running { background: var(--warn); color: #fff; }
+  .q-state.waiting { background: var(--bg); color: var(--text2);
+                     border: 1px solid var(--border); }
+
+  .q-actions { display: flex; gap: 12px; margin: 18px 12px 32px; flex-wrap: wrap; }
+  .q-note { margin: 0 12px 24px; font-size: 12px; color: var(--text2); line-height: 1.5; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-topbar">
+  <h1>Ingest Queue</h1>
+  <a class="btn btn-ghost btn-sm" href="/reading-list">Reading list</a>
+</div>
+
+<div class="page">
+  <div id="q-live">
+    {% if not running and not waiting %}
+      <div class="q-empty">Nothing queued.</div>
+    {% else %}
+      {% if running %}
+        <div class="q-section">
+          <h2>Writing now</h2>
+          <div class="q-row running">
+            <div class="q-pos">▶</div>
+            <div class="q-body">
+              <div class="q-title">{{ running.article.title if running.article else running.key or running.job_id }}</div>
+              <div class="q-meta">
+                {% if running.article %}<code>raw/{{ running.article.name }}</code> · {% endif %}
+                job <code>{{ running.job_id[:8] }}</code>
+              </div>
+            </div>
+            <div class="q-state running">running</div>
+          </div>
+        </div>
+      {% endif %}
+
+      {% if waiting %}
+        <div class="q-section">
+          <h2>{{ waiting | length }} waiting</h2>
+          {% for w in waiting %}
+            <div class="q-row" data-job="{{ w.job_id }}">
+              <div class="q-pos">{{ loop.index }}</div>
+              <div class="q-body">
+                <div class="q-title">{{ w.article.title if w.article else w.key or w.job_id }}</div>
+                <div class="q-meta">
+                  {% if w.article %}<code>raw/{{ w.article.name }}</code>{% else %}
+                    not an article — a chat turn{% endif %}
+                </div>
+              </div>
+              <button class="act-btn delete" onclick="dropJob('{{ w.job_id }}')">Remove</button>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  <div class="q-actions">
+    {% if waiting %}
+      <button class="btn btn-ghost btn-sm" onclick="drainQueue()">Clear the waiting list</button>
+    {% endif %}
+    {% if running %}
+      <button class="btn btn-ghost btn-sm" onclick="cancelRunning('{{ running.job_id }}')">
+        Cancel the one running
+      </button>
+    {% endif %}
+  </div>
+
+  <div class="q-note">
+    Removing a waiting article drops it from the queue and nothing else — it stays in the
+    reading list, un-wikified, and Wikify will run it again. Cancelling the one running
+    abandons a part-written article: the pages it has already written stay, and the source
+    is <em>not</em> marked wikified, so re-running it folds the whole article in again.
+    A queued batch survives a server restart; the one that was running when the server
+    stopped does not, and is left in the reading list for you to re-run.
+  </div>
+</div>
+
+<script>
+async function dropJob(jobId) {
+  try {
+    const r = await apiFetch('/chat/queue/drop', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({job_id: jobId}),
+    });
+    if (!r.ok) alert('That job was no longer waiting — it may have just started.');
+  } catch (e) {
+    alert('Could not remove it: ' + (e && e.message ? e.message : e));
+  }
+  location.reload();
+}
+
+async function drainQueue() {
+  if (!confirm('Drop every waiting article?\n\nThe one being written now will finish. '
+             + 'The rest stay in the reading list and can be run again.')) return;
+  try {
+    await apiFetch('/chat/queue/drain', {method: 'POST'});
+  } catch (e) {
+    alert('Could not clear the queue: ' + (e && e.message ? e.message : e));
+  }
+  location.reload();
+}
+
+async function cancelRunning(jobId) {
+  if (!confirm('Cancel the article being written?\n\nIt is part-written: the pages it has '
+             + 'already changed stay as they are, and the article is NOT marked wikified, '
+             + 'so running it again folds the whole thing in from the start.')) return;
+  try {
+    await apiFetch('/chat/cancel', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({job_id: jobId}),
+    });
+  } catch (e) {
+    alert('Could not cancel it: ' + (e && e.message ? e.message : e));
+  }
+  location.reload();
+}
+
+// Reload when the SHAPE of the queue changes — a job finishing, one being added, the
+// running one changing. Not a DOM patch: this page is small, server-rendered, and the
+// reason the reading list's in-flight columns were wrong for a week was a browser keeping
+// its own idea of queue state. One answer, from the queue.
+//
+// Cadence, not a fixed interval — base.html's rule, and `test_polling_backoff` enforces
+// it: a bare `setInterval` cannot back off or stop, and every poll is a line in an access
+// log. This project has already had its disk filled once by its own polling, and the one
+// log it reads had both paths filtered out so the volume was invisible.
+//
+// A page ABOUT the queue earns the fast rate while something is running, which is exactly
+// when the shape changes; idle it drops to 30s, and hidden it stops entirely rather than
+// ticking and discarding the result.
+const Q_BUSY_MS = 5000, Q_IDLE_MS = 30000;
+(function pollQueue() {
+  let last = null, timer = null;
+  function schedule(busy) {
+    clearTimeout(timer);
+    timer = setTimeout(tick, busy ? Q_BUSY_MS : Q_IDLE_MS);
+  }
+  async function tick() {
+    if (document.hidden) { schedule(false); return; }
+    let busy = false;
+    try {
+      const q = await apiFetch('/api/queue');
+      busy = !!(q.running || (q.waiting || []).length);
+      const shape = JSON.stringify([
+        q.running && q.running.job_id,
+        (q.waiting || []).map(w => w.job_id),
+      ]);
+      // Reload only when the SHAPE changes — a job finishing, one added, the running one
+      // handing over. Not a DOM patch: the reading list's in-flight columns were wrong
+      // for a week because the browser kept its own idea of queue state.
+      if (last !== null && shape !== last) { location.reload(); return; }
+      last = shape;
+    } catch (e) { /* a failed poll is not worth a message; try again next tick */ }
+    schedule(busy);
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) { clearTimeout(timer); tick(); }
+  });
+  tick();
+})();
+</script>
+{% endblock %}

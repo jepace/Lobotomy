@@ -32,19 +32,10 @@ import serve
 import tempfile
 
 
-class _Q(jq_mod.JobQueue):
-    """A queue with no worker thread, so the test decides when a job finishes."""
-
-    def __init__(self, d):
-        self._dir = Path(d)
-        self._dir.mkdir(parents=True, exist_ok=True)
-        import queue as _queue
-        self._q = _queue.Queue()
-        self._current_job_id = None
-        self._cancel_events = {}
-        self._lock = threading.Lock()
-        self._keys = {}
-        self._job_keys = {}
+# Was a local `_Q` subclass duplicating `JobQueue.__init__`'s attribute list. Every
+# attribute added to the real class broke it — and the two other modules doing the same
+# thing — with errors about nothing to do with what was being tested.
+from harness import parked_job_queue as _Q
 
 
 class SubmitDedupeTest(unittest.TestCase):
@@ -304,10 +295,22 @@ class CallSiteTest(unittest.TestCase):
 
     def test_every_per_item_closure_binds_its_own_values(self):
         """Thirty closures built in one loop with late binding would give every job the
-        LAST article's session — invisible until you read the pages it wrote."""
+        LAST article's session — invisible until you read the pages it wrote.
+
+        Addressed to `_ingest_job` rather than the route: the construction was hoisted
+        there so the route and the restart-resume path cannot build an ingest two ways."""
+        block = self.src[self.src.index("def _ingest_job"):]
+        block = block[:block.index("\n@app.route")]
+        self.assertIn("def _setup(_p=inbox_path_str, _u=inbox_url):", block)
+        self.assertIn("def on_done(messages, _fname=filename):", block)
+
+    def test_the_route_builds_its_jobs_through_the_shared_builder(self):
+        """Two copies of the ingest prompt and the wikified-marking would drift on the
+        first change, and the resume path is the one nobody watches."""
         code = self._process_all_code()
-        self.assertIn("def _setup(_p=inbox_path_str, _u=inbox_url):", code)
-        self.assertIn("def on_done(messages, _fname=filename):", code)
+        self.assertIn("_ingest_job(filename)", code)
+        self.assertNotIn("orientation_message()", code,
+                         "the route is building the history itself again")
 
 
 class TemplateTest(unittest.TestCase):

@@ -557,6 +557,62 @@ back — so the function's shape quietly assumed state only moves forwards. In-f
 moves both ways, and **the direction nobody wrote is the one a drain needs.** When adding a
 field to that function, ask what clears it.
 
+**The queue was in-memory only, and nothing said so** (`_save_pending`, `resume_pending`,
+`serve._resume_ingest`). Reported as *"reloading or navigating away resets the reading list
+so I can't see what's in the ingest queue / wrong data is displayed."* Reloading the PAGE
+was already fixed by the entry above; what was left explains the same symptom and is worse.
+**Queue thirty articles, restart the server — a deploy IS a restart — and all thirty were
+gone.** The articles stayed in the reading list, so nothing was lost permanently, but ~20
+hours of queued work at `max_rpm: 1` silently became nothing and the list then correctly
+showed every one as idle, which reads exactly like the display being wrong. `_recover`'s own
+docstring says "the work itself is not lost either way" — true of the article, false of the
+queue.
+
+Three decisions:
+
+- **Only the KEYS are persisted.** An ingest's messages are derivable: the key is
+  `ingest:<raw filename>` and `serve._ingest_job` rebuilds the history, setup and `on_done`
+  from that file. Writing the messages would store every queued article's full text plus
+  the orientation message, then replay a prompt built against a wiki that has moved on.
+  That construction was **hoisted out of the route** so a resumed job and a freshly queued
+  one cannot be built two different ways — the resume path is the one nobody watches.
+- **Only the WAITING ones, never the one that was running.** If that article is what killed
+  the server, re-queueing it is a crash loop that survives restarts. It is in the reading
+  list and one click re-runs it. A resume builder may also DECLINE — the article may have
+  been wikified or deleted while the server was down — and the mirror is cleared **before**
+  any attempt, so one that cannot be built is not retried on every restart forever.
+- **A chat turn is never recorded.** No key, messages derivable from nothing, and an
+  interactive turn whose browser has gone is not worth resuming.
+
+**The bug this found was in the mirroring, and only a REAL queue showed it.** Two threads
+write that file — the submitting thread records a job joining, the WORKER records one
+leaving — and the first version shared one `pending.tmp`. Both wrote it, both called
+`replace`, the loser got `ENOENT`, and the file that survived was two interleaved writes
+(`["ingest:c.md"] "ingest:c.md"]`) which `_load_pending` then refused as malformed. **So a
+restart silently resumed nothing — the exact failure the feature exists to prevent.** With
+a single-threaded fake it looked perfect. The save now holds the lock and uses a
+pid-and-thread temp name.
+
+**`/queue` is the page for it** (`JobQueue.listing`, `drop`, `queue.html`), asked for in the
+same message: *"maybe a way to view and manage the queue is needed."* Until then the only
+thing that reported the queue at all was the count in the badge — and a count cannot say
+which article is in flight, which are behind it, or let you drop one without dropping all
+of them. The badge's label is now the link to it, so the thing that tells you there is a
+queue is the way into it.
+
+`listing()` reads the Queue's deque under its mutex, because there is no non-destructive
+public way to look at a `queue.Queue` — getting that wrong would EAT the batch, which is
+what its test exists for. `drop(job_id)` removes one waiting job and **releases its key**,
+for the reason `drain` does: a dropped job never runs, so the worker's release never fires,
+and a leaked key makes that article permanently un-wikifiable. It refuses to touch the
+RUNNING job, which makes dropping always safe — cancelling is the separate, louder call,
+and its confirm says what it costs (a part-written article, pages already changed left in
+place, the source not marked wikified so a re-run folds the whole thing in again).
+
+**Three test modules were each duplicating `JobQueue.__init__`'s attribute list**, so the
+two attributes this added broke all of them at once — fourteen errors in one run, none
+about the thing being tested. `harness.parked_job_queue` is the one fixture now.
+
 ### Module state — read this before writing a test or a maintenance pass
 
 `agent.py` keeps mutable state in three places, and code that ignores any of them will
