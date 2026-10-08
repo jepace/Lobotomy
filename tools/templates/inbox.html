@@ -248,9 +248,12 @@
              already in the wiki: another ~40-minute ingest at max_rpm 1, re-folding the
              same source into the same pages. The badge was the only thing saying so, and
              it was too small to see. #}
-          <button class="act-btn wikify" {% if item.wikified %}disabled
-                  title="Already wikified — use View page"{% endif %}
-                  onclick="wikifyItem('{{ item.name | e }}')">{{ 'Wikified ✓' if item.wikified else 'Wikify' }}</button>
+          {# The in-flight state comes from the SERVER (item.ingest), so a reload during a
+             batch shows thirty queued rows as queued rather than as ready to start, and a
+             Clear Queue frees them on the next poll instead of leaving them stuck. #}
+          <button class="act-btn wikify" {% if item.wikified or item.ingest %}disabled
+                  {% if item.wikified %}title="Already wikified — use View page"{% endif %}{% endif %}
+                  onclick="wikifyItem('{{ item.name | e }}')">{{ 'Wikified ✓' if item.wikified else ('Working…' if item.ingest == 'running' else ('Queued' if item.ingest else 'Wikify')) }}</button>
           <button class="act-btn" onclick="editItem('{{ item.name | e }}')">Edit</button>
         {% endif %}
         <button class="act-btn delete" onclick="deleteItem('{{ item.name | e }}')">Delete</button>
@@ -322,11 +325,20 @@ const itemState = {}; // name -> {has_content, wikified, wiki_path}
     const name = el.dataset.name;
     if (!name) return;
     seenItems.add(name);
+    // Seeded from the DOM the server just rendered, including the in-flight state, so the
+    // first poll compares against what is on screen rather than against "" — otherwise
+    // every queued row looks like a fresh transition and gets re-rendered for no reason.
+    const _wb = el.querySelector('.act-btn.wikify');
+    const _wt = (_wb && _wb.textContent || '').trim();
     itemState[name] = {
       has_content: !!el.querySelector('.act-btn.read'),
       wikified:    !!el.querySelector('.wikified-badge'),
       wiki_path:   el.querySelector('a.act-btn.wikipage')?.getAttribute('href')?.replace('/wiki/', '') || '',
+      ingest:      _wt === 'Queued' ? 'queued' : (_wt.startsWith('Working') ? 'running' : ''),
     };
+    // A row the server says is in flight must refuse a click here too, or the local set
+    // and the server's answer disagree on a fresh load.
+    if (itemState[name].ingest && window.wikifying) window.wikifying.add(name);
   });
 })();
 
@@ -357,6 +369,31 @@ function patchItemStatus(item) {
     markRowWikified(item.name, item.wiki_path);
     prev.wikified = true;
     prev.wiki_path = item.wiki_path;
+    changed = true;
+  }
+
+  // In-flight state, BOTH directions. Every other branch here patches a one-way
+  // transition — content arrives, a page gets wikified — and that asymmetry is what left
+  // rows stuck: Clear Queue drops the jobs and releases their keys, so `item.ingest` goes
+  // back to "", and nothing was watching for that. Thirty rows read "Queued" until a
+  // reload while the server was ready to run every one of them again.
+  //
+  // Driven off the server's answer rather than a local flag, so it is also right after a
+  // reload mid-batch, and it is what finally says WHICH article is being written.
+  if (!item.wikified && (item.ingest || "") !== (prev.ingest || "")) {
+    const btn = partFor(item.name, '.act-btn.wikify');
+    if (btn) {
+      if (item.ingest === 'running')   { btn.disabled = true;  btn.textContent = 'Working…'; }
+      else if (item.ingest)            { btn.disabled = true;  btn.textContent = 'Queued'; }
+      else                             { btn.disabled = false; btn.textContent = 'Wikify'; }
+    }
+    // The local in-flight set has to follow, or a row the queue has let go still refuses
+    // the click that would start it.
+    if (window.wikifying) {
+      if (item.ingest) window.wikifying.add(item.name);
+      else window.wikifying.delete(item.name);
+    }
+    prev.ingest = item.ingest || "";
     changed = true;
   }
 
@@ -410,7 +447,8 @@ async function pollInbox() {
 
     newItems.forEach(item => {
       seenItems.add(item.name);
-      itemState[item.name] = { has_content: item.has_content, wikified: item.wikified, wiki_path: item.wiki_path };
+      itemState[item.name] = { has_content: item.has_content, wikified: item.wikified,
+                               wiki_path: item.wiki_path, ingest: item.ingest || "" };
     });
 
     // Find first reading-item or empty-state
@@ -445,8 +483,8 @@ async function pollInbox() {
         ${item.source_url ? `<a class="act-btn open" href="${item.source_url.replace(/"/g, '&quot;')}" target="_blank" rel="noopener">Open &#8599;</a>` : ''}
         ${item.wikified && item.wiki_path ? `<a class="act-btn wikipage" href="/wiki/${item.wiki_path}">View page &#8594;</a>` : ''}
         <button class="act-btn archive" onclick="archiveItem('${item.name.replace(/'/g, "\\'")}')">Archive</button>
-        <button class="act-btn wikify" ${item.wikified ? 'disabled title="Already wikified &#8212; use View page"' : ''}
-                onclick="wikifyItem('${item.name.replace(/'/g, "\\'")}')">${item.wikified ? 'Wikified &#10003;' : 'Wikify'}</button>
+        <button class="act-btn wikify" ${item.wikified ? 'disabled title="Already wikified &#8212; use View page"' : (item.ingest ? 'disabled' : '')}
+                onclick="wikifyItem('${item.name.replace(/'/g, "\\'")}')">${item.wikified ? 'Wikified &#10003;' : (item.ingest === 'running' ? 'Working&#8230;' : (item.ingest ? 'Queued' : 'Wikify'))}</button>
         <button class="act-btn delete"  onclick="deleteItem('${item.name.replace(/'/g, "\\'")}')">Delete</button>
         <button class="act-btn" onclick="editItem('${item.name.replace(/'/g, "\\'")}')">Edit</button>
       </div>

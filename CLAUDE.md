@@ -525,6 +525,38 @@ per-item values bound as **defaults** (`def _setup(_p=inbox_path_str, …)`). La
 would hand every job the LAST article's session, which nothing would report — you would
 find it by reading the pages the ingest wrote.
 
+**Whether an article is being ingested is the SERVER's answer** (`JobQueue.in_flight`,
+`list_inbox`'s `ingest` field). Asked *"will clear queue remove those?"* about a batch the
+new Wikify All had just queued. It does — `drain()` drops every waiting job, releases its
+dedupe key and leaves the running one to finish — **and the reading list then went on
+saying "Queued" for all of them until a page reload.**
+
+That was a regression from the commit before: Wikify All now disables every row it queues,
+so where one stale row had been possible there were thirty. But looking at it found two
+older faults of the same shape, and all three have one cause — **the browser was inferring
+in-flight state from what it had itself started:**
+
+- **Clear Queue left every row disabled** against a server that had released the keys and
+  would have taken every one of them again.
+- **A reload mid-batch showed every queued row as ready to Wikify.** Nothing was
+  double-ingested, because the dedupe key refused the click — but the page was wrong about
+  thirty articles and invited a click that did nothing visible.
+- **Nothing said WHICH article was being written.** The badge gave a count and the nav went
+  busy; the row in flight looked like the other twenty-nine.
+
+`_keys` has held the answer since the dedupe guard was added and nothing could ask for it.
+`in_flight()` returns `{key: "running"|"queued"}`, `list_inbox` asks **once per listing**
+rather than once per item (the rule the source-page map here learned the hard way, on a
+path polled every 8 seconds), and every item carries `ingest: "" | "queued" | "running"` —
+so a page load, a poll and a drain cannot disagree. A queue that cannot answer costs the
+column and never the page.
+
+**The asymmetry is the part worth remembering.** Every other branch of `patchItemStatus`
+patches a one-way transition — content arrives, a page becomes wikified, neither ever goes
+back — so the function's shape quietly assumed state only moves forwards. In-flight state
+moves both ways, and **the direction nobody wrote is the one a drain needs.** When adding a
+field to that function, ask what clears it.
+
 ### Module state — read this before writing a test or a maintenance pass
 
 `agent.py` keeps mutable state in three places, and code that ignores any of them will

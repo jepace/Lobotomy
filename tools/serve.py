@@ -1427,6 +1427,14 @@ def _unique_raw_name(name: str) -> str:
 
 
 def list_inbox(show_archived: bool = False) -> list:
+    # Which articles the queue is holding, asked ONCE for the whole listing rather than
+    # per item — the same reason the source-page map is built once here. `ingest:<name>`
+    # is the key `wikifyItem` and `process-all` both submit under, so this is the same
+    # fact the dedupe guard uses, not a second opinion about it.
+    try:
+        _in_flight = job_queue.in_flight()
+    except Exception:
+        _in_flight = {}
     candidates = []
     if RAW_DIR.is_dir():
         candidates += [
@@ -1514,6 +1522,10 @@ def list_inbox(show_archived: bool = False) -> list:
             "wikified":    wikified,
             "wiki_path":   wiki_path,
             "archived":    archived,
+            # "" | "queued" | "running". The server's answer, so a page load, a poll and
+            # a Clear Queue all agree — the browser used to infer it from what it had
+            # itself started, which no reload could recover and no drain could correct.
+            "ingest":      _in_flight.get(f"ingest:{f.name}", ""),
         })
     return items
 

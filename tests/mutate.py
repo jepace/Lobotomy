@@ -806,8 +806,8 @@ MUTATIONS = [
     # Nothing disabled Wikify on an article already wikified: one click started another
     # ~40-minute ingest re-folding the same source into the same pages.
     ('inbox ui: Wikify is dead once the article is wikified',
-     '          <button class="act-btn wikify" {% if item.wikified %}disabled',
-     '          <button class="act-btn wikify" {% if False %}disabled',
+     '          <button class="act-btn wikify" {% if item.wikified or item.ingest %}disabled',
+     '          <button class="act-btn wikify" {% if item.ingest %}disabled',
      'tools/templates/inbox.html'),
     ('inbox ui: the poll-rendered row disables it too',
      '        <button class="act-btn wikify" ${item.wikified ? \'disabled',
@@ -1084,6 +1084,28 @@ MUTATIONS = [
     ('timeline: a span is accepted by the tool',
      '    if not (_TL_DATE_RE.match(date) or _TL_SPAN_RE.match(date)):',
      '    if not _TL_DATE_RE.match(date):'),
+    # In-flight state. The browser used to guess it; three ways that was wrong, and the
+    # one that matters is the direction nothing was watching — a drain freeing a row.
+    ('in-flight: the running article is distinguished from the waiting ones',
+     '        return {k: ("running" if k == running_key else "queued") for k in keys}',
+     '        return {k: "queued" for k in keys}',
+     'tools/job_queue.py'),
+    ('in-flight: the listing reports the queue\'s answer per item',
+     '            "ingest":      _in_flight.get(f"ingest:{f.name}", ""),',
+     '            "ingest":      "",',
+     'tools/serve.py'),
+    ('in-flight: a queue failure costs the column, not the page',
+     '    try:\n        _in_flight = job_queue.in_flight()\n    except Exception:\n        _in_flight = {}',
+     '    _in_flight = job_queue.in_flight()',
+     'tools/serve.py'),
+    ('in-flight: the poll frees a row the queue has let go',
+     "      else                             { btn.disabled = false; btn.textContent = 'Wikify'; }",
+     '      else                             { }',
+     'tools/templates/inbox.html'),
+    ('in-flight: the local set follows the server both ways',
+     '      else window.wikifying.delete(item.name);',
+     '      else ;',
+     'tools/templates/inbox.html'),
     # Wikify All. The button never touched the queue, and the route lied about what it
     # had queued; both halves need a mutation or the fix can silently revert.
     ('wikify-all: the button posts to the queue route',

@@ -53,6 +53,33 @@ class JobQueue:
             jid = self._current_job_id
         return {"running": jid is not None, "job_id": jid, "pending": self._q.qsize()}
 
+    def in_flight(self) -> dict:
+        """Every deduplication key the queue is holding, as `{key: "running"|"queued"}`.
+
+        **The authoritative answer to "is this article being ingested?"**, and it was
+        previously nowhere. `_keys` has held it since the dedupe guard was added — the
+        queue already knows exactly which articles are waiting and which one is being
+        written — but nothing could ask, so the browser guessed from what it had itself
+        started. Three ways that guess was wrong:
+
+          * **Clear Queue left every row reading "Queued".** The jobs were dropped and
+            their keys released, so the server would happily take them again, while the
+            rows stayed disabled until a page reload.
+          * **A reload during a batch showed every queued row as ready to Wikify.** The
+            dedupe key refused the click, so nothing was double-ingested, but the page
+            was lying about the state of thirty articles.
+          * **Nothing said WHICH article was being written.** The badge gave a count and
+            the nav went busy; the one row actually in flight looked like the other
+            twenty-nine.
+
+        Cheap enough for the 8-second `/inbox/list` poll: one dict copy under the lock,
+        sized by the queue rather than by the wiki.
+        """
+        with self._lock:
+            running_key = self._job_keys.get(self._current_job_id)
+            keys = dict(self._keys)
+        return {k: ("running" if k == running_key else "queued") for k in keys}
+
     def submit(self, client, model: str, messages: list,
                system: str, on_done=None, setup=None, key: str = None) -> tuple:
         """

@@ -97,13 +97,36 @@ class WikifyIsDisabledWhenDoneTest(unittest.TestCase):
     def setUpClass(cls):
         cls.src = TEMPLATE.read_text(encoding="utf-8")
 
+    def _wikify_button(self, jinja: bool):
+        """The one button's markup, isolated. Asserting a regex against the whole template
+        prints 53KB of CSS on failure and buries the line that matters."""
+        marker = ('<button class="act-btn wikify" {%' if jinja
+                  else '<button class="act-btn wikify" ${')
+        i = self.src.index(marker)
+        return self.src[i:i + 400]
+
     def test_the_server_template_disables_it(self):
-        self.assertRegex(self.src,
-                         r'class="act-btn wikify" \{% if item\.wikified %\}disabled')
+        """Pinned as a property rather than a string: the condition grew `or item.ingest`
+        when the queue started reporting in-flight articles, and an exact-match regex made
+        that a test failure rather than the behaviour change it was."""
+        btn = self._wikify_button(jinja=True)
+        self.assertIn("item.wikified", btn)
+        self.assertIn("disabled", btn)
+        self.assertLess(btn.index("item.wikified"), btn.index("disabled"),
+                        "wikified must be part of what disables it")
 
     def test_the_poll_render_disables_it(self):
-        self.assertRegex(self.src,
-                         r"class=\"act-btn wikify\" \$\{item\.wikified \? 'disabled")
+        btn = self._wikify_button(jinja=False)
+        self.assertIn("item.wikified ?", btn)
+        self.assertIn("disabled", btn)
+
+    def test_both_renderers_also_disable_an_in_flight_row(self):
+        """**Both renderers, always.** A queued row that still offers Wikify is a row the
+        server will refuse the click for — the dedupe key holds — so the button is a lie
+        either way, and after a Clear Queue it is a lie in the other direction."""
+        for jinja in (True, False):
+            with self.subTest(jinja=jinja):
+                self.assertIn("ingest", self._wikify_button(jinja=jinja))
 
     def test_the_disabled_button_says_why(self):
         self.assertIn("Already wikified", self.src)
