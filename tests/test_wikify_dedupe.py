@@ -250,11 +250,64 @@ class CallSiteTest(unittest.TestCase):
         self.assertIn('key=f"ingest:{Path(inbox_file).name}" if inbox_file else None',
                       self.src)
 
-    def test_process_all_advances_past_an_item_already_in_flight(self):
-        """Its own on_done chains to the next item, and a duplicate submit means that
-        on_done will never run — so without this the batch stops dead."""
-        block = self.src[self.src.index("inbox/process-all: %s is already"):]
-        self.assertIn("_submit_item(items, index + 1)", block[:400])
+    def _process_all_code(self):
+        """`inbox_process_all`'s executable body, with its docstring removed.
+
+        Asserting over the whole of serve.py was wrong twice over: the docstring EXPLAINS
+        that the chain was removed, so it names `_submit_item` and `_batch_running` and
+        every such assertion failed on the explanation rather than on the code. And a
+        failing `assertNotIn` against a 173KB string prints the whole file, which buries
+        the one line that matters.
+        """
+        block = self.src[self.src.index("def inbox_process_all"):]
+        block = block[:block.index("\ndef ")]
+        head, sep, rest = block.partition('"""')
+        return head + (rest.partition('"""')[2] if sep else "")
+
+    def test_process_all_does_not_chain_submissions(self):
+        """**This test used to assert the opposite**, and it was right to at the time: the
+        batch submitted one item and chained the next from its `on_done`, so a duplicate —
+        whose `on_done` belongs to the click that started it — stopped the batch dead, and
+        the old assertion pinned the `_submit_item(items, index + 1)` that worked around it.
+
+        The chain is gone, so the workaround it needed is gone with it. Reported as *"the
+        wikify all button doesn't seem to tie into the work queue? The number didn't go up
+        in the q"* — `status()` reports `qsize()`, and with one job running and nothing
+        behind it that is 0 for the whole batch, while the route claimed `{"queued": N}`.
+        """
+        code = self._process_all_code()
+        self.assertNotIn("_submit_item", code,
+                         "process-all chains again; the queue depth goes back to 0")
+
+    def test_the_batch_flag_is_gone(self):
+        """`_batch_running` was cleared at the END of the chain, and `_worker` skips
+        `on_done` on a cancelled job — so one cancel left it True forever and every later
+        click answered 409 until the server restarted. The per-item dedupe key already
+        prevents double submission, so the flag was a second mechanism answering a settled
+        question, with a failure mode of its own."""
+        self.assertNotIn("_batch_running", self._process_all_code())
+
+    def test_process_all_reports_what_it_actually_queued(self):
+        """The old route answered `{"queued": len(unprocessed)}` having submitted exactly
+        one job. A count the caller cannot act on is worse than no count."""
+        code = self._process_all_code()
+        self.assertIn('"queued": len(queued)', code)
+        self.assertNotIn('"queued": len(unprocessed)', code)
+
+    def test_a_duplicate_does_not_stop_the_rest_being_queued(self):
+        """`continue`, not `return`: an item already in flight is skipped and the loop
+        carries on. This is the property the chain could not have."""
+        code = self._process_all_code()
+        block = code[code.index("if duplicate:"):][:400]
+        self.assertIn("continue", block)
+        self.assertNotIn("return", block)
+
+    def test_every_per_item_closure_binds_its_own_values(self):
+        """Thirty closures built in one loop with late binding would give every job the
+        LAST article's session — invisible until you read the pages it wrote."""
+        code = self._process_all_code()
+        self.assertIn("def _setup(_p=inbox_path_str, _u=inbox_url):", code)
+        self.assertIn("def on_done(messages, _fname=filename):", code)
 
 
 class TemplateTest(unittest.TestCase):
@@ -271,6 +324,45 @@ class TemplateTest(unittest.TestCase):
 
     def test_wikify_returns_early_when_already_in_flight(self):
         self.assertRegex(self.src, r"if \(window\.wikifying\.has\(name\)\) return;")
+
+    def test_wikify_all_posts_to_the_queue_instead_of_looping(self):
+        """**The answer to "the wikify all button doesn't seem to tie into the work queue?
+        The number didn't go up in the q".** The button never called the endpoint. It
+        looped here — `for (const nm of names) await wikifyItem(nm)` — submitting one
+        article and waiting out a ~40-minute ingest before the next, so the queue behind
+        the running job was always empty and the badge's `pending` count was 0 for the
+        whole batch.
+
+        Worse than the badge: **the browser WAS the batch.** Close the tab after article
+        three of thirty and the other twenty-seven were never submitted, with nothing
+        anywhere recording that they were meant to be."""
+        body = self.src[self.src.index("async function wikifyAll()"):]
+        body = body[:body.index("\n}")]
+        self.assertIn("/inbox/process-all", body)
+        self.assertNotIn("await wikifyItem", body,
+                         "the batch is looping in the browser again")
+
+    def test_a_single_row_still_streams_its_own_job(self):
+        """The split is deliberate: watching one ingest is useful, watching thirty is not.
+        `wikifyItem` keeps the live tool-call stream for a single click."""
+        self.assertIn("async function wikifyItem(name)", self.src)
+        body = self.src[self.src.index("async function wikifyItem(name)"):]
+        self.assertIn("/chat/send", body[:1500])
+
+    def test_queued_rows_are_disabled_so_they_cannot_be_started_twice(self):
+        """The server's dedupe key would refuse the second run anyway, but a row that
+        still offers Wikify after being queued reads as untouched."""
+        body = self.src[self.src.index("async function wikifyAll()"):]
+        body = body[:body.index("\n}")]
+        self.assertIn("b.disabled = true", body)
+
+    def test_the_batch_result_is_reported_to_the_user(self):
+        """It queues and then says nothing would be indistinguishable from the old
+        silent-loop behaviour that started this."""
+        body = self.src[self.src.index("async function wikifyAll()"):]
+        body = body[:body.index("\n}")]
+        self.assertIn("r.queued", body)
+        self.assertIn("already_running", body)
 
     def test_it_is_marked_before_the_fetch(self):
         """Marked after the await and a double click lands two calls anyway."""

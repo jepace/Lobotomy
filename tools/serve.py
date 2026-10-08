@@ -3376,10 +3376,35 @@ def inbox_delete():
 @app.route("/inbox/process-all", methods=["POST"])
 @require_login
 def inbox_process_all():
-    """Process all unprocessed inbox items sequentially via the job queue."""
-    global _batch_running
-    if _batch_running:
-        return {"error": "A batch is already running."}, 409
+    """Queue every unprocessed inbox item at once.
+
+    **It used to submit them ONE AT A TIME**, chained: `_submit_item` queued item 0 and
+    only item 0, and the next was submitted from that job's `on_done`. Reported as *"the
+    wikify all button doesn't seem to tie into the work queue? The number didn't go up in
+    the q"* — and the number was right. `JobQueue.status()` reports `self._q.qsize()`, the
+    badge in `base.html` renders it as "N articles queued", and with one job running and
+    nothing behind it that is 0 for the whole batch. Worse, the route **answered
+    `{"queued": len(unprocessed)}`** — it claimed to have queued thirty articles having
+    queued one.
+
+    The chain bought nothing. The queue has a single worker, so N queued jobs run in
+    exactly the same order, one at a time, as N chained ones. What it cost:
+
+      * **The backlog was invisible**, which is the report.
+      * **A cancelled job killed the rest of the batch.** `_worker` calls `on_done` only
+        `if on_done and not cancelled`, so cancelling one item meant the chain's next link
+        was never submitted — the remaining items were silently dropped.
+      * **And `_batch_running` stuck True forever**, because it was cleared at the END of
+        the chain. Every later click answered `409 A batch is already running` until the
+        server was restarted. One cancel disabled the feature.
+
+    `_batch_running` is gone rather than fixed. **The per-item dedupe key already prevents
+    double submission** — a second click finds every item in flight and queues nothing —
+    so the flag was a second mechanism answering a question `submit(key=…)` had already
+    answered, with a failure mode of its own. A second click now reports what is already
+    running instead of refusing, which is the same choice `submit` makes: clicking twice
+    should show you the run that is happening (principle 4).
+    """
     unprocessed = [
         item for item in list_inbox()
         if not item.get("wikified") and not item.get("archived")
@@ -3394,31 +3419,21 @@ def inbox_process_all():
     import re as _re
     import agent as _agent
 
-    _batch_running = True
-    _batch_succeeded: list = []
-    _batch_failed:    list = []
+    queued: list = []
+    already: list = []
+    unreadable: list = []
+    succeeded: list = []
+    failed: list = []
 
-    def _submit_item(items, index):
-        """Submit one item; on_done sets globals then submits the next."""
-        global _batch_running
-        if index >= len(items):
-            _batch_running = False
-            log.info(
-                "inbox/process-all: done — %d succeeded, %d failed%s",
-                len(_batch_succeeded),
-                len(_batch_failed),
-                ("; failed: " + ", ".join(_batch_failed)) if _batch_failed else "",
-            )
-            return
-        item = items[index]
+    for item in unprocessed:
         filename = item["filename"]
         inbox_path = RAW_DIR / Path(filename).name
         try:
             file_content = inbox_path.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
             log.warning("inbox/process-all: cannot read %s: %s", filename, e)
-            _submit_item(items, index + 1)
-            return
+            unreadable.append(filename)
+            continue
 
         inbox_path_str = str(inbox_path.resolve().relative_to(REPO_ROOT.resolve()))
         inbox_url = ""
@@ -3430,6 +3445,10 @@ def inbox_process_all():
             if _m:
                 inbox_url = _m.group(1).strip()
 
+        # Every closure below binds its item's values as DEFAULTS. Building N of them in
+        # one loop, a late-bound `inbox_path_str` would give all thirty jobs the last
+        # article's session — the classic version of this bug, and invisible until you
+        # read the ingested pages.
         def _setup(_p=inbox_path_str, _u=inbox_url):
             _agent.init_session(inbox_path=_p, inbox_url=_u)
 
@@ -3462,33 +3481,35 @@ def inbox_process_all():
                     pass
             if ingested:
                 _mark_inbox_wikified(_fname)
-                _batch_succeeded.append(_fname)
+                succeeded.append(_fname)
                 log.info("inbox/process-all: marked wikified %s", _fname)
             else:
-                _batch_failed.append(_fname)
+                failed.append(_fname)
                 log.warning("inbox/process-all: no __ingested__:1 for %s — not marking wikified", _fname)
-            # Submit the next item now that this one is done.
-            _submit_item(items, index + 1)
+            # The summary, when every job this request queued has reported. A CANCELLED
+            # job never calls on_done, so cancelling one item means no summary line — a
+            # missing log, not a stuck batch, which is the whole point of not tracking
+            # batch state in a flag.
+            if len(succeeded) + len(failed) >= len(queued):
+                log.info("inbox/process-all: done — %d succeeded, %d failed%s",
+                         len(succeeded), len(failed),
+                         ("; failed: " + ", ".join(failed)) if failed else "")
 
         job_id, duplicate = job_queue.submit(
             client, model, history, system_prompt(), on_done=on_done, setup=_setup,
             key=f"ingest:{Path(filename).name}")
         if duplicate:
-            # Someone clicked Wikify on this item before the batch reached it. That job's
-            # on_done belongs to the click, not to us, so OURS will never fire — move the
-            # chain along here or the batch stops dead at this item.
             log.info("inbox/process-all: %s is already being ingested as job %s — skipping",
                      filename, job_id)
-            _submit_item(items, index + 1)
-            return
-        log.info("inbox/process-all: submitted %s as job %s", filename, job_id)
+            already.append(filename)
+            continue
+        queued.append(filename)
+        log.info("inbox/process-all: queued %s as job %s", filename, job_id)
 
-    try:
-        _submit_item(unprocessed, 0)
-    except Exception:
-        _batch_running = False
-        raise
-    return {"queued": len(unprocessed)}
+    log.info("inbox/process-all: queued %d, %d already in flight, %d unreadable",
+             len(queued), len(already), len(unreadable))
+    return {"queued": len(queued), "already_running": len(already),
+            "unreadable": len(unreadable)}
 
 
 def _tidy_for_reading(body: str) -> str:
@@ -3807,10 +3828,8 @@ def _inbox_edit_write(p, content):
 
 
 # ---------------------------------------------------------------------------
-# Inbox process-all state
 # ---------------------------------------------------------------------------
 
-_batch_running = False  # True while process-all is executing
 
 
 

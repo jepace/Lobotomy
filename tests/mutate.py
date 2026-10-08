@@ -793,12 +793,6 @@ MUTATIONS = [
      '            # A drained job never runs, so the worker\'s release never fires for it.\n            self._release_key(job_id)',
      '            pass',
      'tools/job_queue.py'),
-    # process-all's own on_done chains to the next item, and a duplicate submit means that
-    # on_done belongs to someone else's job and will never run for us.
-    ('wikify: process-all advances past an item already in flight',
-     '                     filename, job_id)\n            _submit_item(items, index + 1)\n            return',
-     '                     filename, job_id)',
-     'tools/serve.py'),
     ('wikify: the browser does not fire a second click through',
      '  if (window.wikifying.has(name)) return;\n  window.wikifying.add(name);',
      '  window.wikifying.add(name);',
@@ -1090,6 +1084,31 @@ MUTATIONS = [
     ('timeline: a span is accepted by the tool',
      '    if not (_TL_DATE_RE.match(date) or _TL_SPAN_RE.match(date)):',
      '    if not _TL_DATE_RE.match(date):'),
+    # Wikify All. The button never touched the queue, and the route lied about what it
+    # had queued; both halves need a mutation or the fix can silently revert.
+    ('wikify-all: the button posts to the queue route',
+     "    const r = await apiFetch('/inbox/process-all', {method: 'POST'});",
+     "    const r = {queued: 0};",
+     'tools/templates/inbox.html'),
+    ('wikify-all: queued rows cannot be started again',
+     '        if (b) { b.disabled = true; b.textContent = \'Queued\'; }',
+     '        if (b) { }',
+     'tools/templates/inbox.html'),
+    ('process-all: the whole batch is queued, not chained',
+     '        queued.append(filename)\n'
+     '        log.info("inbox/process-all: queued %s as job %s", filename, job_id)',
+     '        queued.append(filename)\n'
+     '        log.info("inbox/process-all: queued %s as job %s", filename, job_id)\n'
+     '        break',
+     'tools/serve.py'),
+    ('process-all: reports what it actually queued',
+     '    return {"queued": len(queued), "already_running": len(already),',
+     '    return {"queued": len(unprocessed), "already_running": len(already),',
+     'tools/serve.py'),
+    ('process-all: a duplicate does not stop the loop',
+     '            already.append(filename)\n            continue',
+     '            already.append(filename)\n            return {"queued": len(queued)}',
+     'tools/serve.py'),
     ('wikify: the browser releases on every exit path',
      '    window.wikifying.delete(name);',
      '    ;',

@@ -1039,12 +1039,29 @@ async function wikifyItem(name) {
   }
 }
 
+// Wikify All hands the whole batch to the SERVER'S QUEUE, in one request.
+//
+// It used to loop here: `for (const nm of names) await wikifyItem(nm)`, one article at a
+// time, each `await` waiting for a ~40-minute ingest to finish before submitting the next.
+// Reported as "the wikify all button doesn't seem to tie into the work queue? The number
+// didn't go up in the q" — and the number was right. Nothing was ever queued: one job ran,
+// the queue behind it was empty, and `/chat/status`'s `pending` (which the badge in
+// base.html renders as "N articles queued") stayed 0 for the entire batch.
+//
+// **The browser was the batch.** Close the tab, follow a link, or let the laptop sleep
+// after article three of thirty, and the remaining twenty-seven were never submitted —
+// no record anywhere that they were meant to be. That is the real defect; the invisible
+// badge was the symptom that showed it.
+//
+// `/inbox/process-all` queues every unprocessed item at once, so the depth is real, the
+// batch outlives this page, and a second click queues nothing (every item is already in
+// flight under its own dedupe key). Per-row progress still arrives: the poll calls
+// `markRowWikified` as each one lands.
+//
+// `wikifyItem` is still what a SINGLE row's button does, and still streams that job's
+// tool calls live — watching one ingest is useful, watching thirty is not.
 async function wikifyAll() {
   const allBtn = document.getElementById('wikify-all-btn');
-  // Take the names off the rows. This used to select by the id prefix and then dig the
-  // filename back out of the button's onclick attribute with a regex — which broke on any
-  // name containing an apostrophe, and paired each name with an index that could belong to
-  // a different row. The row carries its own name in data-name.
   const names = [...document.querySelectorAll('.reading-item')]
     .filter(r => {
       const b = r.querySelector('.act-btn.wikify');
@@ -1054,14 +1071,31 @@ async function wikifyAll() {
     .filter(Boolean);
   if (!names.length) return;
   allBtn.disabled = true;
-  allBtn.textContent = `Wikifying… 0/${names.length}`;
-  let done = 0;
-  for (const nm of names) {
-    await wikifyItem(nm);
-    done++;
-    allBtn.textContent = `Wikifying… ${done}/${names.length}`;
+  allBtn.textContent = 'Queueing…';
+  try {
+    const r = await apiFetch('/inbox/process-all', {method: 'POST'});
+    const n = r.queued || 0;
+    const already = r.already_running || 0;
+    if (n || already) {
+      allBtn.textContent = n
+        ? `Queued ${n}` + (already ? ` (+${already} running)` : '')
+        : `${already} already running`;
+      // Mark every queued row as in-flight so its own Wikify button cannot start a
+      // second run, and so the row reads as pending rather than untouched.
+      for (const nm of names) {
+        const b = partFor(nm, '.act-btn.wikify');
+        if (b) { b.disabled = true; b.textContent = 'Queued'; }
+      }
+      if (window.pollSoon) window.pollSoon();   // work just arrived; watch closely
+    } else {
+      allBtn.textContent = 'Nothing to queue';
+      allBtn.disabled = false;
+    }
+  } catch (e) {
+    allBtn.textContent = 'Wikify All';
+    allBtn.disabled = false;
+    alert('Could not queue: ' + (e && e.message ? e.message : e));
   }
-  allBtn.textContent = `All Done ✓`;
 }
 
 {{ bookmarklet_js(base_url, push_key) }}

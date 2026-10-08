@@ -483,6 +483,48 @@ and the batch would stop dead at that item. And `window.wikifying` in `inbox.htm
 the local half — it stops a double click before the round trip, in a `finally` so the early
 `return` on a failed ingest cannot leak it.
 
+**Wikify All never touched the queue, and the batch lived in the browser.** Reported as
+*"the wikify all button doesn't seem to tie into the work queue? The number didn't go up in
+the q"* — and the number was right. Two independent defects, in the template and in the
+route, each sufficient on its own:
+
+- **`wikifyAll()` looped in the BROWSER**: `for (const nm of names) await wikifyItem(nm)`,
+  one article at a time, each `await` waiting out a ~40-minute ingest before submitting the
+  next. So one job ran, the queue behind it was empty, and `pending` — which
+  `JobQueue.status()` reports as `qsize()` and the badge in `base.html` renders as "N
+  articles queued" — was **0 for the entire batch**. It never called
+  `/inbox/process-all` at all; that route was unreachable from the UI.
+
+  **The badge was the symptom; the real defect is that the browser WAS the batch.** Close
+  the tab, follow a link, or let the laptop sleep after article three of thirty, and the
+  remaining twenty-seven were never submitted, with nothing anywhere recording that they
+  were meant to be.
+- **And `/inbox/process-all` was chained the same way**, server-side: `_submit_item` queued
+  item 0 and only item 0, submitting the next from that job's `on_done` — then **answered
+  `{"queued": len(unprocessed)}`**, claiming to have queued thirty articles having queued
+  one. The chain bought nothing, because the queue has a single worker and N queued jobs run
+  in the same order as N chained ones. What it cost: the backlog was invisible; a
+  **cancelled** job killed the rest of the batch, since `_worker` calls `on_done` only
+  `if on_done and not cancelled`; and `_batch_running` was cleared at the END of the chain,
+  so one cancel left it True forever and every later click answered `409 A batch is already
+  running` until the server was restarted.
+
+`_batch_running` is **gone rather than fixed**. The per-item dedupe key already prevents
+double submission — a second click finds every item in flight and queues nothing — so the
+flag was a second mechanism answering a question `submit(key=…)` had already settled, with
+a failure mode of its own. A second click now reports what is already running instead of
+refusing, the same choice `submit` makes.
+
+The split that remains is deliberate: **`wikifyItem` is what a single row's button does**
+and still streams that job's tool calls live, because watching one ingest is useful and
+watching thirty is not. Per-row progress during a batch arrives through the existing poll,
+which calls `markRowWikified` as each one lands.
+
+One trap in the rewrite, avoided deliberately: thirty closures built in one loop need their
+per-item values bound as **defaults** (`def _setup(_p=inbox_path_str, …)`). Late binding
+would hand every job the LAST article's session, which nothing would report — you would
+find it by reading the pages the ingest wrote.
+
 ### Module state — read this before writing a test or a maintenance pass
 
 `agent.py` keeps mutable state in three places, and code that ignores any of them will
