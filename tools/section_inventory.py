@@ -53,17 +53,25 @@ HEAD_RE = re.compile(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", re.MULTILINE)
 # slash — "Key Works / Products" is one template heading offering a choice, so both halves
 # count as following it. Splitting them, as an earlier version did, reported 64 uses of a
 # heading the schema itself specifies as off-template and inflated the count badly.
+# **`Timeline` is on-template for every type**, not just `entity`. It was entity-only
+# because the unfolding-event template is an entity template — but `add_timeline_entry`
+# has never checked a page's type, the stub-event smell below already recognises an event
+# page by the SECTION rather than the type, and the live wiki cannot be trusted to have
+# honoured the entity/concept split in the first place. So a disease page filed under
+# `concepts/` that tracks outbreaks was reporting as drift for having exactly the section
+# the tool maintaining it writes. A chronology is a shape any subject can have.
+_TIMELINE = ["Timeline"]
+
 TEMPLATE = {
-    # "Timeline" is the unfolding-event template's accumulator, maintained by
-    # add_timeline_entry — on-template for an entity page, not drift.
     "entity":    ["Overview", "Background", "Key Works / Products", "Key Works", "Products",
-                  "Positions", "Timeline", "Contradictions", "Sources"],
+                  "Positions", "Contradictions", "Sources"] + _TIMELINE,
     "concept":   ["Definition", "How It Works", "Origins & History", "Applications",
                   "Variants & Related Concepts", "Contradictions / Debates",
-                  "Contradictions", "Debates", "Sources"],
+                  "Contradictions", "Debates", "Sources"] + _TIMELINE,
     "synthesis": ["Question / Thesis", "Question", "Thesis", "Evidence For",
-                  "Evidence Against", "Open Questions", "Sources"],
-    "source":    ["Summary", "Claims", "Entities", "Concepts", "Quotes", "Context", "Sources"],
+                  "Evidence Against", "Open Questions", "Sources"] + _TIMELINE,
+    "source":    ["Summary", "Claims", "Entities", "Concepts", "Quotes", "Context",
+                  "Sources"] + _TIMELINE,
 }
 OPENER = {"entity": "Overview", "concept": "Definition"}
 STUB_QUIET_DAYS = 30

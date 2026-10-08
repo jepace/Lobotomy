@@ -669,6 +669,12 @@ def _strip_broken_wiki_links(content: str, page_path: Path) -> str:
 
 
 _VALID_PAGE_TYPES = {"source", "entity", "concept", "synthesis"}
+# Which `type:` a page's directory implies. The directory is the ground truth — every link
+# to a page encodes it and `_resolve_page` searches by it — so `heal_pages` repairs the
+# field from the directory and never the other way round. A file cannot be moved by a
+# frontmatter fix, and the page would be unreachable if the directory were the wrong one.
+_DIR_PAGE_TYPE = {"entities": "entity", "concepts": "concept",
+                  "synthesis": "synthesis", "sources": "source"}
 _SOURCES_SECTION_TYPES = {"entity", "concept", "synthesis"}
 
 # Wrapping characters a tag can arrive in. Straight and curly quotes, and — the one that
@@ -5374,7 +5380,8 @@ def _heal_pages_impl(dry_run: bool = False) -> dict:
     guessed. Those are returned in "manual" so validation still surfaces them.
     """
     import datetime as _dt
-    result = {"pages": 0, "frontmatter": 0, "reader_urls": 0, "manual": []}
+    result = {"pages": 0, "frontmatter": 0, "reader_urls": 0, "manual": [],
+              "types_healed": 0, "stale_openers": []}
 
     targets = []
     for subdir in _HEAL_SUBDIRS:
@@ -5423,6 +5430,43 @@ def _heal_pages_impl(dry_run: bool = False) -> dict:
                         result["manual"].append(
                             f"{rel}: type is {_t.group(1)!r}, not one of "
                             f"{', '.join(sorted(_VALID_PAGE_TYPES))} (not auto-fillable)")
+
+                # **A valid type that disagrees with the directory it is in.** Asked for
+                # after *"I can't trust that the distinction between the 2 types has been
+                # honored, so let's do the best we can"* — the live wiki has people in
+                # `concepts/` and organisations there too, and `rename_page.py` moved
+                # pages between directories for months without carrying `type:` along.
+                #
+                # **The directory is the ground truth and the field is a claim about it.**
+                # Every link to the page encodes the directory; `_resolve_page` searches by
+                # directory; the page's own relative links are computed from it. The field
+                # is read by `_OPENER`, `section_inventory.py` and `bleeding_titles.py`,
+                # and none of them can move a file. So where the two disagree, the one that
+                # cannot be wrong without the page being unreachable wins — and the repair
+                # has exactly one answer, which is why it is absorbed rather than reported
+                # (principle 1).
+                #
+                # The page's OPENER is deliberately left alone. Renaming `## Definition` to
+                # `## Overview` is a content edit, `promote_openers.py` is the tool for it,
+                # and doing it inside a startup sweep over 13,000 pages would bury a real
+                # change in a metadata pass. The count is logged so it can be acted on.
+                # Re-read after any repair above, so a page needing BOTH fixes gets them
+                # in ONE pass. As an `elif` this ran only when the value was already
+                # clean, and `type: concept}EX_HEAT_CP` in entities/ took two sweeps.
+                _t2 = re.search(r"^type:[ \t]*(\S+)\s*$", new, re.MULTILINE)
+                if _t2 and _t2.group(1) in _VALID_PAGE_TYPES:
+                    _want = _DIR_PAGE_TYPE.get(f.parent.name)
+                    if _want and _t2.group(1) != _want:
+                        log.info("heal_pages: %s is in %s/ but says type: %s — "
+                                 "healing to %s", rel, f.parent.name, _t2.group(1), _want)
+                        new = _set_fm_field(new, "type", f"type: {_want}")
+                        n_fm += 1
+                        result["types_healed"] = result.get("types_healed", 0) + 1
+                        _op = _OPENER.get(_want)
+                        _wr = {"entity": "Definition", "concept": "Overview"}.get(_want)
+                        if _op and _wr and re.search(
+                                r"^#{2,6}[ \t]*" + _wr + r"[ \t]*$", new, re.MULTILINE):
+                            result.setdefault("stale_openers", []).append(rel)
 
                 # The page's own H1. Derivable from title:, so it is filled rather than
                 # reported — and because heal_pages runs at startup and after every

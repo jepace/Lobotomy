@@ -419,7 +419,7 @@ MUTATIONS = [
      '        bare = body',
      'tools/bleeding_titles.py'),
     ('bleeding: a concept page is not a bug report',
-     '    bleeds = [r for r in keep if r["type"] not in ("concept", "?")]',
+     '    bleeds = [r for r in keep if _is_bleed(r)]',
      '    bleeds = keep',
      'tools/bleeding_titles.py'),
     # A cross-directory move. Both halves were found while answering "are entities and
@@ -441,6 +441,37 @@ MUTATIONS = [
      '    _mkdir_inheriting(hist_dst.parent)',
      '    hist_dst.parent.mkdir(parents=True, exist_ok=True)',
      'tools/rename_page.py'),
+    # The type: field is no longer trusted, so three places stopped depending on it.
+    ('heal: a type that disagrees with its directory is healed',
+     '                        new = _set_fm_field(new, "type", f"type: {_want}")\n'
+     '                        n_fm += 1\n'
+     '                        result["types_healed"] = result.get("types_healed", 0) + 1',
+     '                        pass'),
+    ('heal: the directory decides, never the other way round',
+     '                    _want = _DIR_PAGE_TYPE.get(f.parent.name)',
+     '                    _want = None'),
+    ('heal: a stale opener after a type heal is reported',
+     '                            result.setdefault("stale_openers", []).append(rel)',
+     '                            pass'),
+    ('heal: a type heal does not rewrite the page opener',
+     # The guard is that nothing here touches headings. Breaking it means renaming one,
+     # which a test must notice, or a metadata sweep can silently edit content.
+     '                        _op = _OPENER.get(_want)',
+     '                        new = new.replace("## Definition", "## Overview"); _op = None'),
+    ('bleeding: a mid-sentence capital marks the title as a name',
+     '        if r["cap_mid"] >= args.min_cap_mid:\n'
+     '            return True                      # the text says it is a name',
+     '        if False:\n'
+     '            return True                      # the text says it is a name',
+     'tools/bleeding_titles.py'),
+    ('bleeding: a sentence-initial capital is not counted',
+     '                        if _pre and not re.search(r"[.!?:;]$|^\\s*[-*+>]$", _pre):',
+     '                        if True:',
+     'tools/bleeding_titles.py'),
+    ('bleeding: no textual evidence falls back to the type field',
+     '        return r["type"] not in ("concept", "?")   # no evidence: fall back to the field',
+     '        return False',
+     'tools/bleeding_titles.py'),
     # rename_page's messages, which are the only guidance its callers get.
     ('rename: a bad slug is refused with the corrected one',
      '    _fix = re.sub(r"[^a-z0-9]+", "-", dst.stem.lower()).strip("-")',

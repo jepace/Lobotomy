@@ -52,12 +52,22 @@ class UnlinkHeadingsTest(TempWikiTestCase):
 class HealPagesTest(TempWikiTestCase):
 
     def test_corrupted_type_repaired(self):
-        p = self.w.page("entities/foo.md", title="Foo", type="entity",
-                         body="## Overview\n\nX.\n")
-        text = p.read_text(encoding="utf-8").replace("type: entity", "type: concept}EX_HEAT_CP")
+        """The leading identifier of a corrupted `type:` is recoverable without guessing.
+
+        The page is in `concepts/` so that the recovery is the only thing under test. The
+        fixture used to put a `concept}EX_HEAT_CP` page in `entities/`, which stopped
+        proving anything once `heal_pages` learned to reconcile the field with its
+        directory: the recovery still ran, and the directory then correctly overrode it to
+        `entity`, so the assertion failed for a reason that had nothing to do with
+        recovery. The interaction between the two steps has its own test in
+        `test_type_from_directory.py`.
+        """
+        p = self.w.page("concepts/foo.md", title="Foo", type="concept",
+                         body="## Definition\n\nX.\n")
+        text = p.read_text(encoding="utf-8").replace("type: concept", "type: concept}EX_HEAT_CP")
         p.write_text(text, encoding="utf-8")
         agent.heal_pages()
-        disk = self.w.disk("entities/foo.md")
+        disk = self.w.disk("concepts/foo.md")
         self.assertRegex(disk, r"(?m)^type: concept\s*$")
 
     def test_unrecognized_type_reported_not_guessed(self):

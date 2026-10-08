@@ -100,7 +100,7 @@ def _candidates(max_words: int):
 def scan(max_words: int = 1):
     """Count lowercase and capitalised uses of every candidate title across the wiki."""
     cands = _candidates(max_words)
-    stats = {k: {"lower": 0, "cap": 0, "linked_lower": 0, "linked_cap": 0}
+    stats = {k: {"lower": 0, "cap": 0, "cap_mid": 0, "linked_lower": 0, "linked_cap": 0}
              for k in cands}
 
     for p in agent.wiki_pages():
@@ -141,7 +141,20 @@ def scan(max_words: int = 1):
                     # This title names this very page — every page says its own name.
                     if any(r == rel for _t, r in cands[key]):
                         continue
-                    st["lower" if span[0][0].islower() else "cap"] += 1
+                    if span[0][0].islower():
+                        st["lower"] += 1
+                    else:
+                        st["cap"] += 1
+                        # **A capital in the MIDDLE of a sentence is a proper noun**, and
+                        # that is the signal the `type:` field used to stand in for. A page
+                        # titled "Tariffs" is written capitalised only at the start of a
+                        # sentence; one titled "Lost" (the TV series) is written "the
+                        # finale of Lost aired", mid-sentence. Counting the two separately
+                        # answers "is this title a name?" from the wiki itself, instead of
+                        # trusting a field the wiki is known to have got wrong.
+                        _pre = line[:toks[i][1]].rstrip()
+                        if _pre and not re.search(r"[.!?:;]$|^\s*[-*+>]$", _pre):
+                            st["cap_mid"] += 1
 
     rows = []
     for key, st in stats.items():
@@ -153,7 +166,7 @@ def scan(max_words: int = 1):
             "key": key,
             "titles": cands[key],
             "type": _page_type(cands[key][0][1]),
-            "lower": lower, "cap": cap,
+            "lower": lower, "cap": cap, "cap_mid": st["cap_mid"],
             "linked_lower": st["linked_lower"], "bare_lower": st["lower"],
             "share": lower / (lower + cap) if (lower + cap) else 1.0,
         })
@@ -164,8 +177,11 @@ def scan(max_words: int = 1):
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--concepts", action="store_true",
-                    help="also list concept pages (expected behaviour, review only)")
+    ap.add_argument("--concepts", "--expected", action="store_true", dest="concepts",
+                    help="also list the titles that read as ordinary words (review only)")
+    ap.add_argument("--min-cap-mid", type=int, default=1,
+                    help="mid-sentence capitalised uses before a title counts as a name "
+                         "(default 1)")
     ap.add_argument("--all", action="store_true",
                     help="every title with any lowercase use, at any ratio")
     ap.add_argument("--min-lower", type=int, default=5,
@@ -177,17 +193,43 @@ def main() -> int:
     rows = scan(max_words=max(1, args.words))
     keep = [r for r in rows
             if args.all or (r["lower"] >= args.min_lower and r["share"] >= 0.5)]
-    bleeds = [r for r in keep if r["type"] not in ("concept", "?")]
-    expected = [r for r in keep if r["type"] == "concept"]
+    # **Textual evidence first, the `type:` field only as a tiebreak.** The split used to
+    # be `type != "concept"` alone, on the sound reasoning that a concept page titled
+    # "Tariffs" is SUPPOSED to be linked from the word `tariffs`. The reasoning is right;
+    # the field carrying it is not reliable — the live wiki has people and organisations
+    # filed under `concepts/`, and `rename_page.py` moved pages between directories for
+    # months without carrying the type along.
+    #
+    # So the question "is this title a NAME?" is asked of the text wherever the text can
+    # answer it. A title written capitalised in the MIDDLE of a sentence is a name,
+    # whatever directory its page sits in: "the finale of Lost aired" is proof, and
+    # "Tariffs are a tax" at the start of a sentence is not. Measured on a fixture, that
+    # catches a proper noun misfiled as a concept — which the old filter hid completely.
+    #
+    # **Where `cap_mid` is zero there is no textual evidence either way**, and the field is
+    # the only signal there is. A first version treated zero as proof of a common noun,
+    # which dropped three existing cases: a page titled "Succession" whose name the wiki
+    # only ever writes lowercase gets no mid-sentence capital, and the lowercase links to
+    # it are still wrong. A weak signal beats none, so the old rule stands as the
+    # fallback — demoted from the decision to a tiebreak, which is the most the field has
+    # earned.
+    def _is_bleed(r):
+        if r["cap_mid"] >= args.min_cap_mid:
+            return True                      # the text says it is a name
+        return r["type"] not in ("concept", "?")   # no evidence: fall back to the field
+
+    bleeds = [r for r in keep if _is_bleed(r)]
+    expected = [r for r in keep if not _is_bleed(r)]
 
     def table(rs):
         print(f"{'title':<24} {'type':<8} {'linked':>7} {'bare':>7} {'CAPS':>6} "
-              f"{'lower':>6}  page")
-        print("-" * 92)
+              f"{'mid':>5} {'lower':>6}  page")
+        print("-" * 99)
         for r in rs:
             title, rel = r["titles"][0]
             print(f"{title[:23]:<24} {r['type'][:7]:<8} {r['linked_lower']:>7} "
-                  f"{r['bare_lower']:>7} {r['cap']:>6}  {r['share']*100:>5.0f}%  {rel}")
+                  f"{r['bare_lower']:>7} {r['cap']:>6} {r['cap_mid']:>5} "
+                  f"{r['share']*100:>5.0f}%  {rel}")
 
     if bleeds:
         print(f"{len(bleeds)} PROPER NOUN(S) COLLIDING WITH AN ORDINARY WORD.\n"

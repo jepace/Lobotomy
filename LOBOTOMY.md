@@ -125,7 +125,7 @@ before every `create_file` or `update_file` call.
 | Field | Type | Rules |
 |-------|------|-------|
 | `title` | string (quoted) | Title-case, human readable |
-| `type` | enum | One of: `source`, `entity`, `concept`, `synthesis` |
+| `type` | enum | One of: `source`, `entity`, `concept`, `synthesis`. **It must match the directory the page is in** — `entities/` is `entity`, `concepts/` is `concept`, and so on. The directory is authoritative: a page's links are all computed from it, so a startup repair heals the field from the directory and never the reverse. Do not change a `type:` to disagree with where the page lives. |
 | `tags` | list of strings | lowercase, hyphenated, no spaces. Prefer tags from the list in the orientation message; introduce new tags only when no existing tag fits. **Plain double quotes only — never wrap a tag in backticks.** A tag is a string, not code: `` tags: ["a", `b`] `` is malformed. Written that way it is normalized on the way in rather than refused, but the tag list you are shown is the wiki's real vocabulary, so copy those names exactly as given. **A tag beginning with an underscore (`_todo`) is machinery, not a subject** — written by maintenance tools to mark pages needing human attention. Never invent one, never copy one onto another page, and never remove one you find: it is somebody's worklist. They are deliberately absent from the tag list you are shown, so if you can see one it is because it is already on a page you are reading. |
 | `created` | YYYY-MM-DD | Date first created. **System-managed — never supply or modify.** |
 | `updated` | YYYY-MM-DD | Date of most recent edit. Update on every write. |
@@ -182,6 +182,11 @@ the wiki because the default template doesn't suit it.
 - Background *(what led up to it — this stops changing once written)*
 - Contradictions *(if any)*
 - Sources *(auto-generated — do not write)*
+
+**A `## Timeline` is legal on any page type**, not just an entity page. A concept with a
+history — a disease, a doctrine, a technique — accumulates one the same way, and
+`add_timeline_entry` works there identically. The section is what makes a page a chronicle;
+the page's type has nothing to do with it.
 
 The division of labour matters: **Overview is the current state, Timeline is the record.**
 A reader who wants to know where the outbreak stands reads the first and stops; a reader

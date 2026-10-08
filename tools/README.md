@@ -408,6 +408,14 @@ REPEATED the survivor's and then added a sentence counted as already-said, and t
 deleted it — with no `--force` and nothing in the output. The one shape where a page
 genuinely extends another was the one shape that was dropped.
 
+**The entity/concept split is no longer trusted, and three tools stopped depending on it.**
+`heal_pages` repairs `type:` from the **directory** at startup (the directory is
+authoritative — every link to a page encodes it), `section_inventory.py` treats `Timeline`
+as on-template for every type, and `bleeding_titles.py` decides "is this title a name?"
+from the text — a capital in the MIDDLE of a sentence — falling back to `type:` only where
+the text is silent. Pages whose opener no longer matches their healed type are listed at
+startup rather than rewritten; `promote_openers.py` is the tool for those.
+
 ### `page_report.py` — everything mechanically wrong with one page
 Written for `donald-trump.md`: 223,659 bytes, fourteen sections, 53.8s to autolink against
 13,195 titles, and "pretty much a complete mess". The mess was **nine separate defects**,

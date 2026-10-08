@@ -1150,6 +1150,53 @@ to forget. `LOBOTOMY.md` tells the model never to invent, copy or **remove** one
 somebody's worklist — and the schema needs that line precisely because the tag is absent
 from the vocabulary, so the only way the model meets one is on a page it is already editing.
 
+**The entity/concept split cannot be trusted, so three things stopped depending on it**
+(`_DIR_PAGE_TYPE`, `section_inventory.TEMPLATE`, `bleeding_titles._is_bleed`). Asked after
+working out what the split actually costs: *"I can't trust that the distinction between the
+2 types has been honored, so let's do the best we can."* The evidence it was not honoured:
+the live wiki has `concepts/tim-wu.md` and `concepts/jesse-watters.md` (people),
+`concepts/environmental-protection-agency.md` (an organisation), and `concepts/ebola.md` (a
+proper noun) — and `rename_page.py` moved pages between directories for months **without
+carrying `type:` along**, so a correctly-filed page could still claim the other type.
+
+Worth knowing first what the split does and does not reach, because it is lower-stakes than
+it looks. **Linking does not care** — `_build_title_map` globs all four subdirectories — and
+**duplicate prevention does not care**, because `_resolve_page` searches `entities/`,
+`concepts/` and `synthesis/` by slug, so a misfile never produces a duplicate page later.
+What reads the field is `_OPENER`, `section_inventory.py`, `bleeding_titles.py`, and the
+relative path in every inbound link.
+
+- **`heal_pages` repairs the field from the DIRECTORY.** Every link to a page encodes its
+  directory, `_resolve_page` searches by directory, and the page's own relative links are
+  computed from it; the field is read by tools that cannot move a file. So where the two
+  disagree, the one that cannot be wrong without the page being unreachable wins, and the
+  repair has one answer — absorbed, not reported (principle 1). The **opener is deliberately
+  left alone**: renaming `## Definition` to `## Overview` is a content edit,
+  `promote_openers.py` is the tool for it, and doing it inside a startup sweep over 13,000
+  pages buries a real change in a metadata pass. Those pages are counted and listed instead.
+  The check had to be sequenced after the corrupt-type repair rather than `elif`'d onto it,
+  or `type: concept}EX_HEAT_CP` in `entities/` healed over two passes instead of one.
+- **`Timeline` is on-template for every type.** It was entity-only because the
+  unfolding-event template is an entity template, and three things already disagreed:
+  `add_timeline_entry` has never checked a page's type, the stub-event smell recognises an
+  event page by the SECTION rather than the type, and the split itself is untrustworthy. A
+  disease page under `concepts/` that tracks outbreaks was reporting as drift for carrying
+  exactly the section the tool maintaining it writes.
+- **`bleeding_titles` asks the TEXT first and the field only as a tiebreak.** The filter was
+  `type != "concept"`, on the sound reasoning that a page titled "Tariffs" is supposed to be
+  linked from the word `tariffs`. The reasoning is right and the field carrying it is not.
+  **A capital in the MIDDLE of a sentence is proof the title is a name** — "the finale of
+  Lost aired" is evidence, "Tariffs are a tax" at a sentence start is not, which is why the
+  raw `cap` count was useless and `cap_mid` is not. Measured on a fixture: that gains a
+  proper noun misfiled as a concept, which the old filter hid completely, and loses nothing.
+
+  **The first version of that change went too far**, treating `cap_mid == 0` as proof of a
+  common noun, and it dropped three existing cases at once: a page titled "Succession" whose
+  name the wiki only ever writes lowercase has no mid-sentence capital, and the lowercase
+  links to it are still wrong. **Zero is absence of evidence, not evidence of absence.** The
+  field stays as the fallback — demoted from the decision to a tiebreak, which is the most
+  it has earned. The three tests that caught the overreach were the ones already there.
+
 **Search's two full-page substitutions ran before any keyword was tested** (`_prefilter_ok`,
 `lit_groups` in `search_wiki_core`). Reported as *"search is pretty slow; are there cheap
 optimizations we can be doing?"* Measured at 2,000 pages / 17.8 MB: **423ms for a query

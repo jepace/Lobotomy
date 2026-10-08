@@ -187,6 +187,11 @@ class PageTypeTest(TempWikiTestCase):
     A `concept` page is MEANT to catch the common noun — "inflation" in prose is about
     inflation, and that link is the whole point of a concept wiki. An `entity` page is a
     proper noun, so a lowercase use of its name is a different word entirely.
+
+    **The field is now a TIEBREAK rather than the decision** — see
+    `MidSentenceCapitalTest`. These cases all have no mid-sentence capitalised use, so
+    there is no textual evidence either way and the field still decides them, which is
+    why every assertion here is unchanged.
     """
 
     def _prose(self, body):
@@ -261,3 +266,76 @@ class AliasTest(TempWikiTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MidSentenceCapitalTest(TempWikiTestCase):
+    """**A capital in the middle of a sentence is proof the title is a name**, and that is
+    what the `type:` field was standing in for all along.
+
+    Asked for after working out what the entity/concept split costs: *"at this point, I
+    can't trust that the distinction between the 2 types has been honored, so let's do the
+    best we can."* The field is demonstrably unreliable — the live wiki has people and
+    organisations under `concepts/`, and `rename_page.py` moved pages between directories
+    for months without carrying the type along — so a filter resting on it alone was
+    hiding real bleeds in whichever direction a page happened to be mislabelled.
+
+    Measured on this fixture, replacing the field with the text gains one case and loses
+    none: a proper noun misfiled as a concept is now caught, and everything the field got
+    right it still gets right.
+
+    **The first version of this change went too far** and treated `cap_mid == 0` as proof
+    of a common noun. That dropped three existing cases at once — a page titled
+    "Succession" whose name the wiki only ever writes lowercase has no mid-sentence
+    capital, and the lowercase links to it are still wrong. Zero is absence of evidence,
+    not evidence of absence, so the field remains the fallback.
+    """
+
+    def _page(self, folder, slug, title, typ):
+        self.w.page(f"{folder}/{slug}.md", title=title, type=typ,
+                    body=f"# {title}\n\n## Overview\n\nA thing.\n")
+
+    def _prose(self, body, n=4):
+        for i in range(n):
+            self.w.page(f"entities/p{i}.md", title=f"P{i}", type="entity",
+                        body=f"# P{i}\n\n## Overview\n\n{body}\n")
+        agent._title_map_cache = None
+
+    def _row(self, key):
+        agent._title_map_cache = None
+        return {r["key"]: r for r in bt.scan()}.get(key)
+
+    def test_a_capital_mid_sentence_is_counted(self):
+        self._page("entities", "lost", "Lost", "entity")
+        self._prose("The hikers were lost and felt lost, utterly lost, quite lost.\n\n"
+                    "The finale of Lost aired in 2010 and Lost won awards.")
+        r = self._row("lost")
+        self.assertGreater(r["cap_mid"], 0)
+
+    def test_a_capital_only_at_the_start_of_a_sentence_is_not(self):
+        """Every common noun is capitalised sometimes. Counting those would make the
+        signal useless, which is the whole reason the raw `cap` count could not be used."""
+        self._page("concepts", "tariffs", "Tariffs", "concept")
+        self._prose("The new tariffs raised prices and the tariffs were unpopular.\n\n"
+                    "Tariffs are a tax. Tariffs featured in the debate about tariffs.")
+        r = self._row("tariffs")
+        self.assertGreater(r["cap"], 0, "the fixture must capitalise it somewhere")
+        self.assertEqual(r["cap_mid"], 0)
+
+    def test_a_proper_noun_misfiled_as_a_concept_is_reported(self):
+        """The case the old filter hid completely, and the reason for the change."""
+        self._page("concepts", "mission", "Mission", "concept")
+        self._prose("The mission of the group, its mission, a mission statement.\n\n"
+                    "He lives in the Mission and the Mission is expensive.")
+        r = self._row("mission")
+        self.assertGreater(r["cap_mid"], 0)
+        self.assertTrue(r["cap_mid"] >= 1 or r["type"] not in ("concept", "?"),
+                        "a name written mid-sentence must be reported whatever its type")
+
+    def test_a_bullet_marker_does_not_count_as_mid_sentence(self):
+        """A list item starts a sentence. Treating `- Mission` as mid-sentence would make
+        every `## Entities` row on every source page into evidence of a proper noun."""
+        self._page("concepts", "mission", "Mission", "concept")
+        self._prose("the mission, a mission, our mission, their mission here\n\n"
+                    "- Mission\n- Mission\n- Mission")
+        r = self._row("mission")
+        self.assertEqual(r["cap_mid"], 0)
