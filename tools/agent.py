@@ -1855,6 +1855,22 @@ _DATED_HEADING_RE = re.compile(
     r"(?:uary|ruary|ch|il|e|y|ust|tember|ober|ember)?\b[ ,]+\d",
     re.IGNORECASE)
 
+# A heading naming RECENCY rather than a subject: "Recent Developments", "Latest News",
+# "Current Updates". This is the dated-heading mistake with the date left implicit, and it
+# is worse: "## 2026 Senate Campaign" at least says which year it froze at, while "Recent
+# Developments" claims to be current forever and nothing ever revises it. An observed
+# ingest created eleven new sections on one article, three of them this shape.
+#
+# **A recency qualifier is required — a bare noun is never refused.** "## Controversies" is
+# a legitimate standing section on a person's page, "## Events" on a festival's, and
+# refusing those would be the crying-wolf failure every report in this project is built to
+# avoid. It is the qualifier that turns a subject into a changelog.
+_RECENCY_HEADING_RE = re.compile(
+    r"^(?:most\s+)?(?:recent|recently|latest|newest|new|current|ongoing|upcoming)\s+"
+    r"(?:developments?|controversies|controversy|news|updates?|events?|happenings|"
+    r"headlines|activity|activities|items?|additions?)\s*$",
+    re.IGNORECASE)
+
 _OPENER = {"entity": "Overview", "concept": "Definition"}
 
 
@@ -1880,6 +1896,11 @@ def _bad_headings(body: str, title: str) -> "list[tuple]":
                              it. A dated heading is a changelog entry wearing a heading:
                              nothing ever updates it, and the next ingest adds another
                              beside it instead of revising what is there.
+      names recency          "## Recent Developments". The dated-heading mistake with the
+                             date left implicit, and worse: a dated heading at least says
+                             which year it froze at. A recency QUALIFIER is required — a
+                             bare "## Controversies" or "## Events" is a legitimate
+                             standing section and is never refused.
 
     Shared by every write path so they cannot disagree about what counts, and reported as
     a delta by the update paths — a page that already carries one has to stay editable,
@@ -1895,6 +1916,8 @@ def _bad_headings(body: str, title: str) -> "list[tuple]":
             bad.append((name, "contains a link"))
         elif _DATED_HEADING_RE.search(name):
             bad.append((name, "names a date"))
+        elif _RECENCY_HEADING_RE.match(name):
+            bad.append((name, "names recency"))
     return bad
 
 
@@ -2006,6 +2029,16 @@ def _bad_heading_error(tool: str, bad: "list[tuple]", title: str,
                 f"add_timeline_entry. Otherwise fold the material into the standing "
                 f"section it belongs to (Overview, Background, Positions, …) "
                 f"and say when it happened in the prose.")
+        elif reason == "names recency":
+            lines.append(
+                f"  '{name}' — names recency, not a subject. It is a changelog: nothing "
+                f"will ever revise it, the next ingest adds its own news underneath, and "
+                f"in a year the heading still claims to be current. Name the SUBJECT of "
+                f"the material instead — what it is about, with no date and no "
+                f"'Recent'/'Latest'/'Current' in front of it. If the material is one "
+                f"entry in an unfolding sequence it is a Timeline entry "
+                f"(add_timeline_entry); if it is a story in its own right, give it its "
+                f"own page with create_file.")
         else:
             lines.append(
                 f"  '{name}' — repeats the page title {title!r}. The whole page is about "
@@ -2560,10 +2593,11 @@ def _summary_accretion_refusal(tool: str, path: str, section: str,
             f"Stop sending this call.\n\n"
             f"Do this instead, now:\n\n"
             f"    append_section(path='{path}', section='<name>', text='<your sentence>')\n\n"
-            f"where <name> describes the SUBJECT and contains no year and no date — "
-            f"'Senate Campaign', not '2026 Senate Campaign'; 'Public Health', not "
-            f"'2026 Outbreak'. A dated heading is refused by a different rule and costs "
-            f"you another round.\n\n"
+            f"where <name> describes the SUBJECT and contains no year, no date and no "
+            f"'Recent'/'Latest'/'Current' — 'Senate Campaign', not '2026 Senate "
+            f"Campaign'; 'Public Health', not '2026 Outbreak' and not 'Recent "
+            f"Developments'. A dated or recency heading is refused by a different rule "
+            f"and costs you another round.\n\n"
             f"That call creates the section and always succeeds on a page that has no "
             f"heading of that name. Your text is not wasted."
             f"{_elsewhere}"
@@ -2578,22 +2612,28 @@ def _summary_accretion_refusal(tool: str, path: str, section: str,
         f"once per ingest and it becomes a list of unrelated headlines in one paragraph, "
         f"which is what this page is becoming.\n\n"
         f"Do NOT resend this call — it will be refused again. Your text is not wasted; "
-        f"pick the one that fits:\n"
-        f"  1. It is a standing feature of the subject → append_section(path, "
-        f"section='<a name for that subject>', text=…) to give it its own section. The "
-        f"name must contain NO year and NO date — 'Senate Campaign', not '2026 Senate "
-        f"Campaign' — or the heading rule refuses it and you lose another round.\n"
-        f"  2. It is one entry in an unfolding sequence → add_timeline_entry(path, date, "
-        f"text) if this page has a Timeline.\n"
-        f"  3. It is a story in its own right → create_file for a page about THAT, and "
+        f"pick the one that fits, in this order:\n"
+        f"  1. It is one entry in an unfolding sequence → add_timeline_entry(path, date, "
+        f"text) if this page has a Timeline. Dated material is a timeline entry by "
+        f"default; the dates in the sentences above are the signal.\n"
+        f"  2. It is a story in its own right → create_file for a page about THAT, and "
         f"leave one sentence here pointing at it. **Not only slow-burning events** — a "
         f"remark, a raid, a resignation, a verdict, an order signed all qualify. If this "
         f"page is a PARTICIPANT in what happened rather than the subject of it, the event "
         f"wants its own page: that is the only thing the autolinker can link, so a page is "
         f"found everywhere it is mentioned, while a section is remembered only here.\n"
-        f"  4. It genuinely belongs in the summary → resend {section!r} REWRITTEN — the "
+        f"  3. It genuinely belongs in the summary → resend {section!r} REWRITTEN — the "
         f"existing text reworded to account for this fact, not the existing text with "
-        f"your sentence added to the end. That is what was just refused."
+        f"your sentence added to the end. That is what was just refused.\n"
+        f"  4. **Last resort**, and only if the material is a STANDING feature of the "
+        f"subject that the page has no section for → append_section(path, "
+        f"section='<a name for that subject>', text=…). One article should not need "
+        f"several new sections: an observed ingest created eleven, and a page with a "
+        f"section per news item is the pile this guard exists to prevent. The name must "
+        f"describe the subject and carry NO year, NO date and no "
+        f"'Recent'/'Latest'/'Current' — 'Senate Campaign', not '2026 Senate Campaign' or "
+        f"'Recent Developments' — or the heading rules refuse it and you lose another "
+        f"round."
         f"{_elsewhere}"
     )
 
@@ -2853,6 +2893,11 @@ def _update_section(args: dict) -> str:
                 f"belongs to, which may not be the one you guessed, then call "
                 f"update_section again — do NOT call read_file or read_section first. "
                 f"Further writes to this page will not be refused.\n\n"
+                f"**You composed that draft without the page in front of you.** REVISE it "
+                f"against the text below — it may already say what you were about to add, "
+                f"or say it better, or belong in a different section. Resending the same "
+                f"content unchanged is the one response that wastes the text you are being "
+                f"handed.\n\n"
                 f'<file path="{path}">\n{_whole}</file>'
             )
 
@@ -2868,6 +2913,10 @@ def _update_section(args: dict) -> str:
             f"session, so your rewrite would discard what is there.\n\n"
             f"Its current content is below, and is now marked as read. Merge your changes "
             f"into it and call update_section again — do NOT call read_section first.\n\n"
+            f"**You composed that draft without this text in front of you.** MERGE, do not "
+            f"replace: the section may already say what you were about to add. Resending "
+            f"the same content unchanged is the one response that wastes what you are "
+            f"being handed.\n\n"
             f'<section path="{path}" name="{section}">\n{heading}\n{old_text}\n</section>'
             f"{_elsewhere}"
         )
@@ -5911,6 +5960,58 @@ def _initialism_tokens(name: str) -> list:
     return glued
 
 
+# A leading national qualifier: "U.S. Commission of Fine Arts" is the "Commission of Fine
+# Arts". Written out so the set is auditable rather than a regex nobody can read.
+#
+# **"federal" and "national" are deliberately NOT here**, and the asymmetry is the reason.
+# A false match does not produce a duplicate page — it sends the write to the WRONG page,
+# which is worse than the duplicate this exists to prevent. "U.S." is a place and never
+# part of what a body does; "National" and "Federal" are ordinary words inside formal
+# names, and the remainder is often a real subject of its own ("National Gallery" /
+# "Gallery", "National Review" / "Review", "National Front"). The observed duplicate was
+# geographic, so the list is geographic. Add one when a real pair is observed, not on the
+# strength of it looking similar.
+_JURISDICTION_PREFIXES = (
+    "u.s.", "us", "u s", "united states", "united states of america",
+    "u.k.", "uk", "united kingdom",
+)
+
+
+def _jurisdiction_match(a: str, b: str) -> bool:
+    """True when two names differ only by a leading national qualifier.
+
+    **Observed creating a duplicate page.** An ingest updated
+    `entities/commission-of-fine-arts.md` early in its run and then, as its LAST call,
+    created `entities/u-s-commission-of-fine-arts.md` — two pages for one federal body.
+    `_initialism_match` cannot see it: `U.S.` is not an initialism OF anything in the other
+    name, it is a word added in front of it, so every check in `_resolve_page` answered NO
+    PAGE and `create_file` obliged.
+
+    **The remainder must be at least two words**, and that is the whole guard. Strip the
+    qualifier from a one-word remainder and the matches are wrong far more often than
+    right: "US Steel" is not "Steel", "US Open" is not "Open", "US Airways" is not
+    "Airways", "US Bank" is not "Bank". At two words and up the shape is an institution's
+    name — "Postal Service", "Commission of Fine Arts", "Department of Justice" — and the
+    qualifier is a formality that prose adds and drops freely.
+
+    Declares a match rather than suggesting one, like `_initialism_match`: the remainder
+    has to match the other name **exactly** once normalized, so this cannot fold a parent
+    into a subsidiary the way `_norm_title_key`'s suffix-dropping can.
+    """
+    ka, kb = _norm_name_key(a), _norm_name_key(b)
+    if not ka or not kb or ka == kb:
+        return False
+    for long, short in ((ka, kb), (kb, ka)):
+        for pref in _JURISDICTION_PREFIXES:
+            head = _norm_name_key(pref)
+            if not head or not long.startswith(head + " "):
+                continue
+            rest = long[len(head) + 1:].strip()
+            if rest == short and len(short.split()) >= 2:
+                return True
+    return False
+
+
 def _initialism_match(a: str, b: str) -> bool:
     """True when two names differ only by spelling out an initialism.
 
@@ -5990,6 +6091,13 @@ def _resolve_page(name: str, by_key: dict) -> str:
         if _first and title[:1].isalnum() and title[:1] != _first:
             continue
         if _initialism_match(name, title):
+            return rel
+    # And one name carrying a leading national qualifier the other does not. NOT folded
+    # into the loop above: that one is gated on a shared first letter, which is sound for
+    # an initialism and wrong here — "U.S. Commission of Fine Arts" and "Commission of
+    # Fine Arts" start with different letters by construction.
+    for title, rel in by_key.items():
+        if _jurisdiction_match(name, title):
             return rel
     return ""
 
@@ -7196,6 +7304,38 @@ def _create_file(args: dict) -> str:
             f"do NOT call read_file first.\n\n"
             f'<file path="{path}">\n{_current}\n</file>'
         )
+
+    # The page does not exist at THIS path — and that was the only duplicate check here.
+    # `_resolve_page` is the one place that decides create-vs-update, and the observed
+    # duplicate was made by precisely this call: an ingest updated
+    # `entities/commission-of-fine-arts.md` early on and, twenty rounds later, created
+    # `entities/u-s-commission-of-fine-arts.md`. `lookup_titles` and `done()`'s worklist
+    # both share that resolver and both would now route this to UPDATE, but neither is on
+    # this path — nothing stopped the call that actually wrote the file.
+    #
+    # Safe to refuse on, because `_resolve_page` only ever DECLARES a match: an exact
+    # title or alias, the page's own slug, a spelled-out initialism, or a leading national
+    # qualifier. It is the same answer `lookup_titles` gives for this name in the same
+    # session, so a refusal here cannot contradict the routing the model was handed.
+    if args.get("title") and path.startswith("wiki/"):
+        try:
+            _existing = _resolve_page(
+                str(args["title"]),
+                {t.lower(): rel for t, rel in _build_title_map()})
+        except Exception:
+            _existing = ""
+        _want = path[len("wiki/"):]
+        if _existing and _existing != _want and not _existing.startswith("sources/"):
+            return (
+                f"Error: create_file refused — '{args['title']}' already has a page: "
+                f"wiki/{_existing}. The two names differ, the subject does not, and a "
+                f"second page would split it in two: links, sources and every later "
+                f"ingest would land on one or the other at random.\n\n"
+                f"Update the existing page instead — update_section(path="
+                f"'wiki/{_existing}', section=…, content=…) for the section your material "
+                f"belongs in. If it genuinely is a DIFFERENT subject, the two names are "
+                f"too close to tell apart: give this one a title that distinguishes it."
+            )
 
     _missing_args = [k for k in ("title", "type") if not args.get(k)]
     if _missing_args:

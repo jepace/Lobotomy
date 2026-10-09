@@ -164,6 +164,52 @@ class LongPageTest(TempWikiTestCase):
         self.assertLess(agent._ctx()._session_read_coverage.get(rel, 0), full)
 
 
+class ItSaysTheDraftWasWrittenBlindTest(TempWikiTestCase):
+    """Measured from one live ingest: **20 of its 82 calls were this refusal**, and
+    eleven pages were refused twice or more. Handing the text back removed the round trip
+    and did nothing about what the model does with it — a model that reads a refusal as
+    "that did not go through" resends the same draft, and resending is the one response
+    that wastes the text it has just been given.
+
+    Both branches say so now, in the imperative, before the payload. The
+    `_summary_refusals` counter learned this on the accretion refusal: naming the move is
+    not enough when nothing in the reply tells the model its own draft is the problem."""
+
+    def _short(self):
+        self.w.page("entities/s.md", title="S", type="entity",
+                    body="## Overview\n\nA subject.\n\n## Career\n\nIt happened.\n")
+        agent.init_session()
+        return agent._update_section({"path": "wiki/entities/s.md",
+                                      "section": "Career", "content": "New text."})
+
+    def _long(self):
+        self.w.page("entities/big.md", title="Big", type="entity",
+                    body=_long_body(agent._WIKI_READ_LIMIT + 4000))
+        agent.init_session()
+        return agent._update_section({"path": "wiki/entities/big.md",
+                                      "section": "Sec 0", "content": "New text."})
+
+    def test_the_whole_page_branch_says_to_revise_the_draft(self):
+        r = self._short()
+        self.assertIn("without the page in front of you", r)
+        self.assertIn("REVISE", r)
+
+    def test_the_section_branch_says_to_merge_rather_than_replace(self):
+        r = self._long()
+        self.assertIn("without this text in front of you", r)
+        self.assertIn("MERGE", r)
+
+    def test_both_branches_name_resending_as_the_wrong_move(self):
+        for r in (self._short(), self._long()):
+            self.assertIn("Resending the same content unchanged", r)
+
+    def test_it_comes_before_the_payload(self):
+        """A model that stops reading at the handed-back text never reaches the
+        instruction, which is the whole reason this is placed where it is."""
+        for r, marker in ((self._short(), "<file "), (self._long(), "<section ")):
+            self.assertLess(r.index("without th"), r.index(marker))
+
+
 class ThresholdTest(TempWikiTestCase):
     """The boundary itself, so the rule cannot quietly become two rules."""
 

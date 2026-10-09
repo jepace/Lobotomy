@@ -996,6 +996,35 @@ consecutive words is required, which keeps it off ordinary abbreviation — "MS 
 not match "Microsoft Word". A first-letter prefilter keeps the extra scan free: whether the
 first words are the same word or one initialises the other, they share a first letter.
 
+**A leading national qualifier is the same subject** (`_jurisdiction_match`,
+`_JURISDICTION_PREFIXES`), and the duplicate it produced was made by the LAST call of an
+ingest: the run updated `entities/commission-of-fine-arts.md` early on and twenty rounds
+later created `entities/u-s-commission-of-fine-arts.md`. `_initialism_match` cannot see it —
+`U.S.` is not an initialism OF anything in the other name, it is a word added in front of
+it — so every check answered NO PAGE, and `find_duplicate_pages.py` will not report the
+pair either, because the two titles have different keys. It runs as a **separate loop**
+from the initialism one, which is gated on a shared first letter: sound for an initialism
+and wrong here by construction, since the qualifier is what changes the first letter.
+
+**The ≥2-word remainder is the whole guard.** "US Steel" is not "Steel", "US Open" is not
+"Open", "U.S. Bank" is not "Bank"; at two words and up the shape is an institution's name
+and the qualifier is a formality prose adds and drops freely. **"federal" and "national"
+are deliberately not in the list**, and the asymmetry is why: a false match here does not
+create a duplicate page, it sends the write to the WRONG page. "U.S." is a place and never
+part of what a body does, while "National" and "Federal" sit inside formal names whose
+remainder is often a subject of its own — a "National Gallery" is not a "Gallery". The
+observed pair was geographic, so the list is geographic; add one when a real pair is
+observed, not because it looks similar.
+
+**And `create_file` had no title-level duplicate check at all** — only the path. That is
+the call that actually wrote the second page: `lookup_titles` and `done()`'s worklist both
+share `_resolve_page` and both would now route this name to UPDATE, but neither is on the
+write path, so nothing stood between the model and the file. It refuses on the resolver
+now, which is safe because `_resolve_page` only ever **declares** a match (exact title or
+alias, the page's own slug, a spelled-out initialism, a leading qualifier) — the same
+answer `lookup_titles` gives for that name in that session, so the refusal cannot
+contradict the routing the model was handed.
+
 Pages can carry an `aliases:` frontmatter list (e.g. `aliases: ["gonzales", "uc davis"]`) for common short names that the autolinker should also match. The LLM is not instructed to set this field — it's a manual human override for when the formal page title differs from how the subject is typically referenced in prose. `no_autolink: true` excludes a page from *linking* but deliberately keeps it in the title map, because hiding it from `lookup_titles` made the agent create duplicate pages.
 
 ### Write-path guards
@@ -1140,6 +1169,51 @@ here it is near-certain rather than unlucky: this material is dated by definitio
 obvious name carries its year. Both refusals now say the name must carry no date, with the
 example. The lesson generalises — **a refusal that tells the model to write something new
 has to respect the rules the OTHER guards will apply to it.**
+
+**Then a whole ingest was measured and the menu turned out to be ranked backwards.** Asked
+*"happy with this run?"* over a production log; counted: **82 tool calls, 36 refused
+(44%)** — 20 read-before-write, 8 summary accretion, 3 shrink, 2 page-exists — 39 pages
+touched, 11 refused twice or more, and **11 NEW sections created on existing pages** from
+one article: Leadership, Legal Challenges, Political Treatment ×2, Election Reporting,
+Political Advertising Role, State Legislative Initiatives, Recent Developments,
+Contemporary Political Proposals, Recent Controversies, 2026 Midterms Context.
+
+Option 1 was *"a standing feature of the subject → append_section"*, and it is the cheapest
+of the four moves to take: no date to extract, no judgement about whether the event is a
+subject, no rewrite of existing prose. So it was taken reflexively, and **a page with a
+section per news item is the same pile this guard exists to prevent, in a different
+shape** — a heading per headline instead of a sentence per headline. The menu is ordered
+timeline → page of its own → rewrite the summary → new section, with the last marked as a
+last resort and the eleven named out loud; LOBOTOMY.md section 5 lost its *"the answer is a
+new section, not Overview"* line for the same reason, and the test asserting that wording
+was replaced rather than deleted so the reversal is on the record.
+
+**And three of those eleven headings were changelogs, which nothing refused**
+(`_RECENCY_HEADING_RE`). "Recent Developments", "Recent Controversies" — the dated-heading
+mistake with the date left implicit, and **implicit is worse**: "## 2026 Senate Campaign"
+at least records which year it froze at, while "## Recent Developments" claims to be
+current forever, nothing revises it, and the next ingest adds its own news underneath. The
+argument for refusing a dated heading applies word for word.
+
+**A recency qualifier is required, and a bare noun is never refused.** `## Controversies`
+is a legitimate standing section on a person's page and `## Events` on a festival's;
+refusing those would be the crying-wolf failure every report here is built around. It is
+the "Recent"/"Latest"/"Current"/"Ongoing" in front of the noun that makes the changelog,
+and a mutation that loosens `match` to `search` is what keeps that honest. The date rule
+wins where both match ("Recent 2026 Developments"), because it is the more specific finding
+and its refusal is the one that explains the rename — so the order inside `_bad_headings`
+is load-bearing. Both accretion refusals name this rule too, since a model told to name a
+section for dated material reaches for exactly this heading: principle 4's worst case again,
+one violation renamed into another.
+
+**And the read-before-write refusal says outright that the draft was written blind.** It
+was 20 of the 82 calls, with 11 pages refused twice or more — the handback removed the
+round trip and did nothing about what the model does with the text, and a model reading a
+refusal as "that did not go through" resends the same draft. Both branches now say, before
+the payload, that the draft was composed without the page in front of it and that
+**resending it unchanged is the one response that wastes what it is being handed** — REVISE
+on the whole-page branch, MERGE on the section one. Placement is asserted: a model that
+stops reading at the handed-back text never reaches an instruction underneath it.
 
 **The guard decides WHERE material goes; it says nothing about what deserves recording,
 and the first thing it steered produced an under-recorded page.** The same ingest put a

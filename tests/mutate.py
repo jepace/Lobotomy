@@ -38,6 +38,29 @@ MUTATIONS = [
     ("heading-rule: date",
      '        elif _DATED_HEADING_RE.search(name):\n            bad.append((name, "names a date"))',
      '        elif False:\n            bad.append((name, "names a date"))'),
+    ("heading-rule: recency",
+     '        elif _RECENCY_HEADING_RE.match(name):\n            bad.append((name, "names recency"))',
+     '        elif False:\n            bad.append((name, "names recency"))'),
+    # The qualifier is what makes a changelog; the bare noun is a legitimate standing
+    # section. Anchoring the pattern with `search` instead of `match` would start refusing
+    # "Recent and Historical Comparisons" and anything else with the word in it.
+    ("heading-rule: recency needs a qualifier, not just the noun",
+     '        elif _RECENCY_HEADING_RE.match(name):',
+     '        elif _RECENCY_HEADING_RE.search(name) or name.lower() in ("controversies", "events", "news", "updates", "developments"):'),
+    ("duplicate page: create_file checks the title, not just the path",
+     '        if _existing and _existing != _want and not _existing.startswith("sources/"):',
+     '        if False:'),
+    ("duplicate page: a leading national qualifier is the same subject",
+     '        if _jurisdiction_match(name, title):\n            return rel',
+     '        if False:\n            return rel'),
+    # "US Steel" is not "Steel". Without the two-word floor the matcher folds a company
+    # into a material, and the write lands on the wrong page.
+    ("duplicate page: a one-word remainder is not a jurisdiction match",
+     '            if rest == short and len(short.split()) >= 2:',
+     '            if rest == short:'),
+    ("handback: the unread-section refusal says the draft was written blind",
+     '                f"**You composed that draft without the page in front of you.** REVISE it "',
+     '                f"**.** ("'),
     ("heading-rule: page title",
      '        if level > 1 and want_title and _norm_heading(name) == want_title:',
      '        if False:'),

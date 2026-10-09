@@ -234,6 +234,14 @@ that breaks them, so it costs a round-trip to discover them the hard way:
    an unfolding event, the material is a Timeline entry — call `add_timeline_entry`
    instead. That is what this rule is pushing you toward.
 
+   **A heading that names recency is the same mistake with the date left implicit, and is
+   refused too**: "## Recent Developments", "## Latest News", "## Current Updates". It is
+   worse than a dated heading, which at least records which year it froze at — a section
+   called "Recent Developments" claims to be current forever, nothing revises it, and the
+   next ingest adds its own news underneath. Name the *subject* of the material. A bare
+   `## Controversies` or `## Events` is a subject and is perfectly fine; it is
+   "Recent"/"Latest"/"Current"/"Ongoing" in front of it that makes a changelog.
+
    A date *trailing* a standing heading — "Fiscal Challenges (2026)", "Role and Context
    in 2026" — is dropped for you rather than refused, leaving "Fiscal Challenges" and
    "Role and Context" with the body untouched. Write the standing name yourself and save
@@ -262,12 +270,23 @@ that breaks them, so it costs a round-trip to discover them the hard way:
        a significant dengue outbreak… In October 2026, state officials announced that
        Florida would discontinue the use of Flock Safety…
 
-   Seven sentences, one paragraph, and only the first is about Florida. **When your
-   material fits no existing section, the answer is a new section, not Overview** —
-   `append_section(path, section='Housing Market', text=…)` and the page gains a place
-   that will still be right next year. If the material is one entry in an unfolding
-   sequence, it is `add_timeline_entry`. If it is a story in its own right — an outbreak,
-   an election, a trial — it is a page of its own, linked from here.
+   Seven sentences, one paragraph, and only the first is about Florida. When your material
+   fits no existing section, take these in order:
+
+   - **One entry in an unfolding sequence → `add_timeline_entry(path, date, text)`.**
+     Dated material is a timeline entry by default; the date in your own sentence is the
+     signal.
+   - **A story in its own right → a page of its own**, linked from here. Not only
+     slow-burning events: a remark, a raid, a resignation, a verdict all qualify. Ask
+     whether this page is the *subject* of what happened or a *participant* in it — if a
+     participant, the event wants its own page, because a page is the only thing the
+     autolinker can link and is therefore found everywhere it is mentioned.
+   - **A standing feature of the subject the page has no section for → a new section**,
+     `append_section(path, section='Housing Market', text=…)`, and the page gains a place
+     that will still be right next year. **This is the last resort, not the first.** One
+     article should not need several new sections: an observed ingest created eleven, with
+     names like "Recent Developments" and "Political Treatment", and a page with a section
+     per news item is the same pile in a different shape.
 
    Write any section longer than a few sentences as **more than one paragraph**. A blank
    line between them costs nothing and is the difference between a section a reader can

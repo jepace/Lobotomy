@@ -341,7 +341,22 @@ class DatedHeadingTrapTest(TempWikiTestCase):
     def test_the_escalated_refusal_warns_about_it_too(self):
         self._refusal()
         r = self._refusal()
-        self.assertIn("no year and no date", r)
+        self.assertIn("no year, no date", r)
+
+    def test_both_refusals_warn_about_a_recency_name_as_well(self):
+        """The same trap one step along. A model told to name a section for dated material
+        reaches for "Recent Developments", which the recency rule refuses — so a refusal
+        that steers it there has renamed one violation into another, principle 4's
+        documented worst case. An observed ingest created three such sections."""
+        first = self._refusal()
+        second = self._refusal()
+        for r in (first, second):
+            self.assertIn("Recent", r)
+
+    def test_the_recency_name_really_is_refused(self):
+        r = agent.TOOL_FNS["append_section"](
+            {"path": self.p, "section": "Recent Developments", "text": "Osborn runs."})
+        self.assertTrue(r.startswith("Error:"), r)
 
     def test_the_undated_name_it_suggests_is_accepted(self):
         self._refusal()
@@ -409,8 +424,19 @@ class SchemaTest(unittest.TestCase):
         self.assertIn("Five of these rules are enforced", self.src)
         self.assertNotIn("Four of these rules are enforced", self.src)
 
-    def test_the_schema_names_the_alternative(self):
-        self.assertIn("the answer is a new section, not Overview", self.src)
+    def test_the_schema_names_the_alternatives_in_order(self):
+        """**This replaced an earlier assertion deliberately**, and the wording it looked
+        for — "the answer is a new section, not Overview" — is the thing being fixed. It
+        was true about Overview and wrong about the ranking: a new section is the cheapest
+        of the four moves to take and the model took it reflexively, creating eleven new
+        sections from one article. It is the LAST resort now, behind the timeline, a page
+        of its own, and rewriting the summary."""
+        self.assertIn("take these in order", self.src)
+        self.assertIn("This is the last resort, not the first", self.src)
+        _timeline = self.src.index("add_timeline_entry(path, date, text)")
+        _section = self.src.index("This is the last resort, not the first")
+        self.assertLess(_timeline, _section,
+                        "the new-section option is still listed ahead of the timeline")
 
     def test_the_schema_asks_for_paragraphs(self):
         self.assertIn("more than one paragraph", self.src)
