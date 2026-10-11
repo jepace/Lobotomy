@@ -247,6 +247,155 @@ class CreateFileTest(unittest.TestCase):
             self.assertIn("Trump’s Plan", titles)
 
 
+class ReadingListTest(unittest.TestCase):
+    r"""**`heal_pages` was never going to fix these, and that was the follow-up report.**
+
+    *"the heal didn't affect the articles in my reading list with ’ or whatevers"* —
+    correct, and for two reasons rather than one. A reading-list item is a file in `raw/`,
+    which `heal_pages` does not walk; and **`raw/` is immutable**, so a listing must not
+    repair it even if it could. The split is the one `_tidy_for_reading` already made for
+    the blank-line collapse: fix the capture so new stories are clean ON DISK, fix the
+    DISPLAY for every story already there.
+
+    Where they come from is worth recording, because it is not the model this time. A site
+    that renders its copy out of embedded JSON leaves `’` in the HTML as six literal
+    characters, and `_clip_fetch`'s `handle_data` decodes HTML entities, not JavaScript
+    escapes. `_fetch_and_patch` then takes the capture's FIRST LINE as the reading-list
+    title and `list_inbox` three lines as the excerpt — so one site's habit shows up as a
+    title, an excerpt, and the article you sit and read.
+    """
+
+    def setUp(self):
+        self.tmp = TempWiki().__enter__()
+        self.addCleanup(self.tmp.__exit__, None, None, None)
+        import serve
+        self.serve = serve
+        self._old_raw = serve.RAW_DIR
+        serve.RAW_DIR = agent.RAW_DIR
+        self.addCleanup(lambda: setattr(serve, "RAW_DIR", self._old_raw))
+
+    def _list(self):
+        _old_q = self.serve.job_queue
+
+        class _NoQueue:
+            def in_flight(self):
+                return {}
+
+        self.serve.job_queue = _NoQueue()
+        try:
+            return {i["name"]: i for i in self.serve.list_inbox()}
+        finally:
+            self.serve.job_queue = _old_q
+
+    def test_a_captured_title_is_decoded_for_display(self):
+        self.tmp.raw_file("a.md",
+                          "---\ntitle: \"Trump" + esc("2019") + "s Plan\"\n"
+                          "url: \"https://example.com/1\"\n---\n\nThe body.\n")
+        self.assertEqual(self._list()["a.md"]["title"], "Trump’s Plan")
+
+    def test_the_excerpt_is_decoded_too(self):
+        """The commoner half: a pasted story has no `title:` at all, so the escape the
+        user sees is in the three lines of body the row shows."""
+        self.tmp.raw_file("b.md",
+                          "---\nurl: \"https://example.com/2\"\n---\n\n"
+                          "He said " + esc("201c") + "no" + esc("201d") + " twice.\n")
+        self.assertIn("“no”", self._list()["b.md"]["excerpt"])
+
+    def test_the_raw_file_is_not_rewritten(self):
+        """`raw/` is immutable. The listing is on an 8-second poll, so a listing that
+        repaired what it read would rewrite the reading list continuously."""
+        body = ("---\ntitle: \"Trump" + esc("2019") + "s Plan\"\n"
+                "url: \"https://example.com/1\"\n---\n\nThe " + esc("2019") + " body.\n")
+        p = self.tmp.raw_file("a.md", body)
+        self._list()
+        self.assertEqual(p.read_text(), body)
+
+    def test_a_clean_item_is_unchanged(self):
+        self.tmp.raw_file("c.md", "---\ntitle: \"A Plain Title\"\n"
+                                  "url: \"https://example.com/3\"\n---\n\nPlain body.\n")
+        self.assertEqual(self._list()["c.md"]["title"], "A Plain Title")
+
+    def test_the_reader_decodes_the_article_body(self):
+        """The version of this you actually sit and read."""
+        self.tmp.raw_file("d.md", "---\nurl: \"https://example.com/4\"\n---\n\n"
+                                  "Trump" + esc("2019") + "s plan was announced.\n")
+        with self.serve.app.test_request_context("/"):
+            pass
+        body, _html = self._read_item("d.md")
+        self.assertIn("Trump’s plan", body)
+
+    def _read_item(self, name):
+        """The reader route's own transform, without standing up a session: the route is
+        `@require_login` and what is under test is the decode, not the auth."""
+        text = (agent.RAW_DIR / name).read_text()
+        _meta, body = self.serve._parse_frontmatter(text)
+        body = self.serve._tidy_for_reading(body)
+        body = self.serve._decode_stray_escapes(body)[0]
+        return body, ""
+
+    def test_the_reader_route_applies_it(self):
+        """The structural half, because `_read_item` above reproduces the route rather
+        than calling it — so something has to assert the route really does this."""
+        src = (Path(__file__).resolve().parent.parent
+               / "tools" / "serve.py").read_text(encoding="utf-8")
+        i = src.index("def inbox_view")
+        self.assertIn("_decode_stray_escapes", src[i:src.index("def inbox_debug_fetch")])
+
+
+class CapturePathTest(unittest.TestCase):
+    """New captures are cleaned on disk, at all three doors into the reading list: a
+    fetched URL, a web paste, and `add_story.py`. One door left open is a story that
+    arrives carrying the escape anyway."""
+
+    def test_clip_fetch_decodes_what_it_extracts(self):
+        import serve
+        html = ("<html><body><p>Trump" + esc("2019") + "s Plan</p>"
+                "<p>He said " + esc("201c") + "no" + esc("201d") + ".</p></body></html>")
+
+        class _Resp:
+            headers = {"Content-Type": "text/html; charset=utf-8"}
+
+            def read(self, _n=None):
+                return html.encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        import urllib.request
+        _old = urllib.request.urlopen
+        urllib.request.urlopen = lambda *a, **k: _Resp()
+        try:
+            text, err = serve._clip_fetch("https://example.com/x")
+        finally:
+            urllib.request.urlopen = _old
+        self.assertIsNone(err)
+        self.assertIn("Trump’s Plan", text)
+        self.assertIn("“no”", text)
+        self.assertNotIn(esc("2019"), text)
+
+    def test_the_paste_route_decodes_before_slugging(self):
+        """Done before the filename is derived, so the slug comes from the words rather
+        than from an escape."""
+        src = (Path(__file__).resolve().parent.parent
+               / "tools" / "serve.py").read_text(encoding="utf-8")
+        i = src.index("def inbox_add")
+        head = src[i:src.index("is_url =", i)]
+        self.assertIn("_decode_stray_escapes", head)
+
+    def test_add_story_decodes_too(self):
+        src = (Path(__file__).resolve().parent.parent
+               / "tools" / "add_story.py").read_text(encoding="utf-8")
+        i = src.index("title = args.title.strip()")
+        self.assertIn("_decode_stray_escapes", src[:i])
+
+    def test_serve_shares_the_decoder(self):
+        import serve
+        self.assertIs(serve._decode_stray_escapes, agent._decode_stray_escapes)
+
+
 class HealPagesTest(unittest.TestCase):
     """Prevention alone freezes the damage. ~13,000 pages were written before the parse
     site decoded anything, and the title on each is what feeds `_build_title_map`."""

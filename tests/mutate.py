@@ -41,6 +41,16 @@ MUTATIONS = [
     ("escapes: a double-escaped \\uXXXX is decoded at the parse site",
      '    return _decode_args(args) if isinstance(args, dict) else args',
      '    return args'),
+    # The reading list is raw/, which heal_pages does not walk and must not rewrite — so
+    # the listing decodes for DISPLAY, and the fetch decodes on the way in.
+    ("escapes: the reading list decodes a captured title and excerpt",
+     '        title   = _decode_stray_escapes(title)[0]\n        excerpt = _decode_stray_escapes(excerpt)[0]',
+     '        pass',
+     "tools/serve.py"),
+    ("escapes: a fetched capture is decoded on the way to disk",
+     '        text = _decode_stray_escapes(text)[0]\n        if not text:',
+     '        if not text:',
+     "tools/serve.py"),
     ("escapes: heal_pages decodes the pages already on disk",
      '                _unesc, _n_unesc = _decode_stray_escapes(new)',
      '                _unesc, _n_unesc = new, 0'),

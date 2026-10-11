@@ -95,6 +95,11 @@ def main() -> int:
         print("Nothing to add: the input was empty.", file=sys.stderr)
         return 1
 
+    # A story pasted out of a site that renders its copy from embedded JSON carries
+    # `’` as six literal characters. Decoded on the way in, so the file this writes
+    # is clean on disk like a web capture's — the web route does it in `_clip_fetch`, and
+    # this is the other door into the same reading list.
+    content = agent._decode_stray_escapes(content)[0]
     title = args.title.strip() or title_from(content, args.url)
     name = args.name.strip() or slugify(title) + ".md"
     if not name.endswith(".md"):

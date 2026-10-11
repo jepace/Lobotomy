@@ -173,7 +173,7 @@ from config import (cfg_get, cfg_bool, cfg_int, validate_config,
                     cfg_active_provider, cfg_provider, cfg_available_models,
                     cfg_all_providers, cfg_write_llm)
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title, _H1_RE,
-                   tool_arg_preview, parse_tool_args,
+                   tool_arg_preview, parse_tool_args, _decode_stray_escapes,
                    fm_scalar, fm_quote, parse_tags_line, first_desc_line,
                    _page_section_names,
                    write_reason, page_history,
@@ -1275,11 +1275,20 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
         # sample, and flattening it would be a worse fault than the one being fixed.
         text = re.sub(r"[ \t]+(?=\n)|[ \t]+$", "", "".join(parser.parts))
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        # A site that renders its copy out of embedded JSON leaves `’` in the HTML as
+        # six literal characters, and `handle_data` decodes HTML entities, not JavaScript
+        # escapes. That text is the capture: `_fetch_and_patch` takes its FIRST LINE as the
+        # reading-list title, `list_inbox` takes three lines as the excerpt, and every
+        # ingest round re-sends the whole thing to the model. Decoded here so a new capture
+        # is clean ON DISK, which is the same reason the blank-line collapse above is here
+        # rather than only in the reader.
+        text = _decode_stray_escapes(text)[0]
         if not text:
             return None, "No text extracted — site may require JavaScript or be paywalled"
         return text[:100_000], None
     else:
-        text = raw.decode("utf-8", errors="replace")[:100_000]
+        text = _decode_stray_escapes(
+            raw.decode("utf-8", errors="replace"))[0][:100_000]
         if text.startswith('�'):  # Unicode replacement character, likely binary garbage
             return None, "Response appears to be binary or unreadable"
         return text, None
@@ -1501,6 +1510,17 @@ def list_inbox(show_archived: bool = False) -> list:
                 excerpt = source_url or ""
             else:
                 excerpt = " ".join(lines[:3])[:200]
+
+        # Everything already captured still carries its literal `’`, and **raw/ is
+        # immutable** — a listing must never rewrite the files it is listing, the same rule
+        # `inbox_view` follows for the blank-line collapse. So the capture path above fixes
+        # new stories on disk and this fixes the display of every story already here.
+        #
+        # Cheap enough for the 8-second poll: `_decode_stray_escapes` returns on a `"\\u"
+        # not in text` substring test, so a clean item pays one scan of a 100-character
+        # title and a 200-character excerpt — not of the article.
+        title   = _decode_stray_escapes(title)[0]
+        excerpt = _decode_stray_escapes(excerpt)[0]
 
         mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
         wiki_path = ""
@@ -3367,6 +3387,11 @@ def inbox_read(filename):
 def inbox_add():
     data    = request.get_json(silent=True) or {}
     content = str(data.get("content") or "").strip()
+    # Text copied out of a site that renders its copy from embedded JSON carries `’`
+    # as six literal characters, and a paste is the one capture with no fetch to clean it:
+    # `_clip_fetch` never runs. Done before the slug is derived, so the filename comes from
+    # the words rather than from an escape.
+    content = _decode_stray_escapes(content)[0]
     name    = str(data.get("filename") or "").strip()
     if not content:
         return {"error": "Empty content"}, 400
@@ -3648,6 +3673,10 @@ def inbox_view(filename):
     # carries the blank-looking lines the fetcher used to produce, and a pasted article
     # brings its own, so cleaning at render is what fixes the items already in the list.
     body = _tidy_for_reading(body)
+    # Same display-only treatment for a literal `’` left in the capture by a site that
+    # renders its copy out of embedded JSON. The reader shows the article, so a sentence
+    # reading `Trump’s plan` is the version of this bug you actually sit and read.
+    body = _decode_stray_escapes(body)[0]
     html = _md.markdown(body, extensions=["extra", "nl2br"]) if body else ""
     return {"content": body, "html": html, "url": source_url}
 

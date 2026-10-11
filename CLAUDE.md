@@ -1495,6 +1495,31 @@ Absorbed rather than reported and with no `LOBOTOMY.md` line, because the escape
 exactly one character and there is nothing for the model to decide (principle 1); a schema
 line is what a *refusal* needs.
 
+**And then: *"the heal didn't affect the articles in my reading list with ’ or
+whatevers."*** Correct, for two reasons rather than one. A reading-list item is a file in
+`raw/`, which `heal_pages` does not walk — and **`raw/` is immutable**, so a listing must
+not repair it even if it could. The split is the one `_tidy_for_reading` already made for
+the blank-line collapse: **the capture path cleans new stories on disk, the display cleans
+every story already there.**
+
+**And this half was not the model's doing at all.** A site that renders its copy out of
+embedded JSON leaves `’` in the HTML as six literal characters, and `_clip_fetch`'s
+`handle_data` decodes HTML *entities*, not JavaScript escapes. `_fetch_and_patch` then takes
+the capture's FIRST LINE as the reading-list title and `list_inbox` three lines as the
+excerpt — so one site's habit surfaces as a title, an excerpt and the article you sit and
+read. Three doors into the reading list and all three now decode on the way in:
+`_clip_fetch` (a fetched URL), `/inbox/add` (a paste, which has no fetch to clean it, and
+decoded *before* the slug is derived so the filename comes from the words), and
+`add_story.py`. `list_inbox` and `inbox_view` decode for display only — the listing is on
+the 8-second poll, which the `"\\u" not in text` early return makes free for a clean item,
+and it scans a 100-character title and a 200-character excerpt rather than the article.
+
+**Stated limit:** the raw files already on disk keep their escapes, so an ingest of one
+still sends them to the model — harmless, because anything the model writes back comes
+through `parse_tool_args` and is decoded, so the wiki pages come out clean. Rewriting
+`raw/` to fix the bytes would trade a cosmetic flaw for the one invariant this project
+does not break.
+
 **Two bugs in the repair itself, and the tests that caught them are the ones worth
 copying.** `fm_quote` escapes a backslash, so a title holding this bug sits on disk as
 `title: "Trump\\u2019s Plan"` — a pattern matching ONE backslash ate the second, left the
