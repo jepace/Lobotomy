@@ -849,6 +849,77 @@ normalised, so no duplicate page was created and nothing reported it. Apostrophe
 and dashes each match their whole family; the display text keeps whatever the page wrote,
 since rewriting an author's punctuation is not the linker's job.
 
+**An accented letter and its base are the same letter for matching** (`_fold_diacritics`,
+`_FLEX_FAMILIES`, `_FOLD_EXTRA`). Reported as *"ingest wanted Peter but page is Péter
+Magyar. I added the alias, but maybe there's a better way?"* There is: an alias is the wrong
+tool twice over — it has to be added by hand for every accented name in a growing wiki, and
+`aliases:` is documented as a human override for a name the page does **not** carry, while
+"Peter Magyar" is the same name with the accent dropped the way prose drops it.
+
+**The accent was being DELETED rather than folded, and that was not in the report.**
+Measured before changing anything: `_norm_name_key('Péter Magyar')` → `p ter magyar`, and
+`_slug_for` → `p-ter-magyar`. `é` is not in `[a-z0-9]`, so it became a **separator** and one
+name turned into two words. So the resolver was not merely missing a match, it was comparing
+a mangled string — three consequences, all closed: a duplicate page waiting to be created
+(`_resolve_page` answered NO PAGE for a page sitting right there), a prose mention that
+never linked, and a filename with a hole in it that nobody would type.
+
+`_FLEX_FAMILIES` is **generated, not listed**: every Latin codepoint whose NFKD
+decomposition is one ASCII base letter joins that base's character class, so one table
+covers é è ê ë ē ė ę ě and the next alphabet with no code change. Letters carrying no
+combining mark need their own table — NFKD leaves ø, ł, đ, ß, æ and þ untouched, so a fold
+built on NFKD alone silently misses every Scandinavian and Polish name. The multi-letter
+folds go **one direction only** (a title's ß may be written "ss"; a title's "ss" must not
+match ß, or "Essen" matches "Eßen"), the same asymmetry the comma rule has.
+
+**The prefilters are what make or break it, and the first version of this change failed
+there — silently.** `_autolink` skips a title whose `\w+` tokens are not all in the body,
+then skips each line that does not contain the title's longest token, and both compare
+literally: a title probing for `péter` finds nothing in a line spelling the name `Peter`, so
+the line is rejected **before** the flexible pattern can match and the whole fix does
+nothing. The regex matched and no link appeared. That trap is already written down for
+`noah's` against `noah’s`; this is the same trap one alphabet along, and both sides are
+folded now — `lines_lower`, `body_tokens`, the cached per-title tokens, the unlink test's
+display-text comparison, and the two places `lines_lower` is refreshed in place. **Folded
+strings are used only for substring and set tests, never for positions**, because folding
+can change a string's length (ß→ss) and an offset into it would not map back.
+
+The cost is ~0 on an accented page and under 7% on an ASCII one, after two fixes. A
+`s.isascii()` early return, since plain ASCII cannot hold an accent — this runs per line and
+per candidate title, so NFKD would otherwise be paid hundreds of thousands of times on a
+large page. And the per-line probe is now **derived** from the cached folded token set
+(`max(needed, key=len)`) rather than folding the title again: it is the longest of those
+tokens by construction, and recomputing it was ~10% of a whole-page autolink by itself.
+**The benchmark was wrong before it was right**, for the third time in this file: the first
+run reported a 45% folding penalty on a page with no accents in it, which is impossible for
+a short-circuited fold — the first timed run was paying the per-title regex compilation for
+1,500 titles. Warm the caches before timing anything.
+
+**And it surfaced a latent bug worth its own name, because it has nothing to do with
+accents: two names for one page unlinked each other and left NOTHING.** The pass that writes
+a link marks the section's mention spent; a later pass for another name of the same page then
+meets that link at group 1, reads "mention already spent", and strips it as a repeat. It
+needs two names whose `\w+` tokens are **equal**, which an alias rarely is — "Lancet" vs
+"The Lancet", "PG&E" vs "PG and E" all differ — so it sat there unseen. Folding made
+"Péter Magyar" and "Peter Magyar" exactly that, and the reported fix produced a page with no
+link where there had been one.
+
+The answer is the upgrade pass's, which already documents this hazard three screens down: a
+link this run just wrote is accounted for by the NEXT pass's group-1 encounter rather than
+counted twice. `_created_at` holds `(page, line)` for a link this run created, and the
+group-1 branch keeps such a link instead of stripping it — **spending the credit**, so a
+genuine repeat further along the line still loses its link. Credits are **staged** in
+`_new_credits` and merged only once the line's substitution finishes, because within one
+pass a bare mention linked early in a line and a pre-existing link later in it really are
+two mentions and the second must still be stripped.
+
+**`_slug_for` folding has a compatibility edge, and it is covered rather than assumed.**
+Pages created before this are on disk as `p-ter-magyar.md`, so the filename fallback in
+`_resolve_page` no longer matches them — the folded title key has to carry it, which it
+does. Those filenames are left alone: renaming is `rename_page.py`'s job, it rewrites every
+inbound link, and a startup sweep that renamed files would be a different and much louder
+kind of change.
+
 **The repeat-link rule is not free.** The same fixture runs 4.5s on the code before it and
 9.9s after, because group 1 now inspects every existing link rather than returning it
 untouched. That is the cost of unlinking repeats, and it is paid on every write to a large

@@ -38,6 +38,39 @@ MUTATIONS = [
     ("heading-rule: date",
      '        elif _DATED_HEADING_RE.search(name):\n            bad.append((name, "names a date"))',
      '        elif False:\n            bad.append((name, "names a date"))'),
+    ("diacritics: an accent is folded, not dropped",
+     '    if s.isascii():\n        return s',
+     '    return s\n    if s.isascii():\n        return s'),
+    ("diacritics: the comparison key folds",
+     '    s = re.sub(r"\\([^)]*\\)", " ", _fold_diacritics(name).lower())',
+     '    s = re.sub(r"\\([^)]*\\)", " ", name.lower())'),
+    ("diacritics: the slug folds",
+     '                  re.sub(r"[^a-z0-9]+", "-", _fold_diacritics(name).lower())).strip("-")',
+     '                  re.sub(r"[^a-z0-9]+", "-", name.lower())).strip("-")'),
+    # Letters with no combining mark (ø ł ß æ) come through NFKD unchanged, so a fold
+    # built on NFKD alone silently misses every Scandinavian and Polish name.
+    ("diacritics: the non-decomposable letters have their own table",
+     '        rep = _FOLD_EXTRA.get(ch.lower())',
+     '        rep = None'),
+    # The prefilters are literal: a title probing for "peter" after folding must meet a
+    # line folded the same way, or the line is rejected before the pattern can match.
+    ("diacritics: the per-line probe source is folded",
+     '    lines_lower = [_fold_diacritics(ln).lower() for ln in lines]',
+     '    lines_lower = [ln.lower() for ln in lines]'),
+    ("diacritics: the body token prefilter is folded",
+     '    body_tokens = set(re.findall(r"\\w+", _fold_diacritics(body).lower()))',
+     '    body_tokens = set(re.findall(r"\\w+", body.lower()))'),
+    # Two names for one page used to unlink each other and leave nothing.
+    ("diacritics: a link this run created is not stripped as a repeat",
+     '                    if _credit in _created_at:',
+     '                    if False:'),
+    # Staged, not recorded directly: within one pass a bare mention linked early in a line
+    # and a pre-existing link later in it are two mentions, and the second must still be
+    # stripped. (An earlier version of this mutation removed the `.clear()` instead and was
+    # reported MISSED — correctly, because that call is hygiene and changes no behaviour.)
+    ("diacritics: the credit cannot be consumed by the pass that made it",
+     '                _new_credits.add((_page_key, _cur_i[0]))',
+     '                _created_at.add((_page_key, _cur_i[0]))'),
     ("escapes: a double-escaped \\uXXXX is decoded at the parse site",
      '    return _decode_args(args) if isinstance(args, dict) else args',
      '    return args'),

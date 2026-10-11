@@ -5812,6 +5812,49 @@ def heal_index_if_stale() -> None:
 # Scans" with a curly apostrophe and the page gets created as "Noah's Ark Scans" with a
 # straight one, so the autolinker — which matches the title literally — silently skipped
 # it while every other name in the same list linked. Same trap for quotes and dashes.
+# A letter and its accented forms are the same letter for every COMPARISON this file
+# makes. Reported as *"ingest wanted Peter but page is Péter Magyar"* — the page existed,
+# the resolver said NO PAGE, and prose spelling the name without its accent went unlinked.
+#
+# **The accent was being DELETED rather than folded**, which is the worse half and was not
+# in the report: `[^a-z0-9]+` turned "Péter Magyar" into `p ter magyar` for the comparison
+# key and `p-ter-magyar` for the filename, so one name became two words. The resolver was
+# not merely missing a match, it was comparing a mangled string — and a new page would have
+# been filed under a slug nobody would type.
+#
+# Non-decomposable letters need their own table: NFKD decomposes é to "e" + a combining
+# mark, but ø, ł, đ, ß, æ and þ carry no combining mark at all and come through unchanged.
+_FOLD_EXTRA = {
+    "ø": "o", "œ": "oe", "æ": "ae", "ł": "l", "đ": "d", "ð": "d", "þ": "th",
+    "ß": "ss", "ı": "i", "ŧ": "t", "ħ": "h", "ŋ": "n", "ĸ": "k",
+}
+
+
+def _fold_diacritics(s: str) -> str:
+    """Latin letters reduced to their unaccented base: "Péter" → "Peter", "Łódź" → "Lodz".
+
+    Case is left alone — callers lowercase for their own reasons and folding here as well
+    would hide which of them needed it.
+    """
+    # The fast path, and it is not a micro-optimization: this runs per LINE on every
+    # autolink and per title on every candidate, so a 119KB page against 9,600 titles
+    # would pay NFKD hundreds of thousands of times. Plain ASCII cannot contain an accent
+    # or a ligature, so there is nothing to fold and the answer is the input.
+    if s.isascii():
+        return s
+    import unicodedata
+    out = []
+    for ch in unicodedata.normalize("NFKD", s):
+        if unicodedata.combining(ch):
+            continue                      # the accent itself, now a separate character
+        rep = _FOLD_EXTRA.get(ch.lower())
+        if rep is None:
+            out.append(ch)
+        else:
+            out.append(rep.upper() if ch.isupper() else rep)
+    return "".join(out)
+
+
 _FLEX_GROUPS = ("'’‘ʼ", '"“”', "-–—")
 _FLEX_CHARS = {ch: "[" + re.escape(g) + "]" for g in _FLEX_GROUPS for ch in g}
 # A comma inside a title is optional in the text. Same class of silent miss as the
@@ -5826,6 +5869,40 @@ _FLEX_CHARS = {ch: "[" + re.escape(g) + "]" for g in _FLEX_GROUPS for ch in g}
 # that name. Titles carry the punctuation of a formal name; prose carries the punctuation
 # of a sentence, and only one of those is safe to relax.
 _FLEX_CHARS[","] = ",?"
+
+# And an accented letter matches its unaccented base, in either direction. Reported as
+# *"ingest wanted Peter but page is Péter Magyar. I added the alias, but maybe there's a
+# better way?"* — there is, because an alias is the wrong tool here twice over: it has to
+# be added by hand for every accented name in a growing wiki, and `aliases:` is documented
+# as a human override for a name the page does NOT carry, while "Peter Magyar" is the same
+# name with the accent dropped the way prose drops it.
+#
+# Generated rather than listed. Every Latin letter whose NFKD decomposition starts with
+# a base letter joins that base's family, so one table covers é è ê ë ē ė ę ě and the next
+# alphabet without a code change — a hand-written list is the second place to forget.
+_FLEX_FAMILIES: dict = {}
+for _cp in list(range(0x00C0, 0x0250)) + list(range(0x1E00, 0x1F00)):
+    _ch = chr(_cp)
+    _base = _fold_diacritics(_ch)
+    # One base letter only: ß folds to "ss" and æ to "ae", which cannot sit in a character
+    # class. They are handled below as alternations instead.
+    if len(_base) == 1 and _base.isascii() and _base.isalpha() and _base != _ch:
+        _FLEX_FAMILIES.setdefault(_base.lower(), set()).add(_ch)
+        _FLEX_FAMILIES.setdefault(_base.lower(), set()).add(_base.lower())
+for _base, _members in _FLEX_FAMILIES.items():
+    # Lower and upper forms both, since the regex is IGNORECASE but a character class is
+    # matched literally — [eé] does not match "É" on its own.
+    _cls = "[" + re.escape("".join(sorted(_members | {m.upper() for m in _members}))) + "]"
+    for _m in _members:
+        _FLEX_CHARS.setdefault(_m, _cls)
+        _FLEX_CHARS.setdefault(_m.upper(), _cls)
+# The multi-letter folds, one direction only — a title carrying ß may be written "ss" in
+# the text. The reverse is NOT offered: letting a title's "ss" match a ß would make
+# "Essen" match "Eßen", and more to the point a title's plain letters must not start
+# matching ligatures nobody wrote.
+for _one, _many in (("ß", "ss"), ("æ", "ae"), ("œ", "oe"), ("þ", "th")):
+    _FLEX_CHARS[_one] = "(?:" + re.escape(_one) + "|" + _many + ")"
+    _FLEX_CHARS[_one.upper()] = _FLEX_CHARS[_one]
 
 
 def _esc_flex(word: str) -> str:
@@ -6078,8 +6155,15 @@ _LEGAL_SUFFIXES = {
 
 
 def _slug_for(name: str) -> str:
-    """The filename a page for `name` would use — the lowercase-hyphenated convention."""
-    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", name.lower())).strip("-")
+    """The filename a page for `name` would use — the lowercase-hyphenated convention.
+
+    Diacritics are folded rather than dropped, or "Péter Magyar" slugs to `p-ter-magyar`:
+    the accent is not in `[a-z0-9]`, so it becomes a separator and splits the name in two.
+    That also repairs `_resolve_page`'s filename fallback, which compares this slug against
+    what is on disk.
+    """
+    return re.sub(r"-+", "-",
+                  re.sub(r"[^a-z0-9]+", "-", _fold_diacritics(name).lower())).strip("-")
 
 
 def _norm_name_key(name: str) -> str:
@@ -6094,7 +6178,7 @@ def _norm_name_key(name: str) -> str:
     automatically — it collapses "PG&E Corporation" into "PG&E", and a holding company
     and its subsidiary are two pages.
     """
-    s = re.sub(r"\([^)]*\)", " ", name.lower())
+    s = re.sub(r"\([^)]*\)", " ", _fold_diacritics(name).lower())
     s = s.replace("&", " and ")
     s = re.sub(r"[^a-z0-9]+", " ", s).strip()
     s = re.sub(r"\b(?:[a-z] )+[a-z]\b", lambda m: m.group(0).replace(" ", ""), s)
@@ -6668,7 +6752,14 @@ def _autolink(args: dict) -> str:
     # Kept in step with `lines` on every substitution. The upgrade pass needs a per-line
     # case-insensitive probe, and lowercasing each line once per title is O(titles x
     # lines) — the same shape of cost the token prefilter exists to avoid.
-    lines_lower = [ln.lower() for ln in lines]
+    # Lowered AND diacritic-folded, because this is what the per-line probe below
+    # searches. A title "Péter Magyar" probes for its longest token, and a line
+    # spelling the name "Peter Magyar" would not contain it — so the line is rejected
+    # before the flexible pattern can match it, and the whole accent fix does nothing.
+    # Exactly the trap the `noah's` probe comment already names, one alphabet along.
+    # Only ever used for substring tests, never for positions: folding can change a
+    # string's LENGTH (ß→ss), so an offset into it would not map back.
+    lines_lower = [_fold_diacritics(ln).lower() for ln in lines]
     is_heading = [bool(re.match(r"^#{1,6}\s", ln)) for ln in lines]
     # A fenced code block is not prose, and linking inside it corrupts the code.
     #
@@ -6745,7 +6836,9 @@ def _autolink(args: dict) -> str:
     # title in the map may match where it previously could not. That is a better result,
     # not a worse one, and it stays deterministic because _build_title_map() is sorted —
     # but it does mean this loop is order-dependent, so the map's order is load-bearing.
-    body_tokens = set(re.findall(r"\w+", body.lower()))
+    # Folded for the same reason as lines_lower: this set is compared against the
+    # title's own tokens, so both sides have to spell an accented name the same way.
+    body_tokens = set(re.findall(r"\w+", _fold_diacritics(body).lower()))
 
     linked = 0
     # Scoped to this call, not to the process: a long-running server autolinks thousands
@@ -6777,6 +6870,24 @@ def _autolink(args: dict) -> str:
     # the first. Correcting that means walking the section by position rather than by
     # title, which is a different loop; the section still gets exactly one link either way.
     _linked_here: set = set()
+    # A link CREATED by one title's pass, as (page, line index) — and the staging set that
+    # keeps it from being consumed within the pass that made it.
+    #
+    # **Two names for one page used to unlink each other and leave NOTHING.** The pass that
+    # writes a link marks the mention spent, and a later pass for another name of the same
+    # page then meets that link at group 1, reads "mention already spent", and strips it as
+    # a repeat. Latent for as long as the repeat rule has existed — it needs two names
+    # whose \w+ tokens are EQUAL, which an alias rarely is — and diacritic folding made
+    # "Péter Magyar" and "Peter Magyar" exactly that, so the reported fix produced a page
+    # with no link where there had been one.
+    #
+    # The shape of the answer is the upgrade pass's, three screens down: a link this run
+    # just wrote is accounted for by the NEXT pass's group-1 encounter rather than counted
+    # twice. Staged rather than recorded directly, because within one pass a bare mention
+    # linked early in a line and a pre-existing link later in it ARE two mentions, and the
+    # second must still be stripped.
+    _created_at: set = set()
+    _new_credits: set = set()
     _sec_of, _sec_n = [], 0
     for _i in range(len(lines)):
         if is_heading[_i]:
@@ -6786,7 +6897,8 @@ def _autolink(args: dict) -> str:
     for title, link_path in title_map:
         needed = _title_tokens_cache.get(title)
         if needed is None:
-            needed = frozenset(re.findall(r"\w+", title.lower()))
+            needed = frozenset(re.findall(r"\w+",
+                                          _fold_diacritics(title).lower()))
             _title_tokens_cache[title] = needed
         if needed and not needed <= body_tokens:
             continue
@@ -6821,6 +6933,7 @@ def _autolink(args: dict) -> str:
         # or the sharing does nothing.
         _page_key = link_path.rsplit("/", 1)[-1]
         _seen_key = [None]     # (page, section) for the line being walked
+        _cur_i = [0]           # index of that line, for the created-link credit
         # The title's longest word, lowercased. A necessary condition for this title to
         # match anything on a line, and the single biggest saving in the whole loop: the
         # token prefilter above only says the title's words are somewhere in the BODY, so
@@ -6832,7 +6945,11 @@ def _autolink(args: dict) -> str:
         # typographic character ("Noah’s") would never be found in a line spelling it the
         # other way, and the probe would reject the line before the flexible pattern could
         # match it. Tokens carry no punctuation, so they compare cleanly.
-        _probe = max(re.findall(r"\w+", title.lower()), key=len, default="")
+        # Derived from the cached token set rather than recomputed: `needed` is already
+        # this title's \w+ tokens, lowercased and folded, so the longest of them IS the
+        # probe by construction. Folding the title again here cost ~10% of a whole-page
+        # autolink, because it is once per candidate title per page — ~9,600 calls.
+        _probe = max(needed, key=len, default="")
         _upgrade = _UPGRADE_PENDING      # compiled lazily; see below
 
         def _points_here(url: str) -> bool:
@@ -6876,11 +6993,22 @@ def _autolink(args: dict) -> str:
                 # Only ever unwrap a link this autolinker would itself have written:
                 # same page AND the display text is the title. A hand-written
                 # "[the outbreak](../entities/pa-outbreak.md)" is not ours to strip.
-                if frozenset(_WORD_RE.findall(inner.group(1).lower())) != _title_toks:
+                # Folded on both sides, or a repeat written "[Peter Magyar](…)" is not
+                # recognised as one of this title's own links and the once-per-section
+                # rule stops applying to exactly the pages this fix just connected.
+                if frozenset(_WORD_RE.findall(
+                        _fold_diacritics(inner.group(1)).lower())) != _title_toks:
                     return m.group(1)
                 if _always:
                     return m.group(1)           # a list row always keeps its link
                 if _seen_key[0] in _linked_here:
+                    _credit = (_page_key, _cur_i[0])
+                    if _credit in _created_at:
+                        # This is the link an earlier pass wrote on this line for this
+                        # page, not a second mention. Keep it, and spend the credit so a
+                        # genuine repeat further along still gets stripped.
+                        _created_at.discard(_credit)
+                        return m.group(1)
                     return inner.group(1)       # a repeat in prose — unlink it
                 _linked_here.add(_seen_key[0])
                 return m.group(1)
@@ -6889,6 +7017,7 @@ def _autolink(args: dict) -> str:
                 return display                  # already linked in this section
             if not _always:
                 _linked_here.add(_seen_key[0])
+                _new_credits.add((_page_key, _cur_i[0]))
             return f"[{display}]({_lp})"
 
         changed = False
@@ -6898,6 +7027,7 @@ def _autolink(args: dict) -> str:
             if not line or _probe not in lines_lower[i]:
                 continue
             _seen_key[0] = (_page_key, _sec_of[i])
+            _cur_i[0] = i
             _always = is_listish[i]
             # Upgrade first: a shorter title already linked inside this one's phrase. Only
             # on lines that carry a link at all, which is a cheap substring test and skips
@@ -6943,15 +7073,18 @@ def _autolink(args: dict) -> str:
                 _upgraded = _upgrade.sub(_up_repl, line)
                 if _upgraded != line:
                     lines[i] = line = _upgraded
-                    lines_lower[i] = _upgraded.lower()
+                    lines_lower[i] = _fold_diacritics(_upgraded).lower()
                     changed = True
             # functools.partial rather than a lambda: this is called once per regex
             # match, which the profile put at 731,390 times on a large page, and the
             # extra Python frame is pure overhead at that count.
             new_line = combined.sub(_partial(_replacer, _always=_always), line)
+            # Only now, so the pass that created a link cannot also credit itself with it.
+            _created_at |= _new_credits
+            _new_credits.clear()
             if new_line != line:
                 lines[i] = new_line
-                lines_lower[i] = new_line.lower()
+                lines_lower[i] = _fold_diacritics(new_line).lower()
                 changed = True
         if changed:
             linked += 1
