@@ -38,6 +38,29 @@ MUTATIONS = [
     ("heading-rule: date",
      '        elif _DATED_HEADING_RE.search(name):\n            bad.append((name, "names a date"))',
      '        elif False:\n            bad.append((name, "names a date"))'),
+    ("escapes: a double-escaped \\uXXXX is decoded at the parse site",
+     '    return _decode_args(args) if isinstance(args, dict) else args',
+     '    return args'),
+    ("escapes: heal_pages decodes the pages already on disk",
+     '                _unesc, _n_unesc = _decode_stray_escapes(new)',
+     '                _unesc, _n_unesc = new, 0'),
+    # fm_quote escapes a backslash, so a healed title is stored `\\u2019`. Matching one
+    # backslash leaves the first, fm_quote re-escapes it, and heal_pages rewrites the page
+    # on every startup for ever — a drift loop worse than the bug.
+    ("escapes: the whole run of backslashes is consumed",
+     '_STRAY_ESCAPE_RE = re.compile(r"\\\\+u([0-9a-fA-F]{4})")',
+     '_STRAY_ESCAPE_RE = re.compile(r"\\\\u([0-9a-fA-F]{4})")'),
+    # A lone surrogate is the input errors="replace" exists to absorb; decoding one turns
+    # six harmless characters into a byte that cannot be encoded.
+    ("escapes: an unsafe escape is left as text",
+     '    if not ch.isprintable() or (ch.isspace() and ch != " "):\n        return ""',
+     '    if False:\n        return ""'),
+    ("escapes: the count is substitutions made, not matches found",
+     '            if not ch:\n                return m.group(0)\n            n += 1',
+     '            n += 1\n            if not ch:\n                return m.group(0)'),
+    ("escapes: code spans and fenced blocks are exempt",
+     '    return _map_outside_code(text, _sub)',
+     '    return _sub(text)'),
     ("heading-rule: recency",
      '        elif _RECENCY_HEADING_RE.match(name):\n            bad.append((name, "names recency"))',
      '        elif False:\n            bad.append((name, "names recency"))'),

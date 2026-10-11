@@ -2350,31 +2350,189 @@ _CODE_SPAN_RE = re.compile(_CODE_SPAN, re.DOTALL)
 _CODE_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(((?:\.{1,2}/)*(?:[\w.\-]+/)*[\w.\-]+\.md)\)")
 
 
-def _unlink_in_code(text: str) -> tuple:
-    """Flatten wiki links written inside code spans and fenced blocks. (text, n_healed)."""
-    n = 0
+def _map_in_code(text: str, fn) -> tuple:
+    """Apply `fn` to every code span and fenced block in `text`, nothing else.
 
-    def _flatten(s):
-        nonlocal n
-        s2, k = _CODE_LINK_RE.subn(r"\1", s)
-        n += k
+    `fn(str) -> (str, int)`; returns (text, total). The walk is shared by every pass that
+    has to tell code from prose, because getting it wrong twice in two ways is how the
+    autolinker ended up linking inside a ```sh block a reader copies into a terminal.
+    A fence closes only on a run of its OWN character at least as long, or a `~~~` inside
+    a ``` block resumes treating lines as prose mid-block.
+    """
+    total = 0
+
+    def _apply(s):
+        nonlocal total
+        s2, k = fn(s)
+        total += k
         return s2
 
-    lines, out, fence = text.split("\n"), [], ""
-    for ln in lines:
+    out, fence = [], ""
+    for ln in text.split("\n"):
         m = re.match(r"^\s{0,3}(`{3,}|~{3,})", ln)
         if fence:
             # Inside a block: the whole line is code, including the closing fence line.
-            out.append(_flatten(ln))
+            out.append(_apply(ln))
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
                 fence = ""
             continue
         if m:
             fence = m.group(1)
-            out.append(_flatten(ln))
+            out.append(_apply(ln))
             continue
-        out.append(_CODE_SPAN_RE.sub(lambda mm: _flatten(mm.group(0)), ln))
-    return "\n".join(out), n
+        out.append(_CODE_SPAN_RE.sub(lambda mm: _apply(mm.group(0)), ln))
+    return "\n".join(out), total
+
+
+def _map_outside_code(text: str, fn) -> tuple:
+    """The complement: apply `fn` to prose only, leaving code spans and blocks alone.
+
+    The inverse of `_map_in_code` and deliberately built on the same walk, so the two
+    cannot disagree about where a fence ends.
+    """
+    total = 0
+
+    def _apply(s):
+        nonlocal total
+        s2, k = fn(s)
+        total += k
+        return s2
+
+    out, fence = [], ""
+    for ln in text.split("\n"):
+        m = re.match(r"^\s{0,3}(`{3,}|~{3,})", ln)
+        if fence:
+            out.append(ln)
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
+                fence = ""
+            continue
+        if m:
+            fence = m.group(1)
+            out.append(ln)
+            continue
+        # Split the line on code spans and transform only the gaps between them.
+        pos, pieces = 0, []
+        for mm in _CODE_SPAN_RE.finditer(ln):
+            pieces.append(_apply(ln[pos:mm.start()]))
+            pieces.append(mm.group(0))
+            pos = mm.end()
+        pieces.append(_apply(ln[pos:]))
+        out.append("".join(pieces))
+    return "\n".join(out), total
+
+
+def _unlink_in_code(text: str) -> tuple:
+    """Flatten wiki links written inside code spans and fenced blocks. (text, n_healed)."""
+    return _map_in_code(text, lambda s: _CODE_LINK_RE.subn(r"\1", s))
+
+
+# A `\uXXXX` escape that survived JSON parsing, i.e. one that was escaped TWICE. Reported
+# as *"i get literal ‘ and ’ in titles"*.
+#
+# The provider hands a tool call's arguments over as a JSON string, so one round of
+# `json.loads` is correct and gives back real characters. A model that writes `\\u2019` —
+# escaping the backslash as well, a habit from writing JSON inside JSON — parses to the
+# six literal characters `’`, which then go to disk, into `title:`, into the title
+# map and onto the page. Nothing was malformed at any point: the JSON is valid, the write
+# succeeds, the page renders, and the title simply reads "Trump’s Plan" forever.
+#
+# Decoded to the character the escape names rather than folded to an ASCII quote. The
+# author's punctuation is not ours to rewrite — the autolinker already treats ’ and ' as
+# the same character for matching (`_esc_flex`), so a curly quote costs nothing, while
+# flattening one would make a page's title disagree with the article it came from.
+# The leading run of backslashes is consumed WHOLE, and that is not cosmetic. `fm_quote`
+# escapes a backslash when it renders a scalar, so a title holding this bug sits on disk as
+# `title: "Trump\\u2019s Plan"` — and a pattern matching a single backslash eats the second
+# one, leaves the first, and `fm_quote` re-escapes THAT on the next write. `heal_pages`
+# runs at startup and after every ingest, so the page would have changed on every pass for
+# ever: a cosmetic repair turned into a drift loop, which is strictly worse than the bug it
+# was fixing. Found by the idempotence test, which is why that test exists.
+_STRAY_ESCAPE_RE = re.compile(r"\\+u([0-9a-fA-F]{4})")
+
+
+def _decodable_escape(m) -> str:
+    """One `\\uXXXX` → its character, or "" where decoding it is not safe.
+
+    Declined, and deliberately left as visible text rather than repaired:
+
+      a lone surrogate   the exact input `_atomic_write`'s errors="replace" exists to
+                         absorb. Decoding six harmless characters into a byte that cannot
+                         be encoded would turn a cosmetic bug into a lost page.
+      a control char     nobody typed one, and `\\u000a` inside a `title:` line would cut
+                         the frontmatter in half.
+      a space that is
+      not a space        `\\u00a0` is a plausible mistake, but a non-breaking space in a
+                         title breaks autolink matching INVISIBLY, where the literal
+                         escape breaks it visibly. Visible beats invisible.
+    """
+    ch = chr(int(m.group(1), 16))
+    # One test, not two. A separate `0xD800 <= cp <= 0xDFFF` branch sat here first and
+    # `mutate.py` reported it MISSED: every surrogate is Unicode category Cs, so
+    # `isprintable()` is already False for all of them and no test could tell the branch
+    # from its absence. Unreachable belt-and-braces is the same finding the job queue's
+    # `_keys[k] == job_id` check produced — delete it and keep the check that fires.
+    if not ch.isprintable() or (ch.isspace() and ch != " "):
+        return ""
+    return ch
+
+
+def _decode_stray_escapes(text: str) -> tuple:
+    """Decode double-escaped `\\uXXXX` sequences in prose. (text, n_decoded).
+
+    **Code is exempt**, through the same walk the autolinker uses. A page explaining JSON
+    escapes writes `` `\\u2019` `` on purpose, and a pass that rewrote it would destroy the
+    one page in the wiki that is about this, which is the shape of mistake
+    `_unlink_in_code` was written to avoid in the other direction.
+    """
+    if "\\u" not in text:
+        return text, 0
+
+    def _sub(s):
+        # Counted on the substitutions MADE, never on the matches found. `subn` counts
+        # matches, so a declined escape reported a repair that had not happened — and
+        # `heal_pages` runs at startup and after every ingest, so a page holding one lone
+        # surrogate would have written an identical revision forever. That is the
+        # idempotence requirement `normalize_timeline` carries, in a second place.
+        n = 0
+
+        def _one(m):
+            nonlocal n
+            ch = _decodable_escape(m)
+            if not ch:
+                return m.group(0)
+            n += 1
+            return ch
+
+        return _STRAY_ESCAPE_RE.sub(_one, s), n
+
+    return _map_outside_code(text, _sub)
+
+
+def _decode_args(value):
+    """`_decode_stray_escapes` over every string in a parsed tool-call argument tree.
+
+    At the parse site rather than in `create_file`, because the escape reaches disk through
+    whichever of the five write tools the model happened to call, plus `section`, `date`
+    and `text` on the others — one answer in one place, the rule this file keeps relearning.
+    """
+    if isinstance(value, str):
+        return _decode_stray_escapes(value)[0]
+    if isinstance(value, list):
+        return [_decode_args(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _decode_args(v) for k, v in value.items()}
+    return value
+
+
+def parse_tool_args(tc: dict) -> dict:
+    """The one way a tool call's arguments are read, for both agent loops.
+
+    They each had their own `json.loads` line, which is how one of them could have been
+    fixed and the other not — and which loop serves a round depends on whether the browser
+    is watching, so the bug would have been intermittent and blamed on the model.
+    """
+    args = json.loads((tc.get("function") or {}).get("arguments") or "{}")
+    return _decode_args(args) if isinstance(args, dict) else args
 # The same thing after the damage is done: a URL with markdown links embedded in it.
 # Healed rather than merely prevented, because the pages already carry them and the
 # autolinker's own group 1 would otherwise protect the damage forever.
@@ -5558,6 +5716,22 @@ def _heal_pages_impl(dry_run: bool = False) -> dict:
                         new = _set_fm_field(new, "title", _canon_t)
                         n_fm += 1
 
+                # A double-escaped `\uXXXX` that reached disk before the parse site
+                # decoded them. Absorbed rather than reported (principle 1): the escape
+                # names exactly one character, so there is nothing to decide — and
+                # prevention alone would freeze every page already carrying one, which is
+                # the lesson `_MANGLED_URL_RE` and `_unlink_in_code` each paid for. The
+                # whole page goes through it, frontmatter included, because `title:` is
+                # where it was reported and the body carries the same escapes.
+                _unesc, _n_unesc = _decode_stray_escapes(new)
+                if _n_unesc:
+                    log.info("heal_pages: %s had %d literal \\uXXXX escape(s) — decoded",
+                             rel, _n_unesc)
+                    new = _unesc
+                    n_fm += 1
+                    result["escapes_decoded"] = (
+                        result.get("escapes_decoded", 0) + _n_unesc)
+
                 # A tags: line carrying markdown backticks or mismatched quotes. Stripping
                 # the wrapping punctuation off a tag has exactly one answer, so it is
                 # healed rather than reported — and it has to be healed here, because
@@ -8459,7 +8633,7 @@ def run_agent_turn(client: dict, model: str, messages: list, system: str) -> lis
                     _scope_in_name = _rest
             fn = TOOL_FNS.get(fn_name)
             try:
-                args   = json.loads((tc.get("function") or {}).get("arguments") or "{}")
+                args   = parse_tool_args(tc)
                 if _scope_in_name and "query" in args:
                     args["query"] = args["query"] + " " + _scope_in_name
                 elif _scope_in_name:
@@ -8679,7 +8853,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                         for tc in m["tool_calls"]:
                             fn  = (tc.get("function") or {}).get("name", "")
                             try:
-                                args = json.loads((tc.get("function") or {}).get("arguments") or "{}")
+                                args = parse_tool_args(tc)
                             except Exception:
                                 args = {}
                             path = args.get("path", "")
@@ -8762,7 +8936,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                     _scope_in_name = _rest
             fn = TOOL_FNS.get(fn_name)
             try:
-                args        = json.loads((tc.get("function") or {}).get("arguments") or "{}")
+                args        = parse_tool_args(tc)
                 if _scope_in_name and "query" in args:
                     args["query"] = args["query"] + " " + _scope_in_name
                 elif _scope_in_name:

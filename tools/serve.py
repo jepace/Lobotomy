@@ -173,7 +173,7 @@ from config import (cfg_get, cfg_bool, cfg_int, validate_config,
                     cfg_active_provider, cfg_provider, cfg_available_models,
                     cfg_all_providers, cfg_write_llm)
 from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title, _H1_RE,
-                   tool_arg_preview,
+                   tool_arg_preview, parse_tool_args,
                    fm_scalar, fm_quote, parse_tags_line, first_desc_line,
                    _page_section_names,
                    write_reason, page_history,
@@ -871,7 +871,11 @@ def _append_display_log(messages: list, source: str) -> None:
                 for tc in (m.get("tool_calls") or []):
                     fn = (tc.get("function") or {}).get("name", "")
                     try:
-                        args = json.loads((tc.get("function") or {}).get("arguments") or "{}")
+                        # The same parse the agent loops use, so a tool call's label here
+                        # cannot say something the live stream did not. It also decodes a
+                        # double-escaped \uXXXX, which a section name can carry: the live
+                        # view would read "§ Trump’s Record" and this one the raw escape.
+                        args = parse_tool_args(tc)
                     except Exception:
                         args = {}
                     # The SAME label the live stream shows. This used to take
@@ -4039,8 +4043,15 @@ if __name__ == "__main__":
 
     _healed = heal_pages()
     if _healed["pages"]:
+        # The escape count is named rather than folded into "frontmatter field(s)" because
+        # it is the one of these a user reported and will want to see a number for: across
+        # 13,200 pages, "how many titles were carrying a literal ’" is the question,
+        # and it is answerable only on the run that fixes them.
+        _esc = _healed.get("escapes_decoded", 0)
         print(f"[INFO] Healed {_healed['pages']} page(s) at startup "
-              f"({_healed['frontmatter']} frontmatter field(s), {_healed['reader_urls']} reader URL(s))")
+              f"({_healed['frontmatter']} frontmatter field(s), "
+              f"{_healed['reader_urls']} reader URL(s)"
+              + (f", {_esc} literal \\uXXXX escape(s)" if _esc else "") + ")")
     heal_index_if_stale()
 
     if not user_exists():

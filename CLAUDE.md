@@ -1455,6 +1455,56 @@ is the same lesson as the tags one, found by asking whether it had siblings. It 
   MATCHED pairs only, one layer at a time, then removes backticks outright (an unmatched
   one is not a pair, and no frontmatter value legitimately contains one).
 
+**A `\uXXXX` escaped TWICE reaches disk as six literal characters** (`parse_tool_args`,
+`_decode_stray_escapes`, `_STRAY_ESCAPE_RE`). Reported as *"i get literal ‘ and
+’ in titles"*, and **nothing was malformed at any point**, which is why it sat there.
+A provider hands a tool call's arguments over as a JSON string, so one `json.loads` is
+correct and returns real characters; a model that writes `\\u2019` — escaping the backslash
+as well, a habit from writing JSON inside JSON — produces *valid* JSON that parses to the
+six characters `’`. The write succeeds, the page renders, `_build_title_map` indexes
+it, and the title reads "Trump’s Plan" for ever. **The cost is not only cosmetic**: a
+title holding those six characters can only match text spelled the same way, so the page is
+unlinkable from every article that mentions it — the same permanent silent miss a backticked
+title had.
+
+Four decisions:
+
+- **Decoded at the parse site**, because the escape reaches disk through whichever of the
+  five write tools the model called, plus `section`, `date` and `text` on the others. The
+  two agent loops each had their own `json.loads` line, so a fix in one would have left the
+  other broken — and **which loop serves a round depends on whether a browser is watching**,
+  so the bug would have come and gone with the UI and been blamed on the model.
+- **Decoded to the character the escape names, not folded to an ASCII quote.** `_esc_flex`
+  already treats ’ and ' as one character for matching, so a curly quote costs nothing,
+  while flattening one would make a page's title disagree with the article it came from.
+- **Code is exempt**, through the autolinker's own fence walk — factored out as
+  `_map_in_code`/`_map_outside_code` so the two passes cannot disagree about where a fence
+  ends. A page explaining JSON escapes writes `` `’` `` on purpose, and rewriting it
+  would destroy the one page in the wiki that is about this.
+- **Three shapes are declined and left as visible text.** A lone surrogate is the exact
+  input `_atomic_write`'s `errors="replace"` exists to absorb, and decoding one turns six
+  harmless characters into a byte that cannot be encoded. A control character was never
+  typed, and `\u000a` inside a `title:` line would cut the frontmatter in half. And
+  ` ` is declined on a judgement call: a non-breaking space in a title breaks autolink
+  matching **invisibly**, where the literal escape breaks it visibly and gets reported, as
+  this one was.
+
+`heal_pages` decodes the ~13,000 pages already carrying them, because prevention alone
+freezes the damage — the lesson `_MANGLED_URL_RE` and `_unlink_in_code` each paid for.
+Absorbed rather than reported and with no `LOBOTOMY.md` line, because the escape names
+exactly one character and there is nothing for the model to decide (principle 1); a schema
+line is what a *refusal* needs.
+
+**Two bugs in the repair itself, and the tests that caught them are the ones worth
+copying.** `fm_quote` escapes a backslash, so a title holding this bug sits on disk as
+`title: "Trump\\u2019s Plan"` — a pattern matching ONE backslash ate the second, left the
+first, and `fm_quote` re-escaped it on the next write, so **`heal_pages` rewrote the page on
+every startup for ever**: a cosmetic repair turned into a drift loop, which is strictly
+worse than the bug. And `subn` counts MATCHES rather than substitutions, so a *declined*
+escape reported a repair that had not happened and a page holding one lone surrogate wrote
+an identical revision on every pass. Both were found by the idempotence test, which is the
+same requirement `normalize_timeline` carries — **any pass `heal_pages` runs needs one.**
+
 Deliberately **not** normalized: `type:` (a bare enum, sanitized separately), `created:` /
 `updated:` (YAML dates — quoting makes them strings) and `no_autolink:` (a boolean, where
 `"true"` is a string that works only by truthiness accident).
