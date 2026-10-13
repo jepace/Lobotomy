@@ -38,6 +38,28 @@ MUTATIONS = [
     ("heading-rule: date",
      '        elif _DATED_HEADING_RE.search(name):\n            bad.append((name, "names a date"))',
      '        elif False:\n            bad.append((name, "names a date"))'),
+    # A source page is immutable once written, so a lookup list the reader cannot see is
+    # a permanent lowercase list AND a set of pages done() never demands.
+    ("lookup rows: a numbered list is a list",
+     '            b = re.match(r"^[-*+]\\s+(.*\\S)", s) or re.match(r"^\\d+[.)]\\s+(.*\\S)", s)',
+     '            b = re.match(r"^[-*+]\\s+(.*\\S)", s)'),
+    ("lookup rows: a table row is a list row",
+     '                marked.append(cells[0])',
+     '                pass'),
+    ("lookup rows: bare lines count when nothing is marked",
+     '        for raw in (marked or bare):',
+     '        for raw in marked:'),
+    # With bullets present an unmarked line is an introduction, and counting it makes the
+    # lowercase check cry wolf on "the following entities appear:".
+    ("lookup rows: a bare line is ignored when the section has markers",
+     '        for raw in (marked or bare):',
+     '        for raw in (marked + bare):'),
+    ("lookup rows: a table header is not a name",
+     '                if _norm_heading(cells[0]) in ("name", "entity", "concept", "names",',
+     '                if False and _norm_heading(cells[0]) in ("name", "entity", "concept", "names",'),
+    ("lookup rows: the lowercase check and done() share one reader",
+     '        _rows = lookup_list_rows(body)',
+     '        _rows = [l.strip("-*+ ") for l in body.splitlines() if l.strip().startswith(("-", "*", "+"))]'),
     ("diacritics: an accent is folded, not dropped",
      '    if s.isascii():\n        return s',
      '    return s\n    if s.isascii():\n        return s'),

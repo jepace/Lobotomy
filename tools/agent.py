@@ -3558,6 +3558,14 @@ def sort_lookup_lists(content: str) -> str:
     Idempotent by construction — sorting a sorted list is a no-op — which matters because
     `heal_pages` runs at startup and after every ingest, and a normalizer that rewrote on
     every pass would fill page history with empty revisions forever.
+
+    **Stated gap: bullets only, where `lookup_list_rows` reads every shape.** That reader
+    was shared out to the lowercase check and `_listed_names` because all three were blind
+    to a numbered or unmarked list in the same way; this one is deliberately left behind,
+    because reordering the others is not the same operation. Sorting `1.` rows moves the
+    numbers with them and has to renumber, and a table has a header and a separator row that
+    must stay at the top — both are real work with their own failure modes, against a list
+    that is merely unsorted. `LOBOTOMY.md` asks for a `- ` bullet list for this reason.
     """
     lines = content.splitlines(keepends=True)
     out, i = [], 0
@@ -4307,6 +4315,77 @@ def _post_process_session() -> None:
 _DONE_REFUSAL_LIMIT = 2
 
 
+_LOOKUP_SECTIONS_RE = r"^#{1,6}\s*%s\s*$(.*?)(?=^#{1,6}\s|\Z)"
+
+
+def lookup_list_rows(text: str) -> "list[str]":
+    """Every row of a source page's `## Entities` / `## Concepts`, whatever shape it is in.
+
+    **Reported as *"the concept list generated at ingest is lower case again"*, and the
+    guard was there — it just could not see the list.** Three places read these two
+    sections and each had its own idea of what a row is, all three matching `-`, `*` or `+`
+    and nothing else:
+
+      `create_file`'s lowercase check   the refusal the report is about
+      `_listed_names`                   what `done()` demands pages for, and the
+                                        progress counter
+      `sort_lookup_lists`               the alphabetizing
+
+    So a list the model wrote as `1. climate policy`, as a table, or as bare lines was
+    invisible to all three at once: **no refusal, no pages demanded, no sorting** — and the
+    page is immutable afterwards, so the lowercase list is permanent. Measured on the four
+    shapes a model actually writes: bullets were caught, numbered lists, tables and bare
+    lines walked straight through.
+
+    This is `_TL_BULLET_RE`'s lesson in the other half of the file, word for word:
+    **reading a list and writing one are different jobs**, so the reader has to accept every
+    shape the list arrives in, because anything it does not match is filed as prose and goes
+    not merely unsorted but unchecked.
+
+    A **bare line counts only when the section has no marked rows at all.** With bullets
+    present an unmarked line is a continuation or an introductory sentence, and counting it
+    would make the lowercase check cry wolf on "the following concepts appear:" — the
+    not-crying-wolf constraint every check here is built around. The length cap is the same
+    discriminator `_is_lookup_row` uses: a name is short, a sentence is not.
+    """
+    rows: "list[str]" = []
+    for section in ("Entities", "Concepts"):
+        m = re.search(_LOOKUP_SECTIONS_RE % section, text, re.MULTILINE | re.DOTALL)
+        if not m:
+            continue
+        lines = m.group(1).splitlines()
+        marked, bare = [], []
+        for line in lines:
+            s = line.strip()
+            if not s:
+                continue
+            b = re.match(r"^[-*+]\s+(.*\S)", s) or re.match(r"^\d+[.)]\s+(.*\S)", s)
+            if b:
+                marked.append(b.group(1))
+                continue
+            if s.startswith("|"):
+                # A table: the first cell is the name. The separator row is skipped, and so
+                # is a header whose first cell is the column's label rather than a name.
+                cells = [c.strip() for c in s.strip("|").split("|")]
+                if not cells or not cells[0]:
+                    continue
+                if set(cells[0]) <= set("-: "):
+                    continue
+                if _norm_heading(cells[0]) in ("name", "entity", "concept", "names",
+                                               "entities", "concepts", "term", "subject"):
+                    continue
+                marked.append(cells[0])
+                continue
+            if len(s) <= 80 and not re.match(r"^#{1,6}\s", s):
+                bare.append(s)
+        for raw in (marked or bare):
+            name = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", raw)      # already autolinked
+            name = re.sub(r"\*\*(.+?)\*\*", r"\1", name).strip().rstrip(".")
+            if name:
+                rows.append(name)
+    return rows
+
+
 def _listed_names(ctx) -> list:
     """Deduped names from the source page's ## Entities / ## Concepts lists.
 
@@ -4323,23 +4402,15 @@ def _listed_names(ctx) -> list:
     except OSError:
         return []
 
+    # One reader for both lists, shared with create_file's lowercase check — so what this
+    # ingest is held to and what the write path refused cannot disagree about which rows
+    # exist. Each had its own bullet-only pattern, and a numbered or unmarked list was
+    # invisible to both.
     names, seen = [], set()
-    for section in ("Entities", "Concepts"):
-        m = re.search(r"^#{1,6}\s*" + section + r"\s*$(.*?)(?=^#{1,6}\s|\Z)",
-                      text, re.MULTILINE | re.DOTALL)
-        if not m:
-            continue
-        for line in m.group(1).splitlines():
-            b = re.match(r"^\s*[-*+]\s+(.*\S)", line)
-            if not b:
-                continue
-            name = b.group(1).strip()
-            # A re-ingested source page may already be autolinked — take the label.
-            name = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", name)
-            name = re.sub(r"\*\*(.+?)\*\*", r"\1", name).strip().rstrip(".")
-            if name and name.lower() not in seen:
-                seen.add(name.lower())
-                names.append(name)
+    for name in lookup_list_rows(text):
+        if name.lower() not in seen:
+            seen.add(name.lower())
+            names.append(name)
     return names
 
 
@@ -7732,14 +7803,10 @@ def _create_file(args: dict) -> str:
         # Flagged on the RATIO, not per row. Some names really are lowercase — bell hooks,
         # danah boyd, iPhone — and a per-row rule would refuse those with no way to say
         # "yes, really". A majority of rows being lowercase is not a name, it is a habit.
-        _rows = []
-        for _sec in ("Entities", "Concepts"):
-            _m = re.search(r"^#{1,6}\s*" + _sec + r"\s*$(.*?)(?=^#{1,6}\s|\Z)",
-                           body, re.MULTILINE | re.DOTALL)
-            if _m:
-                _rows += [re.sub(r"^[-*+]\s*", "", l).strip()
-                          for l in _m.group(1).splitlines()
-                          if l.strip().startswith(("-", "*", "+"))]
+        # The same reader `_listed_names` uses, so the rows this refuses over are exactly
+        # the rows done() will demand pages for. Bullet-only patterns in both meant a
+        # numbered list, a table or bare lines were checked by neither.
+        _rows = lookup_list_rows(body)
         _alpha = [r for r in _rows if any(c.isalpha() for c in r)]
         _lower = [r for r in _alpha if r == r.lower()]
         if len(_alpha) >= 2 and len(_lower) * 2 > len(_alpha):

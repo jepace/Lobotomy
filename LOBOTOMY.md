@@ -392,7 +392,9 @@ Required sections:
   the first time. **`create_file` checks this**: if most of the names in these two lists
   are all lowercase it refuses the page, because the list cannot be fixed later. A name
   that genuinely is lowercase ("bell hooks") is fine — the check only fires when the
-  majority are.
+  majority are. The check reads a numbered list, a table and bare lines as well as `- `
+  bullets, so none of those is a way around it — but **write it as a plain `- ` bullet
+  list, one name per row**, because that is the only shape the alphabetizer can reorder.
 
   **If the wiki already has a page for a name, use that page's title here, exactly.**
   Calling `lookup_titles` on your candidate names *before* you finalise this list is worth

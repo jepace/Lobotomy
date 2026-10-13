@@ -1803,6 +1803,40 @@ delays the transport without touching the driver. Give the observation a generou
 too: the spinner lives from debounce+180ms to debounce+delay, and a 400ms delay left ~200ms
 to catch it, which fails on timing rather than on behaviour.
 
+**The guard was there; it could not see the list** (`lookup_list_rows`). Reported as *"the
+concept list generated at ingest is lower case again"* — "again", because the lowercase
+refusal had been working. **Three places read these two sections and each had its own idea
+of what a row is**, all three matching `-`, `*` or `+` and nothing else: `create_file`'s
+lowercase check, `_listed_names` (what `done()` demands pages for, and the progress
+counter), and `sort_lookup_lists`. Measured on the four shapes a model actually writes,
+before changing anything — bullets were refused; **a numbered list, a table and bare lines
+were invisible to all three at once.** No refusal, no pages demanded, no sorting, and a
+source page is immutable after it is written, so the lowercase list is permanent.
+
+This is `_TL_BULLET_RE`'s lesson in the other half of the file, word for word: **reading a
+list and writing one are different jobs**, so the reader has to accept every shape the list
+arrives in, because anything it does not match is filed as prose and goes not merely
+unsorted but **unchecked**. One reader now serves the lowercase check and `_listed_names`,
+which is what makes the rows the write path refuses over exactly the rows `done()` will hold
+the ingest to — three independent patterns is how a list could satisfy one and be invisible
+to the other.
+
+**A bare line counts only when the section has no marked rows at all.** With bullets present
+an unmarked line is a continuation or an introduction, and counting it would refuse a page
+over "the following concepts appear:" — the not-crying-wolf constraint, which has its own
+test class here because widening what counts as a row widens what can be falsely refused,
+and a refusal costs a full round at `max_rpm: 1`. A table's separator row and a header whose
+first cell is the column's label ("Name", "Entity") are skipped for the same reason: "Name"
+is capitalised, so counting it would make a wholly lowercase table look half-and-half and
+slip under the majority test. The length cap on a bare line is `_is_lookup_row`'s
+discriminator — a name is short, a sentence is not.
+
+**`sort_lookup_lists` is deliberately left bullet-only, as a stated gap rather than a silent
+one.** Sorting `1.` rows moves the numbers with them and has to renumber; a table has a
+header and a separator that must stay on top. Both are real work with their own failure
+modes, against a list that is merely unsorted — so `LOBOTOMY.md` asks for a `- ` bullet
+list and says the check reads the other shapes anyway, so none of them is a way around it.
+
 **A source page's `## Entities` / `## Concepts` are sorted** (`sort_lookup_lists`), in
 `create_file` and in `heal_pages` — the latter because a source page is immutable to the
 LLM once written, so an existing one can be ordered nowhere else. They are lookup tables,
