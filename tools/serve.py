@@ -24,6 +24,7 @@ import json
 import logging
 import logging.handlers
 import os
+import types
 import re
 import secrets
 import shutil
@@ -1294,18 +1295,66 @@ def _clip_fetch(url: str) -> "tuple[str | None, str | None]":
         return text, None
 
 
-def _raw_source_index() -> dict:
-    """raw_source: value -> wiki/sources page path, built in one pass.
+_src_index_cache: "tuple | None" = None     # (directory key, the map) or None
+
+
+def _sources_dir_key() -> tuple:
+    """A cheap fingerprint of `wiki/sources/`: (directory mtime, number of entries).
+
+    Two syscalls, against the 1,500 file reads the map itself costs. A directory's mtime
+    moves when an entry is created, deleted or renamed, which — because **a source page is
+    immutable once written** — is exactly when the raw_source → page mapping can change.
+    """
+    sdir = WIKI_DIR / "sources"
+    try:
+        with os.scandir(sdir) as it:
+            n = sum(1 for _ in it)
+        return (sdir.stat().st_mtime_ns, n)
+    except OSError:
+        return ()
+
+
+def _raw_source_index():
+    """raw_source: value -> wiki/sources page path, built in one pass and then cached.
 
     Resolving this per inbox item meant reading and parsing every page in
     wiki/sources/ once per wikified item — 90 items against a few thousand source
     pages is hundreds of thousands of reads to build the same mapping 90 times.
     The map is the same for every item, so it is built once per request.
+
+    **And then once per REQUEST was still the wrong unit, which is what made sharing an
+    article time out.** Measured: one `/inbox/list` cost **1,590 file reads**, 1,500 of
+    them this map — and `/inbox` polls that route every 8 seconds per visible tab. One
+    call is 93ms and harmless; six at once took **3.5 seconds each**, which is worse than
+    serialising them, because every one of those thousands of tiny reads hands the GIL
+    over and back. A POST arriving in the middle of that convoy waits behind all of it,
+    and the iOS share sheet gives up long before a 40-minute ingest does.
+
+    **This entry used to say a cache was impossible**: *"deliberately NOT cached across
+    requests — the polling exists to notice items that have just been wikified, so a cache
+    would break the feature it serves."* That is true of a cache keyed on TIME and false of
+    one keyed on the directory. What the poll must notice is an item becoming wikified —
+    and an article becomes wikified by an ingest **creating its source page**, which changes
+    `wiki/sources/`, which invalidates this. The thing the cache must not hide is the thing
+    that unavoidably invalidates it, so the feature survives.
+
+    The per-item `wikified:` flag is still read from every raw file on every listing, and
+    deliberately so: it lives in the raw frontmatter, 90 reads rather than 1,500, and it is
+    the other half of noticing.
+
+    Returns a read-only view, because the map is now shared between requests and a caller
+    that mutated it would corrupt every later listing.
     """
+    global _src_index_cache
+    key = _sources_dir_key()
+    cached = _src_index_cache
+    if cached is not None and cached[0] == key and key:
+        return cached[1]
+
     idx = {}
     sdir = WIKI_DIR / "sources"
     if not sdir.is_dir():
-        return idx
+        return types.MappingProxyType(idx)
     for wf in sdir.glob("*.md"):
         try:
             wm, _ = _parse_frontmatter(wf.read_text(encoding="utf-8", errors="replace"))
@@ -1315,7 +1364,12 @@ def _raw_source_index() -> dict:
         # First page wins, matching the old loop's break on the first match.
         if rs and rs not in idx:
             idx[rs] = str(wf.relative_to(WIKI_DIR))
-    return idx
+    view = types.MappingProxyType(idx)
+    # One assignment of one tuple: another thread reads either the old pair or the new
+    # one, never a half-built map. Rebuilding it twice under a race costs a duplicate
+    # scan and nothing else, which is cheaper than holding a lock across 1,500 reads.
+    _src_index_cache = (key, view)
+    return view
 
 
 def _raw_items() -> list:

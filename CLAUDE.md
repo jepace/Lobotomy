@@ -72,6 +72,66 @@ exists to notice items that have just been wikified, so a cache would break the 
 serves. `tests/test_inbox_listing.py` counts reads rather than timing them, because the
 complexity is what regressed and wall-clock is flaky on someone else's disk.
 
+**And once per REQUEST was still the wrong unit, which is what made sharing an article time
+out** (`_raw_source_index`, `_sources_dir_key`). Reported as *"i can't add articles to the
+reading list (using share in iOS) they timeout, because the server is busy processing
+ingestions? not sure about cause, but timing problems somewhere"* — the instinct was right
+and the mechanism is measurable.
+
+Measured on a 1,500-source-page tree: one `/inbox/list` cost **1,590 file reads**, 1,500 of
+them rebuilding that map. One call is 93ms and harmless. **Six at once took 3.5 seconds
+each** — worse than serialising them would be:
+
+    sequential /inbox/list x4:   93, 92, 92, 93 ms
+    6 concurrent /inbox/list:    3507, 3474, 3443, 3496, 3455, 3482 ms   (wall 3.5s)
+
+**The GIL is not the mechanism in the way the earlier entry ruled out, and it is not
+innocent either.** A monitor thread ticking through a 48-second autolink saw a longest
+stall of **37ms** and a median of **5.365ms** — exactly the interpreter's switch interval,
+with zero stalls over 100ms. So no single call hogs it, and that is the point: **a request's
+latency under load is roughly its number of blocking operations × 5ms.** A handler doing
+1,590 reads waits seconds while anything else is busy, and a POST arriving mid-convoy waits
+behind the lot. That is why the original measurement ("5.7s of linking delayed another
+thread by 20ms") was true and still left this: it measured one in-flight request, not a
+handler performing thousands of handoffs.
+
+After caching: **3.5s → 368ms concurrent**, 1,590 → 90 reads per listing, and a warm
+listing reads only the reading-list files.
+
+**The entry here used to say a cache was impossible**: *"deliberately NOT cached across
+requests — the polling exists to notice items that have just been wikified, so a cache
+would break the feature it serves."* That is true of a cache keyed on TIME and false of one
+keyed on the directory. An article becomes wikified by an ingest **creating its source
+page**, which changes `wiki/sources/`, which invalidates this — **the thing the cache must
+not hide is the thing that unavoidably invalidates it.** The validity key is
+`(directory mtime, entry count)`, two syscalls, and it is sound because a source page is
+**immutable once written**: the `raw_source → page` mapping can only change on a create,
+delete or rename, every one of which moves the directory's mtime. The per-item `wikified:`
+flag is still read from every raw file on every listing, deliberately — it lives in the raw
+frontmatter, 90 reads rather than 1,500, and it is the other half of noticing.
+
+The map is returned as a `MappingProxyType`, because it is shared between requests now and
+a caller that mutated it would corrupt every later listing — enforced rather than
+documented. And `()` (an unreadable directory) is never accepted as a key, or a transient
+failure would freeze whatever map was in hand.
+
+**One existing test had to be superseded, and the reason is worth keeping**:
+`test_the_scan_does_not_grow_with_the_number_of_items` asserted the two source-read counts
+were **equal**. Adding raw files does not touch `wiki/sources/`, so the second listing now
+reads it zero times — the assertion the test was making is better satisfied than before,
+while equality would pin the absence of a cache. The letter changed; the intent did not.
+
+**Still open, measured, and not fixed here:** `_autolink` calls `_build_title_map()` on
+every invocation, and its mtime backstop `stat()`s every page — **13,208 stats, ~90ms, per
+autolink call** at the live wiki's scale, even when nothing has changed. `relink_all`'s own
+comment says the map is built *"once, up front — every page reuses the cache"*, which is
+true of the map and false of the backstop: a whole-wiki sweep is **13,200 × 13,208 ≈ 174
+million stat() calls** to establish that nothing moved. That is the same syscall-volume
+mechanism as above, on the ingest's side of it. It is left alone deliberately — this is the
+invalidation logic flagged above as a repeat bug source, with four behaviours pinned by
+tests, and a time-throttled backstop would change one of them (a bypass write is currently
+detected on the very next call). It wants its own change, not a footnote to this one.
+
 **A reading-list row is identified by its filename, never by its position.** Clicking
 Wikify on the second item started wikification on the first. Rows were addressed as
 `item-<n>`/`wikify-<n>`/`progress-<n>`, numbered by Jinja's `loop.index` at render time —

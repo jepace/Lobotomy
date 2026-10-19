@@ -94,7 +94,14 @@ class InboxListingTest(unittest.TestCase):
             "rebuilt per inbox item")
 
     def test_the_scan_does_not_grow_with_the_number_of_items(self):
-        """The complexity assertion. Five items and forty must cost the same."""
+        """The complexity assertion. Five items and forty must cost the same.
+
+        **This used to assert the two counts were EQUAL, and the cache below superseded
+        that**: adding raw files does not touch `wiki/sources/`, so the second listing now
+        reads it ZERO times. The assertion the test was making — that the cost does not
+        scale with the number of items — is better satisfied than before, so the letter of
+        it changes and the intent does not. Equality would now pin the absence of a cache.
+        """
         self._sources(self.N_SRC, matching=40)
         for i in range(5):
             self._raw(i)
@@ -102,8 +109,8 @@ class InboxListingTest(unittest.TestCase):
         for i in range(5, 40):
             self._raw(i)
         _, many = self._counted()
-        self.assertEqual(few["sources"], many["sources"],
-                         f"source reads scaled with item count: {few} -> {many}")
+        self.assertLessEqual(many["sources"], few["sources"],
+                             f"source reads scaled with item count: {few} -> {many}")
 
     def test_each_raw_file_is_read_once(self):
         self._sources(10, matching=10)

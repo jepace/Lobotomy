@@ -38,6 +38,28 @@ MUTATIONS = [
     ("heading-rule: date",
      '        elif _DATED_HEADING_RE.search(name):\n            bad.append((name, "names a date"))',
      '        elif False:\n            bad.append((name, "names a date"))'),
+    # The source-page map is cached between requests because /inbox/list was 1,590 file
+    # reads every 8 seconds per tab — six concurrent listings took 3.5s each, and a POST
+    # arriving in that convoy waited behind all of it.
+    ("inbox poll: the source-page map is cached between requests",
+     '    if cached is not None and cached[0] == key and key:\n        return cached[1]',
+     '    if False:\n        return cached[1]',
+     "tools/serve.py"),
+    # The half that must survive: an article becomes wikified by an ingest CREATING its
+    # source page, which changes the directory, which is what invalidates this.
+    ("inbox poll: a new source page invalidates the cached map",
+     '        return (sdir.stat().st_mtime_ns, n)',
+     '        return (0, 0)',
+     "tools/serve.py"),
+    # () means the directory could not be read; caching against it freezes the map.
+    ("inbox poll: an unreadable sources directory is not a cache key",
+     '    if cached is not None and cached[0] == key and key:',
+     '    if cached is not None and cached[0] == key:',
+     "tools/serve.py"),
+    ("inbox poll: the shared map is read-only",
+     '    view = types.MappingProxyType(idx)',
+     '    view = idx',
+     "tools/serve.py"),
     # A source page is immutable once written, so a lookup list the reader cannot see is
     # a permanent lowercase list AND a set of pages done() never demands.
     ("lookup rows: a numbered list is a list",
