@@ -1502,6 +1502,25 @@ def _fm_line_value(value: str, limit: int = 300) -> str:
     return fm_quote(re.sub(r"\s+", " ", str(value)).strip()[:limit])
 
 
+# One capture at a time. The duplicate check and the write are two steps, and the
+# bookmarklet fires TWO requests for one article whenever its deadline expires — the
+# beacon plus the fallback. Observed in a live log, both answering inside one second:
+#
+#   20:37:02  GET /save?...&beacon=1  -> 200   wrote ...the-new-york-times.md
+#   20:37:02  GET /save?...           -> 302   wrote ...the-new-york-times-2.md
+#
+# Each checked for a duplicate before the other had written, so both passed and the
+# reading list got two copies of one article. `_unique_raw_name` is what kept it from
+# being an overwrite — the protection working — but two items is still wrong. The lock
+# makes check-and-write one step; it is held across a few file reads and one write, never
+# across a network fetch (that is handed to a thread), so it cannot stall the server.
+_capture_lock = threading.Lock()
+
+#: Name given to the thread that captures a bookmarklet beacon's article, so anything
+#: outside the request can wait for it — see the comment at its one use.
+_BEACON_THREAD = "beacon-capture"
+
+
 def _capture_article(url: str = "", *, title: str = "", content: str = "",
                      source: str = "manual", author: str = "", tags=(),
                      filename: str = "") -> dict:
@@ -1545,6 +1564,15 @@ def _capture_article(url: str = "", *, title: str = "", content: str = "",
         return {"error": "Provide url, content, or both"}
     if not url and not title.strip():
         return {"error": "title is required when url is not provided"}
+    with _capture_lock:
+        return _capture_article_locked(url, title=title, content=content, source=source,
+                                       author=author, tags=tags, filename=filename)
+
+
+def _capture_article_locked(url: str, *, title: str, content: str, source: str,
+                            author: str, tags, filename: str) -> dict:
+    """The body of `_capture_article`, run under `_capture_lock`. Split out so the
+    check-and-write pair cannot be interleaved by a second request for the same URL."""
 
     # Already here? Report it, never rewrite it — editing is a separate route, so the add
     # path has no business overwriting anything. The one exception is a capture that
@@ -3038,6 +3066,37 @@ def save_redirect():
         return "Unauthorized — re-drag the bookmarklet from Settings", 403
     if not url:
         return "Missing url", 400
+
+    # **A beacon is answered BEFORE the capture, not after**, and the reason is in a live
+    # log. The bookmarklet gives the beacon 6 seconds; this server, mid-ingest, took 38:
+    #
+    #   20:36:24  beacon issued (its own &t= cache-buster says so)
+    #   ~20:36:30 the 6s deadline fires -> window.open is blocked, because the fallback
+    #             runs from a setTimeout and has no user gesture, so it falls through to
+    #             location.href and NAVIGATES THE ARTICLE TAB here
+    #   20:36:52  POST /chat/send -> 200 in 38290ms
+    #   20:37:01  autolink: linked 49 title(s) (44.4s, 15688 titles checked)
+    #   20:37:02  both /save requests finally answer: beacon 200, navigation 302
+    #
+    # Reported as "it loads a blank page pointing at lobotomy, then eventually snaps back
+    # to the actual article" — that blank page is the navigation, and the snap back is its
+    # redirect. The two racing requests also saved the article twice.
+    #
+    # Nothing is lost by answering first: a beacon's reply is a 1x1 GIF, so `msg` was
+    # never visible in this mode. The capture runs in a thread, and the deadline is off
+    # the critical path entirely — the browser's half of this cannot be fixed from here,
+    # because the bookmarklet is already installed in people's browsers.
+    if beacon:
+        def _bg(_u=url, _t=title):
+            try:
+                _capture_article(_u, title=_t, source="bookmarklet")
+            except Exception:
+                log.exception("bookmarklet save failed for %s", _u)
+        # Named so it is joinable from outside: the capture outlives the request, and a
+        # test that lets it outlive its temp wiki as well writes into the REAL raw/ —
+        # after the harness's own exit check, so nothing objects. It did, five times.
+        threading.Thread(target=_bg, daemon=True, name=_BEACON_THREAD).start()
+        return _beacon_ok()
 
     res = _capture_article(url, title=title, source="bookmarklet")
     if res.get("error"):

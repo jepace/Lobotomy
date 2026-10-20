@@ -1534,6 +1534,33 @@ MUTATIONS = [
      '                titles[" ".join(t.lower().split())].append((stem, t))',
      '                titles[stem].append((stem, t))',
      'tools/page_report.py'),
+    # Two /save requests one second apart created `…md` and `…-2.md` for one article:
+    # check-and-write was not atomic, so both looked at the directory before either wrote.
+    ('capture: check-and-write is atomic, so a racing pair cannot both save',
+     '    with _capture_lock:',
+     '    if True:',
+     'tools/serve.py'),
+    # The beacon waited 38s behind a 44s autolink, the bookmarklet's deadline fired, and
+    # the fallback navigated the article tab away. A beacon's reply is a 1x1 GIF, so
+    # there was never a message in it to wait for.
+    ('save: a beacon is answered before the capture, not after it',
+     '        threading.Thread(target=_bg, daemon=True).start()',
+     '        _bg()',
+     'tools/serve.py'),
+    # An anonymous capture thread cannot be waited for, so a test lets it outlive its
+    # temp wiki and the write lands in the repo's real raw/ — after the harness's exit
+    # check. Five test stories reached the working tree that way, suite green.
+    ('save: the beacon capture thread is named, so it can be waited for',
+     '        threading.Thread(target=_bg, daemon=True, name=_BEACON_THREAD).start()',
+     '        threading.Thread(target=_bg, daemon=True).start()',
+     'tools/serve.py'),
+    # The timeout branch called f(), whose window.open is blocked inside a setTimeout
+    # (no user gesture), so it fell through to location.href. A slow server is not a
+    # blocked beacon.
+    ('bookmarklet: a timeout reports, it does not fall back',
+     "    +   \"t('Still saving to Lobotomy\\\\u2026')},20000);\"",
+     "    +   'f()},6000);'",
+     'tools/templates/bookmarklet_macro.html'),
 ]
 
 PRELUDE = ('WIKI_DIR  = REPO_ROOT / "wiki"',

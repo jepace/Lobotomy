@@ -34,6 +34,8 @@ the size of the reading list.
 """
 import json
 import shutil
+import threading
+import time
 import sys
 import tempfile
 import unittest
@@ -75,6 +77,17 @@ class _Base(unittest.TestCase):
         self.addCleanup(lambda: setattr(serve, "_fetch_and_patch", self._real_fetch))
         self.addCleanup(lambda: setattr(serve, "cfg_get", self._real_cfg))
         self.addCleanup(lambda: [setattr(serve, k, v) for k, v in self._saved.items()])
+        # Registered LAST so it runs FIRST: cleanups are LIFO, and a beacon's capture
+        # thread outliving the rebind above writes into the repo's REAL raw/. That is
+        # after the harness's exit check, so nothing objects — it leaked five stories
+        # into the working tree before this line existed.
+        self.addCleanup(self._join_captures)
+
+    @staticmethod
+    def _join_captures(timeout=10):
+        for t in threading.enumerate():
+            if t.name == serve._BEACON_THREAD:
+                t.join(timeout)
 
     def _capture(self, name, url, *, body="Article text.", extra=""):
         (self.root / "raw" / name).write_text(
@@ -86,7 +99,10 @@ class _Base(unittest.TestCase):
         return sorted(p.name for p in (self.root / "raw").iterdir())
 
     def _save(self, url, title="A Title", **params):
-        q = {"key": PUSH_KEY, "url": url, "title": title, "beacon": "1"}
+        """The synchronous path (no `beacon=1`), because these assert on disk state.
+        Beacon mode answers BEFORE the capture now — see BeaconAnswersImmediatelyTest,
+        which is where that contract is pinned."""
+        q = {"key": PUSH_KEY, "url": url, "title": title}
         q.update(params)
         return self.client.get("/save", query_string=q)
 
@@ -106,7 +122,7 @@ class TrackingParameterDuplicateTest(_Base):
         self._capture("story.md", self.CLEAN)
         before = self._raw_names()
         r = self._save(self.TRACKED)
-        self.assertEqual(r.status_code, 200)
+        self.assertIn(r.status_code, (200, 302), r.get_data(as_text=True))
         self.assertEqual(self._raw_names(), before,
                          "the bookmarklet saved a second copy of an article already here")
 
@@ -306,6 +322,135 @@ class InboundEmailDoorTest(_Base):
         self.assertNotIn("write_text(", code,
                          "the inbound-email route writes without _atomic_write")
         self.assertIn("_capture_article(", code)
+
+
+class BeaconAnswersImmediatelyTest(_Base):
+    """**The reported symptom, and the half that is not fixable from the server after the
+    fact.** The bookmarklet gives its `<img>` beacon six seconds; a live log shows this
+    server, mid-ingest, taking 38:
+
+        20:36:24  beacon issued (its own &t= cache-buster)
+        ~20:36:30 the 6s deadline fires — window.open is blocked, because the fallback
+                  runs from a setTimeout and so has no user gesture, and it falls through
+                  to location.href, NAVIGATING THE ARTICLE TAB to /save
+        20:36:52  POST /chat/send -> 200 in 38290ms
+        20:37:01  autolink: linked 49 title(s) (44.4s, 15688 titles checked)
+        20:37:02  both /save requests answer: beacon 200, navigation 302
+
+    Reported as *"it loads a blank page pointing at lobotomy, then eventually snaps back
+    to the actual article"* — the blank page is that navigation and the snap back is its
+    redirect — and *"duplicate tabs ... and then 2 identical items appear"*.
+
+    Nothing is lost by answering first: a beacon's reply is a 1x1 GIF, so the message was
+    never visible in this mode. Installed bookmarklets cannot be updated from here, so
+    taking the deadline off the critical path is the half the server CAN fix."""
+
+    def test_the_beacon_answers_without_waiting_for_the_capture(self):
+        started, release = threading.Event(), threading.Event()
+        real = serve._capture_article
+
+        def slow(*a, **kw):
+            started.set()
+            release.wait(10)
+            return real(*a, **kw)
+
+        serve._capture_article = slow
+        try:
+            r = self.client.get("/save", query_string={
+                "key": PUSH_KEY, "url": "https://example.com/slow",
+                "title": "Slow", "beacon": "1"})
+            # The response is here while the capture is still blocked. Before this, the
+            # bookmarklet's 6s timer would have fired by now.
+            self.assertEqual(r.status_code, 200)
+            self.assertTrue(r.data.startswith(b"GIF"), r.data[:20])
+            self.assertTrue(started.wait(5), "the capture never started")
+            # Still blocked, so nothing is on disk yet — which is the proof the response
+            # above did not wait for it.
+            self.assertEqual(self._raw_names(), [])
+        finally:
+            release.set()
+            serve._capture_article = real
+
+    def test_the_capture_still_happens(self):
+        r = self.client.get("/save", query_string={
+            "key": PUSH_KEY, "url": "https://example.com/bg", "title": "Bg",
+            "beacon": "1"})
+        self.assertEqual(r.status_code, 200)
+        self._join_captures()
+        self.assertTrue(self._raw_names(), "the backgrounded capture never wrote anything")
+
+    def test_the_capture_thread_is_named_so_it_can_be_waited_for(self):
+        """Not housekeeping. Without the name nothing outside the request can wait for
+        this thread, and a test that does not wait writes its fixture into the repo's
+        real `raw/` — which is how five test stories ended up in the working tree, with
+        a green suite, because the write lands after the harness's exit check."""
+        self.assertTrue(serve._BEACON_THREAD)
+        src = (Path(serve.__file__).read_text(encoding="utf-8"))
+        self.assertIn("name=_BEACON_THREAD", src,
+                      "the beacon's capture thread is anonymous again")
+
+    def test_a_bad_key_is_still_refused_before_anything_is_written(self):
+        """The auth check must stay in front of the thread, or a stranger's GET queues
+        work. Errors also stay non-image on purpose, so the bookmarklet's onerror can
+        fall back to a page where the message is visible."""
+        r = self.client.get("/save", query_string={
+            "key": "wrong", "url": "https://example.com/x", "beacon": "1"})
+        self.assertEqual(r.status_code, 403)
+        self.assertFalse(r.data.startswith(b"GIF"))
+        self.assertEqual(self._raw_names(), [])
+
+    def test_a_missing_url_is_refused_before_the_thread(self):
+        r = self.client.get("/save", query_string={"key": PUSH_KEY, "beacon": "1"})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self._raw_names(), [])
+
+
+class TheRaceTest(_Base):
+    """The duplicate in the log: two requests for one article, one second apart, each
+    checking for a duplicate before the other had written. `_unique_raw_name` kept it
+    from being an overwrite — the protection working — but the reading list still got two
+    copies, which is what *"2 identical items appear in the reading list"* is."""
+
+    URL = "https://example.com/raced"
+
+    def test_two_simultaneous_captures_create_one_item(self):
+        out = []
+
+        def go():
+            out.append(serve._capture_article(self.URL, title="Raced",
+                                              source="bookmarklet"))
+
+        ts = [threading.Thread(target=go) for _ in range(6)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.assertEqual(len(self._raw_names()), 1,
+                         f"one article became {len(self._raw_names())} items: "
+                         f"{self._raw_names()}")
+        self.assertEqual(sum(1 for r in out if r.get("created")), 1,
+                         "more than one caller was told it had created the item")
+        self.assertEqual(sum(1 for r in out if r.get("duplicate")), 5)
+
+    def test_the_beacon_and_its_fallback_together_create_one_item(self):
+        """The exact pair from the log: the beacon, then the fallback's navigation."""
+        q = {"key": PUSH_KEY, "url": self.URL, "title": "Raced"}
+        self.client.get("/save", query_string={**q, "beacon": "1"})
+        for _ in range(100):
+            if self._raw_names():
+                break
+            time.sleep(0.02)
+        r = self.client.get("/save", query_string=q)
+        self.assertIn(r.status_code, (200, 302))
+        self.assertEqual(len(self._raw_names()), 1, self._raw_names())
+
+    def test_two_DIFFERENT_articles_still_both_arrive(self):
+        """The lock must not swallow concurrent captures of different stories."""
+        def go(i):
+            serve._capture_article(f"https://example.com/sep{i}", title=f"Sep {i}",
+                                   source="bookmarklet")
+        ts = [threading.Thread(target=go, args=(i,)) for i in range(5)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.assertEqual(len(self._raw_names()), 5, self._raw_names())
 
 
 class OneImplementationTest(_Base):

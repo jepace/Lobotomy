@@ -243,6 +243,61 @@ connection and then trickles holds the request past the 15-second socket timeout
 server-side efficiency fixes that. It is left synchronous because the page's contract is to
 say whether the text arrived; changing it is a decision, not a repair.
 
+**And then the timeout WAS reproduced, with a log, and it was neither route's own cost**
+(`_capture_lock`, `_BEACON_THREAD`, `bookmarklet_macro.html`). Reported as *"it loads a
+blank page pointing at lobotomy, then eventually snaps back to the actual article"*, then
+*"im getting duplicate tabs open to the nyt stories, and then 2 identical items appear in
+the reading list."* One chain, four links, and **only two of them are on the server**:
+
+    20:36:24  beacon issued (its own &t= cache-buster dates it)
+    ~20:36:30 the bookmarklet's 6s deadline fires
+    20:36:52  POST /chat/send -> 200 in 38290ms
+    20:37:01  autolink: linked 49 title(s) (44.4s, 15688 titles checked)
+    20:37:02  both requests answer: beacon 200, navigation 302
+
+- **`/save` did the capture before answering**, so a beacon sat behind a 44-second
+  autolink. It answers first now and captures on a thread — and **nothing is lost by
+  that**, because a beacon's reply is a 1×1 GIF: the `msg` the synchronous path computed
+  was never visible in this mode. The auth check and the empty-URL check stay in front of
+  the thread, or a stranger's GET queues work.
+- **The bookmarklet treated a timeout as a failure.** Its deadline called `f()`, whose
+  first move is `window.open` — **blocked, because a `setTimeout` carries no user
+  gesture** — so it fell through to `location.href` and navigated the *article* tab to
+  `/save`. That is the blank page, and `/save`'s redirect is the snap back. **A slow
+  server is not a blocked beacon:** `onerror` means the request never arrived and there is
+  something to recover from, so it keeps the fallback; a timeout means we do not know, and
+  acting as though it failed is what opened the tab and lost the reader's place. The timer
+  says "Still saving to Lobotomy…" and waits, with the deadline at 20s rather than 6.
+- **Then both requests saved the article**, one second apart, because check-and-write was
+  not atomic: each looked for a duplicate before the other had written. `_unique_raw_name`
+  kept it from being an *overwrite* — the protection above working — so the result was two
+  reading-list items rather than one destroyed story. `_capture_lock` closes it; the
+  validation stays outside the lock and `_capture_article_locked` is the body.
+
+**The browser's half cannot be fixed from here**, which is the part worth remembering: a
+bookmarklet is a `javascript:` URL already dragged into someone's bookmarks, so a change to
+the macro reaches nobody until they re-drag it. That is the whole argument for fixing the
+server side too rather than only the timer.
+
+**Nothing validated the bookmarklet, and it is the one script here that ships by hand.**
+`tests/test_template_js.py` runs `node --check` over every inline `<script>`, which proves
+the *generator* parses and says nothing about the string that generator builds one
+concatenation at a time. `tests/test_bookmarklet_js.py` lifts the `var bm = …` expression,
+evaluates it in node with the template's two variables supplied, and asserts the result
+parses (`new Function`) and behaves. Two traps in it, both the fixture's fault rather than
+the code's: `index("setTimeout")` finds the **toast's** own two-second remove timer, not the
+deadline, so two assertions failed against the wrong code while
+`test_the_guard_still_fires_once` *passed* on `d=1` text belonging to the `f()` that happens
+to follow it. `_deadline()` takes the last one and refuses to return the toast's.
+
+**A backgrounded capture outliving its temp wiki writes into the repo's real `raw/`, and
+the harness cannot catch it.** `TempWiki` compares `RAW_DIR` on **exit**; this thread writes
+after that, so five test stories reached the working tree with the suite green — the exact
+failure that guard exists to prevent, arriving through the one door it has no view of. The
+thread is named (`_BEACON_THREAD`) so a test can join it, the join is registered **last** so
+LIFO cleanup runs it **first** — before the `RAW_DIR` rebind is restored — and a mutation
+holds the name, since an anonymous thread silently reopens the hole.
+
 **`_normalize_capture_url` does not do URL normalization in the sense you would assume** —
 it unwraps Firefox's `about:reader?url=…` wrapper and nothing else. A comment here claimed
 it handled tracking links and the two tests asserting that failed. `_dupe_url_key` is the

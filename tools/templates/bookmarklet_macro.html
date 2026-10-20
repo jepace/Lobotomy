@@ -14,25 +14,53 @@
   // redirected back, reloading the article and losing the reader's place. The
   // fallback now opens /save in a background tab that closes itself, leaving
   // the article alone; navigating is kept only for when that popup is blocked.
+  //
+  // **A SLOW server is not a blocked beacon, and conflating them is what made
+  // this misbehave.** Reported as "it loads a blank page pointing at lobotomy,
+  // then eventually snaps back to the actual article" and "duplicate tabs open
+  // to the nyt stories, and then 2 identical items appear". From the log:
+  //
+  //   20:36:24  beacon issued
+  //   ~20:36:30 the 6s timer fires -> window.open is blocked, because a
+  //             setTimeout has no user gesture, so it falls through to
+  //             location.href and navigates the ARTICLE tab to /save
+  //   20:37:01  autolink: linked 49 title(s) (44.4s, 15688 titles checked)
+  //   20:37:02  both requests answer: beacon 200, navigation 302
+  //
+  // So the timer fired while the beacon was still in flight, the "safe" branch
+  // of the fallback was unreachable in exactly the case that needed it, and the
+  // two requests each saved the article.
+  //
+  // Two changes. The timer no longer falls back AT ALL — on a timeout we do not
+  // know the save failed, and acting as if it did is what opened a tab and
+  // navigated away; it says "still saving" and lets the beacon land, since
+  // /save now answers a beacon before doing the work. And it waits 20s rather
+  // than 6, because an ingest here holds the server for tens of seconds.
+  // onerror keeps the old fallback: that one means the request genuinely never
+  // arrived, so there is something to recover from.
   var bm = 'javascript:(function(){'
     + 'var u=' + JSON.stringify(base + '/save?key=' + encodeURIComponent(key))
     + "+'&url='+encodeURIComponent(location.href)"
     + "+'&title='+encodeURIComponent(document.title.slice(0,300)),d=0;"
-    + 'function t(){'
+    + 'function t(m){'
     +   "var e=document.createElement('div'),s=e.style;"
-    +   "e.textContent='Saved to Lobotomy';"
+    +   "e.textContent=m||'Saved to Lobotomy';"
     +   "s.position='fixed';s.top='12px';s.right='12px';s.zIndex=2147483647;"
     +   "s.padding='10px 14px';s.background='#28a745';s.color='#fff';"
     +   "s.borderRadius='8px';s.font='14px -apple-system,system-ui,sans-serif';"
     +   "s.boxShadow='0 2px 12px rgba(0,0,0,.3)';"
     +   '(document.body||document.documentElement).appendChild(e);'
     +   'setTimeout(function(){e.remove()},2000)}'
+    // f() is the BLOCKED case only: the beacon never arrived, so there is
+    // something to recover. A timeout is not this — see the comment above.
     + 'function f(){if(d)return;d=1;var w=null;'
     +   "try{w=window.open(u+'&close=1','_blank')}catch(e){}"
     +   'if(w){t()}else{location.href=u}}'
     + 'var i=new Image();'
     + 'i.onload=function(){if(d)return;d=1;t()};'
-    + 'i.onerror=f;setTimeout(f,6000);'
+    + 'i.onerror=f;'
+    + 'setTimeout(function(){if(d)return;d=1;'
+    +   "t('Still saving to Lobotomy\\u2026')},20000);"
     + "i.src=u+'&beacon=1&t='+Date.now()})();";
 
   var bmLink = document.getElementById('bookmarklet-link') || document.getElementById('bm-link');
