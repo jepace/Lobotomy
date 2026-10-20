@@ -348,6 +348,53 @@ button along with the badge, since that page was built from the text the edit re
 **Both renderers, always.** Every row exists twice — the Jinja loop and the poll's prepend
 path — so a change to one is a bug in the other, and the tests assert the pair.
 
+**And then the bar those controls live in overlapped itself on a phone** (`.topbar-*`,
+`.status-filter`, `.more-btn`). Reported with a screenshot at iPhone width: *"This is
+kinda a mess on iPhone. Maybe dripdowns for the filters?"* — the count rendered
+*underneath* the filter buttons and "Wikify All" sat on top of "+ Save".
+
+**Nothing was too small; everything was too wide and nothing was allowed to move.** One
+`display:flex` row, no `flex-wrap`, and `flex-shrink: 0` on both groups. A flex row that
+may neither wrap nor shrink does not scroll either — it overflows, and `position: sticky`
+with a background then draws the pieces over one another. Six controls plus a title need
+~426px and the phone has 390.
+
+- **The bar wraps**, and search-plus-filter carries a `flex-basis` so it takes a line of
+  its own rather than crushing the row.
+- **The three segmented filter buttons became one `<select>`.** The old comment argued for
+  buttons so the current state is readable without opening anything and each is a full tap
+  target — **a native select satisfies both**, since its own label *is* the current state
+  and iOS gives it a full-height control, while costing one control instead of three on a
+  bar with room for one. **One control, not a select for narrow and buttons for wide:** two
+  controls for one piece of state is two things to keep in step.
+- **Archived and Wikify All exist once in the DOM** and are revealed two ways — inline on a
+  wide screen, behind a ⋯ button on a narrow one. Rendering them twice and hiding a copy is
+  the two-renderers bug above, deliberately.
+
+**`<details>` was the obvious vehicle for that menu and is the wrong one.** A closed
+`<details>` hides its own content in a way the cascade cannot reliably undo: current Chrome
+uses `content-visibility` on `::details-content`, which a `display: flex` on the panel does
+**not** override, while older engines use a `display: none` rule that it does. Measured
+both ways — so the wide-screen layout would have depended on the browser's *version*, and
+the browser this report came from is an iPhone's. A plain button and an `open` class has no
+such ambiguity, and the outside-click and Escape handlers were needed either way.
+
+**The test is on the rendered PAGE, not on the stylesheet**, because every assertion worth
+making here is geometric: the old CSS was perfectly valid, so no rule-level check could
+have found this. `tests/test_inbox_topbar_layout.py` renders the real `/inbox` route and
+measures boxes in a real browser at 390×844 — no horizontal overflow, no two topbar
+children intersecting, nothing outside the viewport.
+
+Two traps in that fixture, both worth copying. **Playwright matches the LAST registered
+route first**, so the catch-all that answers the page's polls with `{}` must be registered
+*before* the page's own route — the other way round it served `{}` for the **navigation**,
+and all eleven assertions failed looking for elements on a page that was never the reading
+list. And a mutation reported MISSED turned out to be right: `flex-basis: 100%` on the
+narrow filter row measured **identically** with and without it, because `flex: 1 1 200px`
+already wraps there. The line was dead, so the mutation went rather than the test — *a
+MISSED mutation is a question about whether the guard is load-bearing, not automatically a
+demand for another test.*
+
 **One label for a tool call, in every view that shows one** (`tool_arg_preview`,
 `window.agentEventLine`). Asked whether the chat log and the reading-list log differ, then
 narrowed: *"it's the chat log for AFTER an ingest is complete that does not display

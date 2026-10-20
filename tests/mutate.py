@@ -1547,6 +1547,19 @@ MUTATIONS = [
      '        threading.Thread(target=_bg, daemon=True).start()',
      '        _bg()',
      'tools/serve.py'),
+    # The reading list's header at 390px: one flex row that could neither wrap nor
+    # shrink, so it overlapped itself — the count under the filter, Wikify All on top of
+    # + Save. Reported with a screenshot.
+    ('inbox: the topbar wraps rather than overlapping itself',
+     '    display: flex; align-items: center; flex-wrap: wrap; gap: 8px;',
+     '    display: flex; align-items: center; gap: 8px;',
+     'tools/templates/inbox.html'),
+    # Without the ⋯ button, Archived and Wikify All are simply unreachable on a phone:
+    # the panel they live in is only displayed when the menu is open.
+    ('inbox: the overflow button appears on a narrow screen',
+     '      display: flex; align-items: center; justify-content: center;\n      min-width: 40px; height: 32px; padding: 0 10px; cursor: pointer;',
+     '      display: none;\n      min-width: 40px; height: 32px; padding: 0 10px; cursor: pointer;',
+     'tools/templates/inbox.html'),
     # An anonymous capture thread cannot be waited for, so a test lets it outlive its
     # temp wiki and the write lands in the repo's real raw/ — after the harness's exit
     # check. Five test stories reached the working tree that way, suite green.

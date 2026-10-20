@@ -4,14 +4,65 @@
 
 {% block head %}
 <style>
+  /* The topbar WRAPS. It used to be one `flex` row with `flex-shrink: 0` on both
+     groups, which at phone width does not scroll and does not wrap — it overlaps, so
+     the count sat underneath the filter and "Wikify All" sat on top of "+ Save".
+     Reported with a screenshot at 390px. */
   .page-topbar {
     position: sticky; top: 0;
     background: var(--bg); border-bottom: 1px solid var(--border);
     padding: 10px 16px;
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
     z-index: 100;
   }
-  .page-topbar h1 { font-size: 17px; font-weight: 600; }
+  .page-topbar h1 { font-size: 17px; font-weight: 600; flex-shrink: 0; }
+  .topbar-count { flex-shrink: 0; }
+  /* The flex-basis is what makes this take a line of its own rather than crush the row
+     when there is not 200px for it. */
+  .topbar-filters { display: flex; align-items: center; gap: 8px; flex: 1 1 200px; min-width: 0; }
+  .topbar-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+                    margin-left: auto; }
+
+  /* Archived and Wikify All live in ONE place in the DOM and are revealed two ways:
+     inline on a wide screen, and behind a ⋯ button on a narrow one. Rendering them
+     twice and hiding one copy is the drift this file has paid for elsewhere — two
+     renderers means a change to one is a bug in the other.
+
+     A plain button and a class rather than <details>/<summary>. A closed <details>
+     hides its own content in a way the cascade cannot reliably undo: current Chrome
+     uses `content-visibility` on `::details-content`, which a `display: flex` on the
+     panel does NOT override, while older engines use a `display: none` rule that it
+     does. Measured both ways here — so the wide-screen layout would have depended on
+     the browser's version, and the browser that matters for this report is an
+     iPhone's. */
+  .topbar-more { position: relative; flex-shrink: 0; }
+  .more-btn { display: none; }
+  .more-panel { display: flex; align-items: center; gap: 8px; }
+
+  @media (max-width: 640px) {
+    .page-topbar { padding: 8px 12px; }
+    /* `order` puts search and the filter under the title and the two controls that
+       stay reachable without opening anything. */
+    .topbar-filters { order: 3; }
+    .more-btn {
+      display: flex; align-items: center; justify-content: center;
+      min-width: 40px; height: 32px; padding: 0 10px; cursor: pointer;
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg2); color: var(--text);
+      font-size: 16px; line-height: 1;
+    }
+    .more-panel {
+      display: none; position: absolute; right: 0; top: calc(100% + 6px);
+      flex-direction: column; align-items: stretch; min-width: 160px;
+      padding: 6px; border: 1px solid var(--border); border-radius: 10px;
+      background: var(--bg2); box-shadow: 0 6px 20px rgba(0,0,0,.35); z-index: 101;
+    }
+    .topbar-more.open .more-panel { display: flex; }
+    /* A menu row is a full-width tap target, not a chip wearing a button's padding —
+       the Wikified badge's lesson: a control under ~44px is one you miss. */
+    .more-panel .btn { width: 100%; justify-content: flex-start; text-align: left;
+                       padding: 10px 12px; font-size: 14px; }
+  }
 
   .save-panel {
     margin: 12px; padding: 14px;
@@ -154,16 +205,20 @@
   }
   .item-edit-actions { display: flex; gap: 6px; }
 
-  /* Status filter. Buttons rather than a <select> so the current state is readable
-     without opening anything, and so each is a full tap target. */
-  .seg { display: inline-flex; flex-shrink: 0; border: 1px solid var(--border);
-         border-radius: 8px; overflow: hidden; }
-  .seg-btn {
-    padding: 5px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
-    border: none; background: var(--bg); color: var(--text2); white-space: nowrap;
+  /* Status filter. This was three segmented BUTTONS, on the reasoning that the current
+     state should be readable without opening anything and that each should be a full
+     tap target. A native <select> satisfies both — its own label IS the current state,
+     and iOS gives it a full-height control and a system picker — while costing one
+     control instead of three on a bar that had no room for three. Asked for directly:
+     *"This is kinda a mess on iPhone. Maybe dripdowns for the filters?"*
+     ONE control, not a select for narrow and buttons for wide: two controls for one
+     piece of state is two things to keep in step, which is the bug this file keeps
+     finding. */
+  .status-filter {
+    flex-shrink: 0; padding: 6px 8px; font-size: 13px; font-weight: 600;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); cursor: pointer; max-width: 140px;
   }
-  .seg-btn + .seg-btn { border-left: 1px solid var(--border); }
-  .seg-btn.active { background: var(--accent); color: #fff; }
   .filter-empty { display: none; padding: 28px 14px; text-align: center;
                   color: var(--text2); font-size: 14px; }
 </style>
@@ -173,24 +228,32 @@
 <div class="page">
   <div class="page-topbar">
     <h1>Reading List</h1>
-    <div style="display:flex; gap:8px; align-items:center; flex:1; min-width:0; margin-left:12px;">
+    <span class="text-sm text2 topbar-count"><span id="item-count">{{ items|length }}</span> {% if show_archived %}archived{% else %}saved{% endif %}</span>
+    <div class="topbar-filters">
       <input id="search-input" type="search" placeholder="Search…"
              oninput="filterItems(this.value)"
              style="flex:1; min-width:0; max-width:220px; padding:5px 9px; border-radius:8px;
                     border:1px solid var(--border); background:var(--bg); color:var(--text);
                     font-size:13px; outline:none;">
-      <div class="seg" role="group" aria-label="Filter by status">
-        <button class="seg-btn active" data-filter="all"  onclick="setStatusFilter('all')">All</button>
-        <button class="seg-btn"        data-filter="todo" onclick="setStatusFilter('todo')">To read</button>
-        <button class="seg-btn"        data-filter="done" onclick="setStatusFilter('done')">Wikified</button>
-      </div>
+      <select id="status-filter" class="status-filter" aria-label="Filter by status"
+              onchange="setStatusFilter(this.value)">
+        <option value="all" selected>All</option>
+        <option value="todo">To read</option>
+        <option value="done">Wikified</option>
+      </select>
     </div>
-    <div style="display:flex; gap:8px; align-items:center; flex-shrink:0;">
-      <span class="text-sm text2"><span id="item-count">{{ items|length }}</span> {% if show_archived %}archived{% else %}saved{% endif %}</span>
-      <a class="btn btn-ghost btn-sm" href="/inbox?archived={{ '0' if show_archived else '1' }}">
-        {{ 'Hide archived' if show_archived else 'Archived' }}
-      </a>
-      {% if items and not show_archived %}<button class="btn btn-ghost btn-sm" id="wikify-all-btn" onclick="wikifyAll()">Wikify All</button>{% endif %}
+    <div class="topbar-actions">
+      <div class="topbar-more" id="topbar-more">
+        <button type="button" class="more-btn" id="more-btn" aria-label="More actions"
+                title="More actions" aria-expanded="false" aria-controls="more-panel"
+                onclick="toggleMoreMenu()">&#8943;</button>
+        <div class="more-panel" id="more-panel">
+          <a class="btn btn-ghost btn-sm" href="/inbox?archived={{ '0' if show_archived else '1' }}">
+            {{ 'Hide archived' if show_archived else 'Archived' }}
+          </a>
+          {% if items and not show_archived %}<button class="btn btn-ghost btn-sm" id="wikify-all-btn" onclick="wikifyAll()">Wikify All</button>{% endif %}
+        </div>
+      </div>
       {% if not show_archived %}<button class="btn btn-primary btn-sm" onclick="toggleSave()">+ Save</button>{% endif %}
     </div>
   </div>
@@ -278,7 +341,9 @@
        reading list. #}
     <div class="filter-empty" id="filter-empty">
       Nothing matches this filter.
-      <button class="seg-btn" style="border:1px solid var(--border); border-radius:8px; margin-left:8px;"
+      {# Styled as an ordinary button rather than borrowing the filter's class: it took
+         `.seg-btn` for its looks, so deleting that class left it unstyled. #}
+      <button class="btn btn-ghost btn-sm" style="margin-left:8px;"
               onclick="document.getElementById('search-input').value=''; filterItems(''); setStatusFilter('all');">Show all</button>
     </div>
   {% else %}
@@ -757,9 +822,10 @@ function applyFilters() {
 
 function setStatusFilter(v) {
   _statusFilter = v;
-  for (const b of document.querySelectorAll('.seg-btn')) {
-    b.classList.toggle('active', b.dataset.filter === v);
-  }
+  // Written back rather than assumed: restoreFilter() calls this with a stored value,
+  // and the control has to show the state it is actually filtering by.
+  const sel = document.getElementById('status-filter');
+  if (sel && sel.value !== v) sel.value = v;
   // A convenience, not a record — storage can be absent or throw.
   try { localStorage.setItem('inbox-filter', v); } catch(e) {}
   applyFilters();
@@ -787,6 +853,35 @@ function filterItems(q) {
     }
   }, 200);
 }
+
+// The overflow menu. `aria-expanded` is set from the same place as the class, so the
+// state a screen reader is told is the state that is drawn.
+function setMoreMenu(open) {
+  const d = document.getElementById('topbar-more');
+  const b = document.getElementById('more-btn');
+  if (!d) return;
+  d.classList.toggle('open', open);
+  if (b) b.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function toggleMoreMenu() {
+  const d = document.getElementById('topbar-more');
+  setMoreMenu(d ? !d.classList.contains('open') : false);
+}
+
+// An open menu stays open until something closes it, and it sits over the first rows of
+// the list. Three things close it: a tap elsewhere, Escape, and using one of its items.
+(function closeMoreMenu() {
+  const d = document.getElementById('topbar-more');
+  if (!d) return;
+  document.addEventListener('click', (e) => {
+    if (!d.contains(e.target)) setMoreMenu(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') setMoreMenu(false);
+  });
+  const panel = d.querySelector('.more-panel');
+  if (panel) panel.addEventListener('click', () => setMoreMenu(false));
+})();
 
 (function restoreFilter() {
   let saved = null;

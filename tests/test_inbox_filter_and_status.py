@@ -204,8 +204,22 @@ class FilterTest(unittest.TestCase):
         cls.src = TEMPLATE.read_text(encoding="utf-8")
 
     def test_the_three_choices_exist(self):
+        """The three segmented buttons became one <select>: on a phone the bar had no
+        room for three controls, and the select's own label is the current state, which
+        is what the buttons were there to show."""
+        self.assertIn('onchange="setStatusFilter(this.value)"', self.src)
         for f in ("all", "todo", "done"):
-            self.assertIn(f"""onclick="setStatusFilter('{f}')\"""", self.src)
+            self.assertRegex(self.src, rf'<option value="{f}"')
+
+    def test_the_status_filter_is_one_control_not_two(self):
+        """A select for narrow and buttons for wide would be two controls for one piece
+        of state, and keeping two in step is the drift this project keeps paying for.
+        The old `.seg` markup is gone rather than hidden."""
+        # On the class ATTRIBUTE, not the bare string: a comment here explains why the
+        # old class went, and matching that would be the greps-its-own-comment trap.
+        self.assertNotRegex(self.src, r'class="[^"]*\bseg-btn\b')
+        self.assertNotRegex(self.src, r'^\s*\.seg-btn[\s,{]', )
+        self.assertEqual(len(re.findall(r'id="status-filter"', self.src)), 1)
 
     def test_only_one_function_writes_visibility(self):
         """The trap: search used to set el.style.display directly, so clearing the box
@@ -310,10 +324,10 @@ class BrowserTest(unittest.TestCase):
             for n, done in (("alpha", True), ("beta", False), ("gamma", True),
                             ("delta", False)))
         page.set_content(
-            f'<div class="seg">'
-            f'<button class="seg-btn active" data-filter="all"></button>'
-            f'<button class="seg-btn" data-filter="todo"></button>'
-            f'<button class="seg-btn" data-filter="done"></button></div>'
+            f'<select id="status-filter">'
+            f'<option value="all" selected></option>'
+            f'<option value="todo"></option>'
+            f'<option value="done"></option></select>'
             f'<span id="item-count">4</span><div id="filter-empty"></div>{rows}')
         page.add_script_tag(content=
             "let _searchMatches = null; let _statusFilter = 'all';\n"
@@ -378,12 +392,14 @@ class BrowserTest(unittest.TestCase):
         self.assertEqual(page.eval_on_selector("#filter-empty", "e => e.style.display"), "")
         page.close()
 
-    def test_the_active_segment_follows_the_choice(self):
+    def test_the_control_shows_the_filter_it_is_applying(self):
+        """restoreFilter() calls setStatusFilter with a value from localStorage, so the
+        select is not always the thing that moved — a reload that filtered to Wikified
+        while the control still read "All" would be the search-popup fault again: a
+        wrong answer presented as the state."""
         page = self._page()
         page.evaluate("setStatusFilter('todo')")
-        self.assertEqual(
-            page.evaluate("document.querySelector('.seg-btn.active').dataset.filter"),
-            "todo")
+        self.assertEqual(page.eval_on_selector("#status-filter", "e => e.value"), "todo")
         page.close()
 
 
