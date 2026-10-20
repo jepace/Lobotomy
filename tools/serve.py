@@ -1462,6 +1462,22 @@ def _find_existing_capture(url: str = "", content: str = ""):
     """
     want_url = _dupe_url_key(url) if url else ""
     want_body = " ".join(content.split()) if content else ""
+
+    if want_url and not want_body:
+        # A URL match needs the `url:` field and nothing else, so only the frontmatter is
+        # read. The bodies here are whole articles — measured at 600 items this scan was
+        # 60MB of reads to compare one field per file.
+        for f, fm in _raw_frontmatter_items():
+            have = (fm.get("url") or "").strip().strip('"\'')
+            if have and _dupe_url_key(have) == want_url:
+                try:
+                    _fm, body = _parse_frontmatter(
+                        f.read_text(encoding="utf-8", errors="replace"))
+                except OSError:
+                    _fm, body = fm, ""
+                return f, fm, body or ""
+        return None
+
     for f, fm, body in _raw_items():
         if want_url:
             have = (fm.get("url") or "").strip().strip('"\'')
@@ -1470,6 +1486,155 @@ def _find_existing_capture(url: str = "", content: str = ""):
         if want_body and " ".join(body.split()) == want_body:
             return f, fm, body
     return None
+
+
+def _fm_line_value(value: str, limit: int = 300) -> str:
+    """A caller-supplied string, safe to interpolate as a frontmatter scalar.
+
+    **Whitespace is collapsed before quoting, and that is the half `fm_quote` cannot do.**
+    It escapes `"` and `\\`, which is what stops a title ending the scalar early — but a
+    NEWLINE inside the value still ends the line, and every reader of this frontmatter
+    parses it line by line, so `title: "Part One\\nurl: evil"` injects a field. `/save`
+    collapsed whitespace and then flattened quotes to apostrophes; `/api/push` did neither
+    and interpolated straight into `"{title}"`, which is the exact defect `fm_quote` was
+    written for, still live on the one route an outside caller can reach.
+    """
+    return fm_quote(re.sub(r"\s+", " ", str(value)).strip()[:limit])
+
+
+def _capture_article(url: str = "", *, title: str = "", content: str = "",
+                     source: str = "manual", author: str = "", tags=(),
+                     filename: str = "") -> dict:
+    """Put an article into the reading list. The one implementation behind every door.
+
+    Asked, looking at the three of them: *"do we need all those routes to do the same
+    thing? web is that different than shortcut method?"* The **entry points** have to
+    differ, and cannot be merged:
+
+      `/inbox/add`   own origin, session cookie, POST JSON. Also takes pasted TEXT, which
+                     is a genuinely different operation and stays in that route.
+      `/save`        must be a GET that answers with an image: the bookmarklet runs on the
+                     article's own origin, where CORS blocks `fetch` and a POST outright,
+                     and only an `<img>` reliably gets through. That is its whole design.
+      `/api/push`    POST with `Authorization: Bearer`, for the iOS Shortcut and any other
+                     client. No session exists to authenticate against.
+      `/api/inbound-email`
+                     a mail provider's webhook. Found while unifying the other three —
+                     a FOURTH copy, with every defect listed below and one of its own: it
+                     wrote with `dest.write_text()` rather than `_atomic_write`, so it
+                     bypassed the single write chokepoint — no atomic replace, and none of
+                     the ownership inheritance that lets this tree be written by root
+                     beside a server running as another user. (It did pass
+                     `errors="replace"`, so the surrogate hazard was covered.) An email
+                     SUBJECT is also the one value in this family a stranger picks freely,
+                     and it was interpolated into `title: "{title}"` unescaped.
+
+    The **work** behind them was identical and written three times, and every bug found in
+    this family came from exactly that: the duplicate check disagreed (two routes compared
+    the stored URL verbatim while the web form compared `_dupe_url_key`, so a link shared
+    with `?utm_source=` was deduped by one door and saved twice by another); two routes
+    omitted `expect_body=""` and could let a background fetch overwrite a pasted article;
+    `/api/push` interpolated a caller's title straight into `"{title}"`; and two of them
+    minted their own collision filename instead of `_unique_raw_name`. Three transports,
+    one behaviour — so the drift is now impossible rather than repaired in three places.
+
+    Returns a result the caller renders in its own idiom: JSON, a 1×1 GIF, or a redirect.
+    """
+    url = _normalize_capture_url(re.sub(r"\s+", "", url or ""))
+    if not url and not content.strip():
+        return {"error": "Provide url, content, or both"}
+    if not url and not title.strip():
+        return {"error": "title is required when url is not provided"}
+
+    # Already here? Report it, never rewrite it — editing is a separate route, so the add
+    # path has no business overwriting anything. The one exception is a capture that
+    # fetched NOTHING and has never been touched since: re-sharing that URL is how you ask
+    # for another go, and there is no text to lose.
+    #
+    # That exception used to be the web form's alone, so an article whose fetch failed
+    # could never be retried from the share sheet — it answered "Already saved" and left
+    # the empty item sitting there. The reasoning never had anything to do with which door
+    # you came through.
+    dup = _find_existing_capture(url=url) if url else None
+    if dup:
+        f, fm, body = dup
+        wikified = str(fm.get("wikified", "")).strip().lower() in ("true", "1", "yes")
+        shown = (fm.get("title") or f.name).strip().strip('"\'')
+        if body.strip() or wikified:
+            log.info("capture: %s is already in the reading list as %s — not rewriting",
+                     url, f.name)
+            return {"duplicate": True, "path": f, "title": shown, "wikified": wikified}
+        log.info("capture: %s is an empty capture — retrying the fetch", f.name)
+        _fetch_and_patch(f, url, expect_body="")
+        return {"duplicate": True, "refetched": True, "path": f, "title": shown,
+                "wikified": False}
+
+    if not title:
+        title = (url.rstrip("/").split("/")[-1].split("?")[0]
+                 .replace("-", " ").replace("_", " ") or url)
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "article"
+    dest = RAW_DIR / _unique_raw_name(filename or f"{slug}.md")
+
+    needs_fetch = bool(url) and not content.strip()
+    today = datetime.date.today().isoformat()
+    now = datetime.datetime.now().isoformat(timespec="seconds")
+    fm = ["---", f"title: {_fm_line_value(title)}"]
+    if url:
+        fm.append(f"url: {url}")
+    fm += [f"saved: {today}", f"added: {now}", "wikified: false",
+           f"source: {_fm_line_value(source, 120)}"]
+    if needs_fetch:
+        fm.append("fetch_failed: true")
+    if author:
+        fm.append(f"author: {_fm_line_value(author, 200)}")
+    if tags:
+        fm.append(f"tags: {json.dumps([str(t) for t in tags])}")
+    fm += ["---", ""]
+    _atomic_write(dest, "\n".join(fm) + (content or ""))
+
+    if needs_fetch:
+        # expect_body="" — the body this capture wrote. The fetch may only land while the
+        # file still holds it, so a fetch in flight cannot overwrite an article the user
+        # pasted in the meantime. Two of the three doors used to omit this.
+        _fetch_and_patch(dest, url, expect_body="")
+    return {"created": True, "path": dest, "title": title, "fetch_failed": needs_fetch}
+
+
+_FM_PREFIX_BYTES = 8192
+
+
+def _raw_frontmatter_items():
+    """Every reading-list file as (path, frontmatter), reading only the frontmatter.
+
+    `_raw_items()` reads each file whole because the add path's paste comparison needs the
+    body. A URL comparison does not, and the bodies are whole articles: at 600 captures
+    that is ~60MB of reads to look at one field per file. This reads a bounded prefix
+    instead.
+
+    A file whose closing `---` is not inside that prefix falls back to a full read, so a
+    capture with enormous frontmatter is handled correctly rather than skipped — being
+    wrong about whether an article is already saved is how `/inbox/add` destroyed one.
+    """
+    if not RAW_DIR.is_dir():
+        return
+    for f in sorted(RAW_DIR.iterdir()):
+        if not f.is_file() or f.name.startswith(".") or f.name == "index.md":
+            continue
+        try:
+            with f.open("r", encoding="utf-8", errors="replace") as fh:
+                head = fh.read(_FM_PREFIX_BYTES)
+        except OSError:
+            continue
+        if head.startswith("---") and "\n---" not in head[3:]:
+            try:                      # frontmatter runs past the prefix: read it properly
+                head = f.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+        try:
+            fm, _body = _parse_frontmatter(head)
+        except Exception:
+            fm = {}
+        yield f, fm or {}
 
 
 def _unique_raw_name(name: str) -> str:
@@ -2874,36 +3039,13 @@ def save_redirect():
     if not url:
         return "Missing url", 400
 
-    inbox_dir = RAW_DIR
-    for existing in inbox_dir.glob("*.md"):
-        if existing.name == "index.md":
-            continue
-        try:
-            meta, _ = _parse_frontmatter(existing.read_text(encoding="utf-8", errors="replace"))
-            if meta.get("url", "").strip() == url:
-                return _save_done(beacon, close, url, "Already saved")
-        except Exception:
-            pass
-
-    if not title:
-        title = url.rstrip("/").split("/")[-1].split("?")[0].replace("-", " ").replace("_", " ") or url
-
-    slug      = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "article"
-    base_name = f"{slug}.md"
-    dest      = inbox_dir / base_name
-    if dest.exists():
-        import time as _t
-        base_name = f"{slug}-{int(_t.time())}.md"
-        dest      = inbox_dir / base_name
-
-    today = datetime.date.today().isoformat()
-    now   = datetime.datetime.now().isoformat(timespec="seconds")
-    fm    = ["---", f'title: "{title}"', f"url: {url}",
-             f"saved: {today}", f"added: {now}",
-             "wikified: false", "source: bookmarklet", "fetch_failed: true", "---", ""]
-    _atomic_write(dest, "\n".join(fm))
-    _fetch_and_patch(dest, url)
-
+    res = _capture_article(url, title=title, source="bookmarklet")
+    if res.get("error"):
+        return res["error"], 400
+    if res.get("refetched"):
+        return _save_done(beacon, close, url, "Already saved — retrying the fetch")
+    if res.get("duplicate"):
+        return _save_done(beacon, close, url, "Already saved")
     return _save_done(beacon, close, url, "Saved to Lobotomy")
 
 
@@ -2939,7 +3081,11 @@ def api_push():
         return err
 
     data       = request.get_json(silent=True) or {}
-    url        = _normalize_capture_url((data.get("url") or "").strip())
+    # Whitespace stripped from INSIDE the url, not merely off the ends: it is written as a
+    # bare `url:` scalar, so an embedded newline injects a frontmatter field. `/save`
+    # already did this; this route only trimmed the ends.
+    url        = _normalize_capture_url(
+        re.sub(r"\s+", "", (data.get("url") or "")))
     title      = (data.get("title")   or "").strip()
     content    = (data.get("content") or "").strip()
     tags       = data.get("tags")   or []
@@ -2957,77 +3103,62 @@ def api_push():
         return {"error": "title is required when url is not provided",
                 "code": "MISSING_FIELDS"}, 400
 
-    # Deduplication: if the same URL already exists in raw/, return it
-    inbox_dir = RAW_DIR
+    # A URL capture is the same work the web form and the bookmarklet do, so it goes
+    # through the one implementation; this route only carries the transport, the Bearer
+    # auth and this JSON shape. Every bug in this family came from the three copies.
     if url:
-        for existing in inbox_dir.glob("*.md"):
-            if existing.name == "index.md":
-                continue
+        res = _capture_article(url, title=title, content=content,
+                               source=source or "external-api",
+                           author=author, tags=tags)
+        if res.get("error"):
+            return {"error": res["error"], "code": "MISSING_FIELDS"}, 400
+        f = res["path"]
+        if res.get("duplicate"):
             try:
-                meta, _ = _parse_frontmatter(
-                    existing.read_text(encoding="utf-8", errors="replace"))
-                if meta.get("url", "").strip() == url:
-                    return {
-                        "ok":        True,
-                        "duplicate": True,
-                        "id":        existing.stem,
-                        "filename":  existing.name,
-                        "title":     meta.get("title", existing.stem),
-                        "url":       url,
-                        "saved":     meta.get("saved", ""),
-                    }
-            except (OSError, ValueError, KeyError) as e:
-                log.debug("Skipping unreadable inbox file %s: %s", existing.name, e)
+                meta, _ = _parse_frontmatter(f.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                meta = {}
+            out = {
+                "ok":        True,
+                "duplicate": True,
+                "id":        f.stem,
+                "filename":  f.name,
+                "title":     meta.get("title", f.stem),
+                "url":       url,
+                "saved":     meta.get("saved", ""),
+            }
+            if res.get("refetched"):
+                # Additive: a caller that ignores it sees the duplicate reply it always
+                # got. Re-sharing a capture that fetched nothing is how you retry it, and
+                # this door used to answer "already saved" and do nothing.
+                out["refetched"] = True
+            return out
+        return {
+            "ok":           True,
+            "duplicate":    False,
+            "id":           f.stem,
+            "filename":     f.name,
+            "title":        res["title"],
+            "url":          url,
+            "saved":        datetime.date.today().isoformat(),
+            "fetch_failed": res.get("fetch_failed", False),
+        }, 201, {"Access-Control-Allow-Origin": "*"}
 
-    # Save immediately with fetch_failed; background thread fetches and patches the file.
-    needs_fetch = bool(url and not content)
-
-    # Final title fallback
-    if not title:
-        title = url.rstrip("/").split("/")[-1].split("?")[0].replace("-", " ").replace("_", " ") or url
-
-    # Build unique slug filename
-    slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "article"
-    base_name = f"{slug}.md"
-    dest = inbox_dir / base_name
-    if dest.exists():
-        import time as _t
-        base_name = f"{slug}-{int(_t.time())}.md"
-        dest = inbox_dir / base_name
-
-    # Write file with YAML frontmatter
-    today = datetime.date.today().isoformat()
-    now   = datetime.datetime.now().isoformat(timespec="seconds")
-    fm    = ["---", f'title: "{title}"']
-    if url:
-        fm.append(f"url: {url}")
-    fm.append(f"saved: {today}")
-    fm.append(f"added: {now}")
-    fm.append(f"wikified: false")
-    fm.append(f"source: {source}")
-    if needs_fetch:
-        fm.append(f"fetch_failed: true")
-    if author:
-        fm.append(f"author: {author}")
-    if tags:
-        fm.append(f"tags: {json.dumps(tags)}")
-    fm += ["---", ""]
-
-    body = content or ""
-    _atomic_write(dest, "\n".join(fm) + body)
-
-    if needs_fetch:
-        _fetch_and_patch(dest, url)
-
+    # Content with no URL at all. Same call, no url — the shared capture handles it, so
+    # the sanitised frontmatter and the never-overwrite naming are not written twice.
+    res = _capture_article(title=title, content=content,
+                           source=source or "external-api", author=author, tags=tags)
+    if res.get("error"):
+        return {"error": res["error"], "code": "MISSING_FIELDS"}, 400
     return {
-        "ok":          True,
-        "duplicate":   False,
-        "id":          dest.stem,
-        "filename":    base_name,
-        "title":       title,
-        "url":         url or None,
-        "saved":       today,
-        "fetch_failed": needs_fetch,
+        "ok":           True,
+        "duplicate":    False,
+        "id":           res["path"].stem,
+        "filename":     res["path"].name,
+        "title":        res["title"],
+        "url":          None,
+        "saved":        datetime.date.today().isoformat(),
+        "fetch_failed": False,
     }, 201, {"Access-Control-Allow-Origin": "*"}
 
 
@@ -3211,51 +3342,24 @@ def api_inbound_email():
         log.debug("No URL found in email body, using body as content")
         content = text_body
 
-    # Deduplication on URL
-    inbox_dir = RAW_DIR
-    if url:
-        log.debug("Checking for duplicate URL in raw/")
-        for existing in inbox_dir.glob("*.md"):
-            if existing.name == "index.md":
-                continue
-            try:
-                meta, _ = _parse_frontmatter(
-                    existing.read_text(encoding="utf-8", errors="replace"))
-                if meta.get("url", "").strip() == url:
-                    log.info("Inbound email duplicate: %s (existing file: %s)", url, existing.name)
-                    return {"ok": True, "duplicate": True, "filename": existing.name}, 200
-            except (OSError, ValueError, KeyError) as e:
-                log.debug("Error checking duplicate for %s: %s", existing.name, e)
-
-    # Build filename
-    slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "email"
-    base_name = f"{slug}.md"
-    dest = inbox_dir / base_name
-    if dest.exists():
-        import time as _t
-        base_name = f"{slug}-{int(_t.time())}.md"
-        dest = inbox_dir / base_name
-    log.debug("Will save to: %s", dest)
-
-    today = datetime.date.today().isoformat()
-    fm = ["---", f'title: "{title}"']
-    if url:
-        fm.append(f"url: {url}")
-    fm.append(f"saved: {today}")
-    fm.append(f"added: {today}")
-    fm.append(f"wikified: false")
-    fm.append(f"source: email")
-    if from_addr:
-        fm.append(f"author: {from_addr}")
-    fm += ["---", ""]
-
+    # The fourth copy of this, now the same call as the other three. It had the verbatim
+    # URL comparison, an unescaped `title:` built from an email SUBJECT (the one value in
+    # this family a stranger picks freely), a bare `author:` from the sender address, its
+    # own collision name, and a plain `dest.write_text()` that bypassed the one write
+    # chokepoint: no atomic replace, no ownership inheritance.
     try:
-        dest.write_text("\n".join(fm) + content, encoding="utf-8", errors="replace")
-        log.info("Inbound email saved: %s from %s (size: %d bytes)", base_name, from_addr, len("\n".join(fm) + content))
-        return {"ok": True, "duplicate": False, "filename": base_name}, 201
+        res = _capture_article(url, title=title, content=content, source="email",
+                               author=from_addr)
     except Exception as e:
         log.error("Failed to save inbound email: %s", e, exc_info=True)
         return {"error": "Failed to save email"}, 500
+    if res.get("error"):
+        return {"error": res["error"]}, 400
+    if res.get("duplicate"):
+        log.info("Inbound email duplicate: %s (existing file: %s)", url, res["path"].name)
+        return {"ok": True, "duplicate": True, "filename": res["path"].name}, 200
+    log.info("Inbound email saved: %s from %s", res["path"].name, from_addr)
+    return {"ok": True, "duplicate": False, "filename": res["path"].name}, 201
 
 
 @app.route("/api/inbox")
@@ -3352,36 +3456,38 @@ def inbox_clip():
         return "Missing url parameter", 400
 
     display_title = title or url
-    slug_src = title if title else url.split("//")[-1].split("?")[0]
-    slug = re.sub(r"[^a-z0-9]+", "-", slug_src.lower())[:60].strip("-") or "clipping"
 
-    def _unique(base_name):
-        dest = RAW_DIR / base_name
-        if not dest.exists():
-            return base_name, dest
-        stem, ext = base_name.rsplit(".", 1)
-        import time as _t
-        name = f"{stem}-{int(_t.time())}.{ext}"
-        return name, RAW_DIR / name
-
-    # Try to fetch full article content
+    # A FIFTH copy of the capture lived here, with the same four defects as the others —
+    # no duplicate check at all, `title: "{…}"` interpolated unescaped, its own
+    # epoch-suffixed collision name, and `dest.write_text()` instead of the one write
+    # chokepoint. It goes through the shared capture now like every other door.
+    #
+    # **What is NOT changed here is the synchronous fetch below**, and it deserves naming:
+    # this is the only door that fetches the article INSIDE the request, because its whole
+    # contract is to report whether the full text arrived and offer a "Read now" link. A
+    # foreign site that accepts the connection and then trickles can hold this request far
+    # past `_clip_fetch`'s 15-second socket timeout, which no amount of server-side
+    # efficiency fixes — every other door hands the fetch to a thread and answers at once.
+    # Turning this one into a background fetch would change what the page can honestly
+    # say, so it is a decision rather than a repair.
     text, fetch_err = _clip_fetch(url)
     read_url = None
 
     if text:
-        base_name, dest = _unique(f"{slug}.md")
-        today = datetime.date.today().isoformat()
-        md_content = (
-            f'---\ntitle: "{display_title}"\nurl: {url}\nsaved: {today}\nadded: {today}\nwikified: false\n---\n\n'
-            f'{text}'
-        )
-        dest.write_text(md_content, encoding="utf-8", errors="replace")
+        res = _capture_article(url, title=display_title, content=text, source="clip")
+        if res.get("error"):
+            return res["error"], 400
+        base_name = res["path"].name
         read_url = url_for("inbox_read", filename=base_name)
-        status_msg = "Saved with full content"
+        status_msg = ("Already saved" if res.get("duplicate")
+                      else "Saved with full content")
     else:
-        base_name, dest = _unique(f"{slug}.url")
-        dest.write_text(f"{display_title}\nURL: {url}\n", encoding="utf-8", errors="replace")
-        status_msg = f"URL saved — offline reading unavailable ({fetch_err or 'fetch failed'})"
+        res = _capture_article(url, title=display_title, source="clip")
+        if res.get("error"):
+            return res["error"], 400
+        read_url = url_for("inbox_read", filename=res["path"].name)
+        status_msg = (f"URL saved — offline reading unavailable "
+                      f"({fetch_err or 'fetch failed'})")
 
     inbox_url = url_for("inbox")
     read_link = f'<a href="{read_url}">Read now</a>' if read_url else ""
@@ -3459,42 +3565,20 @@ def inbox_add():
     # If the content is just a bare URL, save immediately and fetch in background
     is_url = content.startswith("http") and "\n" not in content and " " not in content.strip()
     if is_url:
-        url = _normalize_capture_url(content)
-        # Already here? Say so and leave it alone. The one exception is a capture that
-        # fetched NOTHING and has never been touched since: re-adding that URL is how you
-        # ask for another go at the fetch, and there is no text to lose. Anything with a
-        # body, or already wikified, is never rewritten by an add.
-        _dup = _find_existing_capture(url=url)
-        if _dup:
-            _f, _fm, _body = _dup
-            _wikified = str(_fm.get("wikified", "")).strip().lower() in ("true", "1", "yes")
-            if _body.strip() or _wikified:
-                log.info("inbox/add: %s is already in the reading list as %s — not rewriting",
-                         url, _f.name)
-                return {"ok": True, "duplicate": True, "filename": _f.name,
-                        "wikified": _wikified,
-                        "title": (_fm.get("title") or _f.name).strip().strip('"\'')}
-            log.info("inbox/add: %s is an empty capture — retrying the fetch", _f.name)
-            _fetch_and_patch(_f, url, expect_body="")
-            return {"ok": True, "duplicate": True, "refetched": True,
-                    "filename": _f.name, "wikified": False,
-                    "title": (_fm.get("title") or _f.name).strip().strip('"\'')}
-        title = url.rstrip("/").split("/")[-1].split("?")[0].replace("-", " ").replace("_", " ") or url
-        slug = re.sub(r"[^a-z0-9]+", "-", title.lower())[:60].strip("-") or "article"
-        base_name = _unique_raw_name(name or f"{slug}.md")
-        dest = RAW_DIR / base_name
-        today = datetime.date.today().isoformat()
-        now   = datetime.datetime.now().isoformat(timespec="seconds")
-        # fm_quote, not "{title}": the title comes from the URL's last path segment and a
-        # slug can carry a quote. Same defect as create_file's, in a third place.
-        fm    = ["---", f"title: {fm_quote(title)}", f"url: {url}", f"saved: {today}",
-                 f"added: {now}", "wikified: false", "source: manual", "fetch_failed: true", "---", ""]
-        _atomic_write(dest, "\n".join(fm))
-        # Hand the background fetch the body this capture wrote, so it can tell its own
-        # placeholder from something the user has pasted in the meantime and refuse to
-        # overwrite the latter.
-        _fetch_and_patch(dest, url, expect_body="")
-        return {"ok": True, "filename": dest.name, "fetch_failed": True}
+        # The same capture the bookmarklet and the Shortcut perform. What is left here is
+        # this route's own business: the session auth, the JSON shape, and the caller's
+        # optional filename.
+        res = _capture_article(content, source="manual", filename=name)
+        if res.get("error"):
+            return {"error": res["error"]}, 400
+        if res.get("duplicate"):
+            out = {"ok": True, "duplicate": True, "filename": res["path"].name,
+                   "wikified": res.get("wikified", False), "title": res["title"]}
+            if res.get("refetched"):
+                out["refetched"] = True
+            return out
+        return {"ok": True, "filename": res["path"].name,
+                "fetch_failed": res.get("fetch_failed", True)}
     # Pasted text. The same article pasted twice is a duplicate and is reported rather
     # than written again; a DIFFERENT article whose slug collides gets its own filename.
     _dup = _find_existing_capture(content=content)

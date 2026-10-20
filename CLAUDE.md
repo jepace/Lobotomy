@@ -178,6 +178,71 @@ rewritten — or a different story whose slug collided, which gets `-2`. One del
 exception, and it destroys nothing: a capture that fetched NOTHING and has no body is what
 re-adding the URL is *for*, so that retries the fetch.
 
+**FIVE doors into the reading list each had their own copy of the capture** (`_capture_article`,
+`_fm_line_value`, `_raw_frontmatter_items`). Asked *"any reason why the ios share sheet
+lobotomize button would time out?"*, which sent me reading two paths the suite had never
+once called — and then *"do we need all those routes to do the same thing? web is that
+different than shortcut method?"*, which is the better question and the one that fixed it.
+
+**The entry points genuinely differ and cannot be merged:**
+
+| door | why it exists |
+|---|---|
+| `/inbox/add` | own origin, session cookie, POST JSON. Also takes pasted TEXT |
+| `/save` | must be a GET answering with an image — the bookmarklet runs on the article's origin, where CORS blocks `fetch` and a POST outright |
+| `/api/push` | POST + `Authorization: Bearer`, for the iOS Shortcut and any client; no session exists |
+| `/api/inbound-email` | a mail provider's webhook |
+| `/inbox/clip` | a GET that fetches synchronously and reports whether the full text arrived |
+
+**The work behind them was identical and written five times, and every bug in the family
+came from exactly that.** Four defects, each present in some subset:
+
+- **The duplicate check disagreed.** `/inbox/add` compares `_dupe_url_key`; the other four
+  compared the stored `url:` **verbatim**. So a story shared from iOS with `?utm_source=`
+  on it was deduped by the web form and **saved as a second copy by the share sheet** —
+  one reading list, two answers about what the same story is, and the share sheet had the
+  wrong one. `/inbox/clip` had no duplicate check at all.
+- **A fetch that could overwrite a paste.** `_fetch_and_patch` without `expect_body` skips
+  its staleness check entirely, and only `/inbox/add` passed it. The documented failure is
+  "paste, save, wait for the fetch, and the pasted story is gone".
+- **`title:` interpolated unescaped**, on the two doors a stranger can reach: `/api/push`
+  (a Shortcut's title) and `/api/inbound-email` (an email SUBJECT). One double quote ends
+  the scalar; **one newline injects a frontmatter field of the sender's choosing** —
+  `wikified: true` marks an article ingested, `url:` repoints it. `fm_quote` exists for
+  this and escapes `"` and `\`, but **cannot help with a newline**, because every reader
+  of this frontmatter parses it line by line: collapsing whitespace first is the half that
+  was missing, and `/api/push` wrote `source` and `author` bare with no quoting at all.
+- **Each minted its own collision filename** instead of `_unique_raw_name`, and
+  `/api/inbound-email` and `/inbox/clip` wrote with `dest.write_text()` — bypassing the one
+  write chokepoint, so no atomic replace and none of the ownership inheritance that lets
+  this tree be written by root beside a server running as another user.
+
+So: three transports, one behaviour. `/inbox/add`'s **pasted-text** branch is deliberately
+*not* folded in — no URL to normalise or dedupe, dedupe by body instead, and the text is
+stored verbatim with no frontmatter — and a test says so, so it is not mistaken for a
+missed copy. The empty-capture refetch exception became shared behaviour rather than the
+web form's alone: an article whose fetch failed could not be retried from the share sheet,
+which answered "Already saved" and left the empty item sitting there, and the reasoning for
+that exception never had anything to do with which door you came through.
+
+**A URL lookup now reads frontmatter, not whole articles.** Both copies called `read_text()`
+on every file in `raw/` to compare one field; measured at 600 captures that is ~60MB of
+reads per save. A bounded 8KB prefix covers it, and frontmatter that runs past the prefix
+**falls back to a full read** — being wrong about whether an article is already here is
+precisely how `/inbox/add` destroyed one, so the cheap path must never answer "not saved"
+for something that is.
+
+**Not the reported timeout, and that is stated rather than implied.** Measured: `/api/push`
+answers in 5–68ms idle and ~1.1s during the heaviest end-of-ingest load at the live wiki's
+scale (`heal_pages` 8.3s + `_validate_ingest` 5.0s + `_rebuild_index` 1.3s, all four passes
+running back to back after every wikify). The bookmarklet's own deadline is 6s
+(`setTimeout(f, 6000)` around an `<img>` beacon to `/save`), which does not match "longer
+than six seconds" either. **The one mechanism here that can hold a request for tens of
+seconds is `/inbox/clip`'s synchronous `_clip_fetch`** — a foreign site that accepts the
+connection and then trickles holds the request past the 15-second socket timeout, and no
+server-side efficiency fixes that. It is left synchronous because the page's contract is to
+say whether the text arrived; changing it is a decision, not a repair.
+
 **`_normalize_capture_url` does not do URL normalization in the sense you would assume** —
 it unwraps Firefox's `about:reader?url=…` wrapper and nothing else. A comment here claimed
 it handled tracking links and the two tests asserting that failed. `_dupe_url_key` is the

@@ -38,6 +38,49 @@ MUTATIONS = [
     ("heading-rule: date",
      '        elif _DATED_HEADING_RE.search(name):\n            bad.append((name, "names a date"))',
      '        elif False:\n            bad.append((name, "names a date"))'),
+    # Five doors into the reading list each had their own copy of the capture, and every
+    # bug in that family came from the copies disagreeing.
+    ("capture: one duplicate comparison for every door",
+     '    dup = _find_existing_capture(url=url) if url else None',
+     '    dup = None',
+     "tools/serve.py"),
+    # Two routes compared the stored url: verbatim, so a link shared with ?utm_source= was
+    # deduped by the web form and saved twice by the share sheet.
+    ("capture: the comparison is the normalized key, not the raw url",
+     '            have = (fm.get("url") or "").strip().strip(\'"\\\'\')\n            if have and _dupe_url_key(have) == want_url:\n                try:',
+     '            have = (fm.get("url") or "").strip().strip(\'"\\\'\')\n            if have == url:\n                try:',
+     "tools/serve.py"),
+    # A newline in a caller-supplied value injects a frontmatter field; fm_quote escapes
+    # quotes and backslashes but cannot help with that.
+    ("capture: a frontmatter value is collapsed to one line before quoting",
+     '    return fm_quote(re.sub(r"\\s+", " ", str(value)).strip()[:limit])',
+     '    return fm_quote(str(value).strip()[:limit])',
+     "tools/serve.py"),
+    ("capture: a caller-supplied title is quoted at all",
+     '    fm = ["---", f"title: {_fm_line_value(title)}"]',
+     '    fm = ["---", f\'title: "{title}"\']',
+     "tools/serve.py"),
+    # expect_body="" is what stops a background fetch overwriting a pasted article.
+    ("capture: the background fetch cannot overwrite a paste",
+     '        _fetch_and_patch(dest, url, expect_body="")\n    return {"created": True',
+     '        _fetch_and_patch(dest, url)\n    return {"created": True',
+     "tools/serve.py"),
+    ("capture: a slug collision never overwrites",
+     '    dest = RAW_DIR / _unique_raw_name(filename or f"{slug}.md")',
+     '    dest = RAW_DIR / (filename or f"{slug}.md")',
+     "tools/serve.py"),
+    # A URL lookup needs the url: field, not the whole article; at 600 captures the old
+    # scan was ~60MB of reads per save.
+    ("capture: a url lookup reads frontmatter, not whole articles",
+     '    if want_url and not want_body:',
+     '    if False:',
+     "tools/serve.py"),
+    # A capture whose frontmatter runs past the bounded read must still be found, or the
+    # add path reports "not saved" for an article that is here and writes over it.
+    ("capture: long frontmatter falls back to a full read",
+     '        if head.startswith("---") and "\\n---" not in head[3:]:',
+     '        if False:',
+     "tools/serve.py"),
     # The source-page map is cached between requests because /inbox/list was 1,590 file
     # reads every 8 seconds per tab — six concurrent listings took 3.5s each, and a POST
     # arriving in that convoy waited behind all of it.
