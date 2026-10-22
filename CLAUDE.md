@@ -1787,6 +1787,54 @@ Four decisions:
   matching **invisibly**, where the literal escape breaks it visibly and gets reported, as
   this one was.
 
+**A `path` that swallowed the NEXT argument looped until the day's quota was gone**
+(`_repair_path_spill`, `_PATH_SPILL_RE`, `_retry_event`). Asked *"What's happening?"* over
+a log repeating this for hours:
+
+    ✗ create_file wiki/entities/berger-montague.md,tags:[ — filename
+      'berger-montague.md,tags:[' is not a valid slug…
+    ⏳ AI busy — retrying in 1800s (attempt 1/60)
+
+**Nothing was malformed, which is why nothing upstream caught it** — the same shape as
+the double-escape above. The provider hands arguments over as a JSON string and that
+string was *valid*: the model ran two fields together, so one string came back where two
+were meant, `path` carried the opening of `tags`, and `tags` was simply absent.
+`parse_tool_args` did the right thing with the wrong input.
+
+Three defects stacked, and the loop is the expensive one:
+
+- **The refusal was locally correct and nothing terminated it.** The model resent the
+  identical call every round; `done()` has a refusal cap and this had none. At
+  `max_rpm: 1` with the primary out on a per-day quota, each round of that is a 1800s
+  wait — hours of quota spent re-refusing one call.
+- **It named the constraint, not the call** (principle 4). *"Use
+  lowercase-hyphenated-words.md"* is true and leaves the model to apply it; the corrected
+  path is computable right there from `_slug_for`, so it is now given — **in the same
+  subdirectory**, since a source page steered into `wiki/entities/` would be the
+  documented worst case, one violation renamed into another.
+- **"AI busy" is the wrong words for a spent daily quota.** 1800s is
+  `daily_quota_poll_interval`, so that line meant ~30 hours of phase 1 before the
+  indefinite poll even begins. It reads as a hiccup. The two situations call for opposite
+  responses — wait, or stop and come back tomorrow — which is exactly why the fallback
+  LOG warning already names the quota; the line the user actually reads never learned it.
+
+**The repair is principle 1, and the safety argument is one line:** nothing after `.md`
+is ever part of a filename this project accepts, so the intended path is not a guess.
+**It is accepted only when the truncated path is one the validator would have taken
+anyway** — so a capitalised or underscored stem stays refused, and this can never admit
+what a refusal would have caught, which matters because a bad filename is permanent and
+appears in every link to the page. It lives at the parse site for `_decode_args`' reason:
+the spill arrives through whichever tool the model called and every one takes a `path`.
+Only `path` is repaired — a `body` legitimately names a file, and truncating one at `.md`
+would silently delete the rest of the page.
+
+Two traps in it. Truncating at the first `.md` *anywhere* cuts a path off at a directory
+(`wiki/entities/foo.md/bar.md`), so the match is anchored to the last segment. And
+**the test for the quota message grepped the source and matched the comment explaining
+the bug**, so `mutate.py` deleted the branch and it passed — the third time this file has
+recorded that trap. The fix is the one that always works: make it a function the test can
+CALL, which is why `_retry_event` exists rather than a dict literal in the loop.
+
 `heal_pages` decodes the ~13,000 pages already carrying them, because prevention alone
 freezes the damage — the lesson `_MANGLED_URL_RE` and `_unlink_in_code` each paid for.
 Absorbed rather than reported and with no `LOBOTOMY.md` line, because the escape names

@@ -2524,6 +2524,42 @@ def _decode_args(value):
     return value
 
 
+_PATH_SPILL_RE = re.compile(r"^(.*?\.md)(?=[^/]*$).+$", re.DOTALL)
+
+
+def _repair_path_spill(path: str) -> str:
+    """Truncate a tool-call path at its `.md` when the tail is argument spill.
+
+    Observed in production, repeated until a whole day's quota was gone:
+
+        ✗ create_file wiki/entities/berger-montague.md,tags:[ — filename
+          'berger-montague.md,tags:[' is not a valid slug.
+
+    The model ran two JSON fields together, so `path` carried the opening of the NEXT
+    argument. The JSON itself was valid, so nothing upstream could notice: one string
+    came back where two were meant, and `tags` simply went missing.
+
+    **Nothing after `.md` is ever part of a filename this project accepts**, so the
+    intended path is not a guess — which makes this principle 1, absorb what is
+    unambiguous. The refusal it replaces was locally correct and cost a full round at
+    `max_rpm: 1` every time, and the model resent the identical call, so it never
+    terminated on its own.
+
+    The repair is accepted **only when the truncated path is one the validator would
+    have taken anyway**, so it can never admit something a refusal would have caught —
+    a bad slug stays a bad slug and is still refused, with its own path named.
+    """
+    m = _PATH_SPILL_RE.match(path or "")
+    if not m:
+        return path
+    cand = m.group(1)
+    stem = cand.rsplit("/", 1)[-1][:-3]
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", stem):
+        return path
+    log.warning("tool-call path repaired: %r -> %r (argument spill)", path, cand)
+    return cand
+
+
 def parse_tool_args(tc: dict) -> dict:
     """The one way a tool call's arguments are read, for both agent loops.
 
@@ -2532,7 +2568,13 @@ def parse_tool_args(tc: dict) -> dict:
     is watching, so the bug would have been intermittent and blamed on the model.
     """
     args = json.loads((tc.get("function") or {}).get("arguments") or "{}")
-    return _decode_args(args) if isinstance(args, dict) else args
+    args = _decode_args(args) if isinstance(args, dict) else args
+    # Here rather than in `create_file`, for `_decode_args`'s reason: the spill arrives
+    # through whichever of the tools the model happened to call, and every one of them
+    # takes a `path`.
+    if isinstance(args, dict) and isinstance(args.get("path"), str):
+        args["path"] = _repair_path_spill(args["path"])
+    return args
 # The same thing after the damage is done: a URL with markdown links embedded in it.
 # Healed rather than merely prevented, because the pages already carry them and the
 # autolinker's own group 1 would otherwise protect the damage forever.
@@ -7633,11 +7675,23 @@ def _create_file(args: dict) -> str:
     # permanent (the file is created under it) and shows up in every relative link to the
     # page, so check it at the one moment it can still be corrected for free.
     if p.suffix != ".md" or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", p.stem):
+        # Principle 4: name the call, not the constraint. This used to describe the
+        # convention and leave the model to apply it — and an observed ingest resent the
+        # identical path over and over, each round costing a full request, until the
+        # day's quota was gone. The corrected path is computable here, so it is given.
+        # The containment check above already passed, so this relative_to cannot raise.
+        _fixed = _slug_for(p.stem) or _slug_for(title or "") or "page-name"
+        _rel = p.resolve().relative_to(WIKI_DIR.resolve()).parent.as_posix()
+        _suggest = f"wiki/{_fixed}.md" if _rel in ("", ".") else f"wiki/{_rel}/{_fixed}.md"
         return (
             f"Error: create_file refused — filename {p.name!r} is not a valid slug. Use "
             f"lowercase-hyphenated-words.md: lowercase letters and digits only, single "
             f"hyphens between words, no spaces, underscores, dots, parentheses or "
-            f"capitals. Resend with a corrected path."
+            f"capitals.\n\n"
+            f"Resend the SAME call with path=\"{_suggest}\" if that names the page "
+            f"you meant — everything else in the call is fine and does not need "
+            f"rewriting. If the path above ran two arguments together, the rest of what "
+            f"followed the filename was lost and must be resent as its own argument."
         )
 
     # Existence is checked here, before the argument and content checks below,
@@ -8703,6 +8757,29 @@ def _rpm_wait_streaming():
         time.sleep(5)
 
 
+def _retry_event(attempt: int, delay: float, max_r: int, exc) -> dict:
+    """The `retrying` event phase 1 emits, with the words the situation deserves.
+
+    A function rather than a dict literal inside the loop so it can be CALLED by a test.
+    The first version of that test grepped the source for `long_backoff` in a window
+    around the yield — and matched the comment EXPLAINING the bug, so `mutate.py`
+    deleted the branch and the test passed. That trap is already written down twice in
+    CLAUDE.md; this is the third time.
+
+    "AI busy — retrying in 1800s" is the right words for a 60s blip and the wrong ones
+    for a spent daily quota: it reads as a hiccup and means ~30 hours of phase 1 before
+    the indefinite poll even begins. The two call for opposite responses — wait, or stop
+    and come back tomorrow — which is why the fallback LOG warning already names the
+    quota. Only the line the user actually reads never learned it.
+    """
+    evt = {"type": "retrying", "attempt": attempt, "delay": int(delay), "max": max_r}
+    if isinstance(exc, _LLMError) and exc.long_backoff:
+        evt["msg"] = (f"Daily quota spent on every model — not a busy server. "
+                      f"Retrying in {int(delay)}s (attempt {attempt}/{max_r}); "
+                      f"it will not recover until the quota resets.")
+    return evt
+
+
 def _retry_delay(attempt: int, exc) -> float:
     """Seconds to wait before retry (1-based attempt). Respects Retry-After header."""
     if isinstance(exc, _LLMError) and exc.long_backoff:
@@ -8979,8 +9056,7 @@ def stream_agent_turn(client: dict, model: str, messages: list, system: str,
                 delay = _retry_delay(attempt + 1, e)
                 log.warning("LLM retryable error (attempt %d/%d, delay %ds): %s",
                             attempt + 1, max_r, delay, e)
-                yield json.dumps({"type": "retrying", "attempt": attempt + 1,
-                                  "delay": int(delay), "max": max_r}) + "\n"
+                yield json.dumps(_retry_event(attempt + 1, delay, max_r, e)) + "\n"
                 time.sleep(delay)
 
         # Phase 2: poll indefinitely until provider recovers. A daily-quota error uses the

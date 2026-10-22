@@ -1547,6 +1547,28 @@ MUTATIONS = [
      '        threading.Thread(target=_bg, daemon=True).start()',
      '        _bg()',
      'tools/serve.py'),
+    # A tool call whose path swallowed the next JSON field was refused identically every
+    # round, with nothing to terminate it, at 1800s a round on a spent daily quota.
+    ('parse_args: a path that swallowed the next argument is repaired',
+     '        args["path"] = _repair_path_spill(args["path"])',
+     '        pass',
+     'tools/agent.py'),
+    # The repair must never admit a slug the validator would have refused: a bad
+    # filename is permanent and appears in every link to the page.
+    ('path_spill: the truncated path still has to be a valid slug',
+     '    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", stem):\n        return path',
+     '    if False:\n        return path',
+     'tools/agent.py'),
+    # Principle 4: the refusal described the convention and never said what to type.
+    ('create_file: the bad-slug refusal names the corrected path',
+     '            f"Resend the SAME call with path=\\"{_suggest}\\" if that names the page "',
+     '            f"Resend with a corrected path. "',
+     'tools/agent.py'),
+    # "AI busy — retrying in 1800s" reads as a hiccup and means ~30 hours.
+    ('retry: a spent daily quota is not reported as a busy server',
+     '    if isinstance(exc, _LLMError) and exc.long_backoff:\n        evt["msg"] = (',
+     '    if False:\n        evt["msg"] = (',
+     'tools/agent.py'),
     # The reading list's header at 390px: one flex row that could neither wrap nor
     # shrink, so it overlapped itself — the count under the filter, Wikify All on top of
     # + Save. Reported with a screenshot.
