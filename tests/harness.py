@@ -270,3 +270,36 @@ def parked_job_queue(jobs_dir):
     q._pending_file = d / "pending.json"
     q._started = True
     return q
+
+
+def launch_chromium(pw):
+    """Launch whatever chromium is on disk, whatever layout it is in.
+
+    Six test modules each carried their own copy of this, and every copy globbed
+    `chromium*/chrome-linux/chrome`. The browser images ship
+    `chromium-<n>/chrome-linux64/chrome` and
+    `chromium_headless_shell-<n>/chrome-headless-shell-linux64/chrome-headless-shell`,
+    so on such an image none of the globs matched and every browser test skipped with
+    "chromium unavailable" — **while a working chromium sat right there.** A skip reads
+    as "nothing to run here", so the JS those tests cover was silently uncovered.
+
+    Hence a glob over the browser root for anything EXECUTABLE named like chromium,
+    rather than two guesses at a directory layout that keeps moving. `None` first, so a
+    correctly pinned install is still used as playwright intends.
+    """
+    import os
+    from pathlib import Path as _Path
+
+    root = _Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or "/opt/pw-browsers")
+    found = []
+    if root.is_dir():
+        for pat in ("chromium*/**/chrome", "chromium*/**/chrome-headless-shell",
+                    "chromium*/**/headless_shell"):
+            found += [str(p) for p in root.glob(pat) if p.is_file() and os.access(p, os.X_OK)]
+    last = None
+    for exe in [None] + sorted(set(found)):
+        try:
+            return pw.chromium.launch(executable_path=exe)
+        except Exception as e:
+            last = e
+    raise RuntimeError(f"chromium unavailable: {last}")

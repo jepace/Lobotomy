@@ -1726,78 +1726,101 @@ def list_inbox(show_archived: bool = False) -> list:
         import datetime as _dt
         return _dt.datetime.fromtimestamp(f.stat().st_mtime).isoformat()
 
-    src_index = None
+    # Memoized rather than called per item: `_raw_source_index` is cheap on a warm cache
+    # and still costs two syscalls to re-check its validity key, and this listing asks
+    # once per WIKIFIED item. Built at most once per listing, and only if one is.
+    _src_cache = []
+
+    def _src():
+        if not _src_cache:
+            _src_cache.append(_raw_source_index())
+        return _src_cache[0]
+
     for f, text, fm, body in sorted(parsed, key=_inbox_sort_key, reverse=True):
         if not f.is_file() or f.name.startswith("."):
             continue
 
-        has_content = False
-        source_url  = ""
-        if f.suffix == ".url":
-            lines      = [l.strip() for l in text.splitlines() if l.strip()]
-            title      = lines[0][:100] if lines else f.stem
-            url_line   = next((l for l in lines if l.startswith("URL:")), "")
-            source_url = url_line[4:].strip()
-            excerpt    = source_url
-        else:
-            # Frontmatter was already stripped when the file was read above.
-            meta         = fm
-            source_url   = meta.get("url", "")
-            fetch_failed = bool(meta.get("fetch_failed"))
-            title        = meta.get("title", "").strip() or f.stem
-            title        = title[:100]
-            # Exclude fetch-failure placeholder lines from content check
-            lines = [
-                l.strip() for l in body.splitlines()
-                if l.strip() and not l.startswith("#") and not l.startswith("<!--")
-                   and "Content could not be fetched" not in l
-            ]
-            has_content = bool(lines) and not fetch_failed
-            if fetch_failed or not lines:
-                excerpt = source_url or ""
-            else:
-                excerpt = " ".join(lines[:3])[:200]
-
-        # Everything already captured still carries its literal `’`, and **raw/ is
-        # immutable** — a listing must never rewrite the files it is listing, the same rule
-        # `inbox_view` follows for the blank-line collapse. So the capture path above fixes
-        # new stories on disk and this fixes the display of every story already here.
-        #
-        # Cheap enough for the 8-second poll: `_decode_stray_escapes` returns on a `"\\u"
-        # not in text` substring test, so a clean item pays one scan of a 100-character
-        # title and a 200-character excerpt — not of the article.
-        title   = _decode_stray_escapes(title)[0]
-        excerpt = _decode_stray_escapes(excerpt)[0]
-
-        mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
-        wiki_path = ""
-        # archived used to be assigned only inside a try/except that swallowed
-        # everything, so a read failure reached the item dict below with the name
-        # unbound and took the whole page down with a NameError.
-        wikified = bool(fm.get("wikified"))
-        archived = bool(fm.get("archived"))
-        if archived and not show_archived:
+        item = _inbox_item(f, text, fm, body, _in_flight, _src)
+        if item["archived"] and not show_archived:
             continue
-        if wikified:
-            if src_index is None:          # built at most once, and only if needed
-                src_index = _raw_source_index()
-            wiki_path = src_index.get(str(f.relative_to(REPO_ROOT)), "")
-        items.append({
-            "name":        f.name,
-            "title":       title,
-            "excerpt":     excerpt,
-            "date":        mtime,
-            "has_content": has_content,
-            "source_url":  source_url,
-            "ext":         f.suffix,
-            "wikified":    wikified,
-            "wiki_path":   wiki_path,
-            "archived":    archived,
-            # "" | "queued" | "running". The server's answer, so a page load, a poll and
-            # a Clear Queue all agree — the browser used to infer it from what it had
-            # itself started, which no reload could recover and no drain could correct.
-            "ingest":      _in_flight.get(f"ingest:{f.name}", ""),
-        })
+        items.append(item)
+    return items
+
+
+def _inbox_item(f, text: str, fm: dict, body: str, in_flight: dict, src_index) -> dict:
+    """One reading-list row, as both the listing and `/inbox/add` report it.
+
+    Hoisted out of `list_inbox` so a just-saved article can be rendered from the reply
+    to the save itself. The row the browser inserts then cannot differ from the row the
+    next poll would have drawn, because the same code builds both — the rule this file
+    keeps relearning, and the reason `first_desc_line` was hoisted for hover cards.
+
+    `src_index` is a CALLABLE, not the map: building it is the expensive half and only a
+    wikified item needs it, so an unwikified listing must not pay for it.
+    """
+    has_content = False
+    source_url  = ""
+    if f.suffix == ".url":
+        lines      = [l.strip() for l in text.splitlines() if l.strip()]
+        title      = lines[0][:100] if lines else f.stem
+        url_line   = next((l for l in lines if l.startswith("URL:")), "")
+        source_url = url_line[4:].strip()
+        excerpt    = source_url
+    else:
+        # Frontmatter was already stripped when the file was read above.
+        meta         = fm
+        source_url   = meta.get("url", "")
+        fetch_failed = bool(meta.get("fetch_failed"))
+        title        = meta.get("title", "").strip() or f.stem
+        title        = title[:100]
+        # Exclude fetch-failure placeholder lines from content check
+        lines = [
+            l.strip() for l in body.splitlines()
+            if l.strip() and not l.startswith("#") and not l.startswith("<!--")
+               and "Content could not be fetched" not in l
+        ]
+        has_content = bool(lines) and not fetch_failed
+        if fetch_failed or not lines:
+            excerpt = source_url or ""
+        else:
+            excerpt = " ".join(lines[:3])[:200]
+
+    # Everything already captured still carries its literal `’`, and **raw/ is
+    # immutable** — a listing must never rewrite the files it is listing, the same rule
+    # `inbox_view` follows for the blank-line collapse. So the capture path above fixes
+    # new stories on disk and this fixes the display of every story already here.
+    #
+    # Cheap enough for the 8-second poll: `_decode_stray_escapes` returns on a `"\\u"
+    # not in text` substring test, so a clean item pays one scan of a 100-character
+    # title and a 200-character excerpt — not of the article.
+    title   = _decode_stray_escapes(title)[0]
+    excerpt = _decode_stray_escapes(excerpt)[0]
+
+    mtime = datetime.date.fromtimestamp(f.stat().st_mtime).isoformat()
+    wiki_path = ""
+    # archived used to be assigned only inside a try/except that swallowed
+    # everything, so a read failure reached the item dict below with the name
+    # unbound and took the whole page down with a NameError.
+    wikified = bool(fm.get("wikified"))
+    archived = bool(fm.get("archived"))
+    if wikified:
+        wiki_path = src_index().get(str(f.relative_to(REPO_ROOT)), "")
+    return {
+        "name":        f.name,
+        "title":       title,
+        "excerpt":     excerpt,
+        "date":        mtime,
+        "has_content": has_content,
+        "source_url":  source_url,
+        "ext":         f.suffix,
+        "wikified":    wikified,
+        "wiki_path":   wiki_path,
+        "archived":    archived,
+        # "" | "queued" | "running". The server's answer, so a page load, a poll and
+        # a Clear Queue all agree — the browser used to infer it from what it had
+        # itself started, which no reload could recover and no drain could correct.
+        "ingest":      in_flight.get(f"ingest:{f.name}", ""),
+    }
     return items
 
 # ---------------------------------------------------------------------------
@@ -3601,6 +3624,31 @@ def inbox_read(filename):
     )
 
 
+def _new_inbox_item(path):
+    """The row for an article that was just saved, for the reply to the save itself.
+
+    Reported as *"when I add an article, it doesn't show up in the list for a while"*.
+    The browser used to learn what it had just saved by asking `/inbox/list` — a second
+    round trip that re-reads every file in `raw/` to describe the one file this request
+    already has in its hand. Behind a running ingest that is the difference between a row
+    appearing at once and a row appearing whenever the convoy clears.
+
+    **A brand-new capture cannot be in flight and cannot be wikified**, so neither the
+    queue nor the source-page map is consulted — the empty dict and the raising callable
+    say that out loud rather than quietly answering "no". A failure here must not fail the
+    save: the article is on disk, and the next poll draws the row.
+    """
+    def _never():                       # pragma: no cover - guarded by `wikified` above
+        raise AssertionError("a newly captured article cannot already be wikified")
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        fm, body = _parse_frontmatter(text)
+        return _inbox_item(path, text, fm, body, {}, _never)
+    except Exception:
+        log.exception("could not build the row for %s", path)
+        return None
+
+
 @app.route("/inbox/add", methods=["POST"])
 @require_login
 def inbox_add():
@@ -3637,7 +3685,8 @@ def inbox_add():
                 out["refetched"] = True
             return out
         return {"ok": True, "filename": res["path"].name,
-                "fetch_failed": res.get("fetch_failed", True)}
+                "fetch_failed": res.get("fetch_failed", True),
+                "item": _new_inbox_item(res["path"])}
     # Pasted text. The same article pasted twice is a duplicate and is reported rather
     # than written again; a DIFFERENT article whose slug collides gets its own filename.
     _dup = _find_existing_capture(content=content)
@@ -3663,7 +3712,7 @@ def inbox_add():
     # Through _atomic_write like every other write: raw/ sits beside a server running as
     # another user, and a plain write_text here inherits none of the ownership handling.
     _atomic_write(dest, content)
-    return {"ok": True, "filename": dest.name}
+    return {"ok": True, "filename": dest.name, "item": _new_inbox_item(dest)}
 
 
 @app.route("/inbox/delete", methods=["POST"])

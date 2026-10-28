@@ -348,6 +348,76 @@ button along with the badge, since that page was built from the text the edit re
 **Both renderers, always.** Every row exists twice — the Jinja loop and the poll's prepend
 path — so a change to one is a bug in the other, and the tests assert the pair.
 
+**A saved article waited on a SECOND request to find out what had just been saved**
+(`_inbox_item`, `_new_inbox_item`, `itemRowHtml`, `insertItems`). Reported as *"what can
+we do to make the reading list update immediately? When I add an article, it doesn't show
+up in the list for a while. Sometimes I can't tell if the server is frozen or if the add
+didn't work or what."* Two complaints, two unrelated defects.
+
+**Measure first, and the obvious suspect was innocent.** `list_inbox` reads every raw file
+with an unbounded `read_text` and uses only the frontmatter, three body lines and a
+boolean — which looks like the bug. At **222 captures / 7.2 MB it is 25ms**, so it is not.
+The cost was never the listing's size; it was that the row waited on a second request at
+all. `/inbox/add` answered `{"ok": true}` and the browser then asked `/inbox/list` to
+describe the one file the save already had in its hand, behind whatever else the
+single-worker server was doing.
+
+So `/inbox/add` returns the row. `_inbox_item` was **hoisted out of** `list_inbox` rather
+than copied, so the row the browser inserts cannot differ from the row the next poll would
+draw — `first_desc_line`'s reason exactly, and a test asserts the two are equal rather
+than merely similar. Three things it had to get right: a brand-new capture cannot be
+wikified or in flight, so neither the queue nor the source-page map is consulted and the
+empty dict and a *raising* callable say so out loud; a duplicate returns no row, because
+nothing was written and inserting one would duplicate a row already on screen; and a row
+that cannot be built does **not** fail the save, since the article is on disk and the poll
+will draw it — losing the save to a rendering error trades the thing that matters for the
+thing that does not. On the browser side `itemRowHtml`/`insertItems` are the poll's own
+insert, hoisted: saving had no renderer at all, so this is two paths becoming one rather
+than a third copy.
+
+**The second complaint is the search spinner again, in the same words.** There was no busy
+state on Save — a save behind a running ingest looked exactly like a save that had done
+nothing. It disables and says "Saving…", clears that in a `finally` (a throw that left it
+reading "Saving…" for ever is the frozen-server appearance this exists to remove), reports
+a failure instead of swallowing it, and the new row is scrolled to and marked for 2.5s —
+green, because green is a **state** here and never an action, and a saved row at the top
+of a 222-item list is off screen on a phone.
+
+**And an article added from the PHONE reaches an open tab only when that tab asks.**
+`visibilitychange` was the only trigger, and it is not the one that fires when you come
+back from the iOS share sheet or a back-navigation: that restores the page from the
+**bfcache**, where the page is resumed rather than loaded and `pageshow` (persisted) is
+the event that says so. Without it the list you return to is as stale as the moment you
+left it, up to the 30s idle interval — which is the shape of "it doesn't show up for a
+while" when the article was added from somewhere else. `pageshow` and `focus` now join
+it; `schedule(0)` clears the pending timer first, so three events arriving together are
+one poll. **Polling faster is the wrong fix and an expensive one** — this project has
+already filled a disk with its own poll volume — so these are events, not a shorter timer,
+and a test pins `IDLE_MS` at 30s so nobody "fixes" it that way later.
+
+**Every browser test had been skipping, and a skip reads as "nothing to run here."**
+`harness.launch_chromium` is one launcher for all six modules that each had their own
+copy, and every copy globbed `chromium*/chrome-linux/chrome`. The images in use ship
+`chromium-<n>/chrome-linux64/chrome` and
+`chromium_headless_shell-<n>/chrome-headless-shell-linux64/chrome-headless-shell`, so none
+of the globs matched, the launcher reported *"chromium unavailable"* — **with a working
+chromium sitting right there** — and **65 tests silently stopped running**, including
+every assertion about this page's own JavaScript. It now globs the browser root for
+anything executable and chromium-named, rather than guessing at a layout that keeps
+moving.
+
+**`mutate.py` reported that fix MISSED, and was right to.** Break the launcher and the
+tests go back to skipping, which no runner counts as a failure — the defect and its own
+symptom are the same thing. `tests/test_browser_launcher.py` is the answer: it finds a
+chromium by walking the directory **without** the launcher's globs, so the check is not
+circular, and FAILS if one exists that `launch_chromium` cannot start.
+
+**Stated separately because it is not fixed here:** on a fresh container the suite reports
+**92 failures** that have nothing to do with the code — `wiki/.user.json` is gitignored,
+nothing in the suite creates it, and every route behind `require_login` answers *"This
+server needs setting up first."* Creating an admin account locally turns those 92 into 0.
+The suite depends on an artifact a developer happens to have.
+
 **And then the bar those controls live in overlapped itself on a phone** (`.topbar-*`,
 `.status-filter`, `.more-btn`). Reported with a screenshot at iPhone width: *"This is
 kinda a mess on iPhone. Maybe dripdowns for the filters?"* — the count rendered

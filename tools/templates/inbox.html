@@ -219,6 +219,15 @@
     border: 1px solid var(--border); border-radius: 8px;
     background: var(--bg); color: var(--text); cursor: pointer; max-width: 140px;
   }
+  /* Green is a STATE and never an action, which is the rule the button colours follow;
+     a just-saved row is a state. The animation is skipped under reduced-motion, where a
+     flashing panel is the thing the setting exists to prevent — the outline stays, so
+     the row is still marked. */
+  .just-saved { outline: 2px solid var(--success); outline-offset: -2px;
+                animation: just-saved-fade 2.5s ease-out; }
+  @keyframes just-saved-fade { from { background: color-mix(in srgb, var(--success) 18%, transparent); } }
+  @media (prefers-reduced-motion: reduce) { .just-saved { animation: none; } }
+
   .filter-empty { display: none; padding: 28px 14px; text-align: center;
                   color: var(--text2); font-size: 14px; }
 </style>
@@ -265,7 +274,7 @@
     <label>Filename (optional — auto-generated if blank)</label>
     <input type="text" id="filename" placeholder="my-article.txt">
     <div style="display:flex; gap:8px; margin-top:4px;">
-      <button class="btn btn-primary" style="flex:1" onclick="saveToInbox()">Save</button>
+      <button class="btn btn-primary" id="save-btn" style="flex:1" onclick="saveToInbox()">Save</button>
       <button class="btn btn-ghost" style="flex:0 0 auto" onclick="toggleSave()">Cancel</button>
     </div>
   </div>
@@ -510,28 +519,27 @@ async function pollInbox() {
     const newItems = items.filter(item => !seenItems.has(item.name));
     if (newItems.length === 0) return;
 
-    newItems.forEach(item => {
-      seenItems.add(item.name);
-      itemState[item.name] = { has_content: item.has_content, wikified: item.wikified,
-                               wiki_path: item.wiki_path, ingest: item.ingest || "" };
-    });
-
-    // Find first reading-item or empty-state
+    // An empty list has no row to prepend against, so the page is rebuilt instead. This
+    // is checked BEFORE anything is recorded as seen: marking them first and then
+    // reloading was harmless only because the reload threw the record away.
     const page = document.querySelector('.page');
-    const firstItem = page?.querySelector('.reading-item');
-    const emptyState = page?.querySelector('.empty-state');
-
-    // If showing empty state, reload to update properly
-    if (emptyState) {
+    if (page?.querySelector('.empty-state')) {
       location.reload();
       return;
     }
 
-    if (!firstItem) return;
+    insertItems(newItems);
+  } catch(e) {
+    console.error('Auto-refresh error:', e);
+  }
+}
 
-    // Insert new items at the top
-    newItems.forEach(item => {
-      const html = `<div class="reading-item" data-name="${item.name.replace(/"/g, '&quot;')}">
+// ONE row renderer for everything the browser adds to the list: the poll's arrivals and
+// the article you have just saved. Saving used to have no renderer at all — it asked
+// /inbox/list and waited for the poll's — so this is not a third copy but the second of
+// two becoming one. (The Jinja loop is the other, and the tests assert the pair.)
+function itemRowHtml(item) {
+      return `<div class="reading-item" data-name="${item.name.replace(/"/g, '&quot;')}">
       <div class="item-header" onclick="toggleItem('${item.name.replace(/'/g, "\\'")}')">
         <div class="item-body">
           <div class="item-title">${item.source_url
@@ -568,19 +576,34 @@ async function pollInbox() {
         <div class="reader-loading">Loading…</div>
       </div>
     </div>`;
+}
 
-      const div = document.createElement('div');
-      div.innerHTML = html;
-      firstItem.parentNode.insertBefore(div.firstElementChild, firstItem);
-    });
+// A saved article lands at the top of a long list, which on a phone is off screen — so
+// the save appears to have done nothing, which is the complaint. The row is scrolled to
+// and marked, briefly, so there is something to see.
+function flashSaved(item) {
+  const row = rowFor(item.name);
+  if (!row) return;
+  try { row.scrollIntoView({behavior: 'smooth', block: 'center'}); } catch (e) {}
+  row.classList.add('just-saved');
+  setTimeout(() => row.classList.remove('just-saved'), 2500);
+}
 
-    // Newly inserted rows have to obey the filter that is already on, and applyFilters
-    // owns the count. The old code here replaced the whole counter element's text, which
-    // would delete the #item-count span it writes into.
-    applyFilters();
-  } catch(e) {
-    console.error('Auto-refresh error:', e);
-  }
+// Prepends, newest first, and records the item so the poll does not insert it twice.
+function insertItems(newItems) {
+  const page = document.querySelector('.page');
+  const firstItem = page?.querySelector('.reading-item');
+  if (!firstItem || !newItems.length) return false;
+  newItems.forEach(item => {
+    seenItems.add(item.name);
+    itemState[item.name] = { has_content: item.has_content, wikified: item.wikified,
+                             wiki_path: item.wiki_path, ingest: item.ingest || "" };
+    const div = document.createElement('div');
+    div.innerHTML = itemRowHtml(item);
+    firstItem.parentNode.insertBefore(div.firstElementChild, firstItem);
+  });
+  applyFilters();
+  return true;
 }
 
 // Same backoff as base.html's queue poller, and for the same reason: every poll is a
@@ -608,9 +631,19 @@ async function pollInbox() {
   }
 
   schedule(anythingRunning() ? BUSY_MS : IDLE_MS);
+  // Three ways back to this page, and visibilitychange is only one of them. Returning
+  // from the iOS share sheet, or a back-navigation, restores from the bfcache: the page
+  // is resumed rather than loaded, and `pageshow` (persisted) is the event that says so.
+  // Without it the list you come back to is as stale as the moment you left — up to the
+  // 30s idle interval — which is the shape of "it doesn't show up for a while" when the
+  // article was added from somewhere other than this tab. `focus` covers the window
+  // being raised without a visibility transition. schedule(0) clears any pending timer
+  // first, so three events arriving together are still one poll.
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) schedule(0);
   });
+  window.addEventListener('pageshow', (e) => { if (e.persisted) schedule(0); });
+  window.addEventListener('focus', () => schedule(0));
   // Wikify starts a job from this page, so check promptly rather than waiting out the
   // slow interval — that is the one moment the list is certain to change.
   window.pollSoon = () => schedule(0);
@@ -685,10 +718,27 @@ async function saveToInbox() {
   const content  = document.getElementById('content').value.trim();
   const filename = document.getElementById('filename').value.trim();
   if (!content) { alert('Please paste some content first.'); return; }
-  const data = await apiFetch('/inbox/add', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({content, filename}),
-  });
+  // Reported as *"sometimes I can't tell if the server is frozen or if the add didn't
+  // work or what"* — there was no busy state at all, so a save behind a running ingest
+  // looked exactly like a save that had done nothing. The same complaint, in the same
+  // words, as the search spinner; this is the control that never got one.
+  const btn = document.getElementById('save-btn');
+  const was = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  let data;
+  try {
+    data = await apiFetch('/inbox/add', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({content, filename}),
+    });
+  } catch (e) {
+    // A throw left the button saying "Saving…" for ever, which is the frozen-server
+    // reading of a failure the user could have retried.
+    alert('Save failed: ' + (e.message || 'Unknown'));
+    return;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = was; }
+  }
   if (data.ok) {
     // An add that found the story already here changed nothing on disk, so saying
     // "saved" would be a lie — and the thing worth knowing is whether it has been
@@ -707,7 +757,13 @@ async function saveToInbox() {
     document.getElementById('content').value  = '';
     document.getElementById('filename').value = '';
     document.getElementById('save-panel').classList.remove('open');
-    pollInbox();
+    // The row is drawn from THIS reply. Asking /inbox/list for it is a second round trip
+    // that re-reads every file in raw/ to describe the one file the save already had in
+    // its hand, and behind a running ingest that is the whole reported delay.
+    // insertItems returns false when there was no row to prepend against (an empty list,
+    // or a filtered-away one), and the poll is the fallback for exactly that.
+    if (!data.item || !insertItems([data.item])) pollSoon();
+    else flashSaved(data.item);
   } else alert('Error: ' + (data.error || 'Unknown'));
 }
 

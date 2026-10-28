@@ -1569,6 +1569,47 @@ MUTATIONS = [
      '    if isinstance(exc, _LLMError) and exc.long_backoff:\n        evt["msg"] = (',
      '    if False:\n        evt["msg"] = (',
      'tools/agent.py'),
+    # "When I add an article, it doesn't show up in the list for a while." The browser
+    # asked /inbox/list to learn what it had just saved — a second round trip to describe
+    # the one file the save already had in its hand.
+    ('inbox_add: the save returns the row it just created',
+     '                "item": _new_inbox_item(res["path"])}',
+     '                }',
+     'tools/serve.py'),
+    ('inbox_add: a pasted note comes back with its row too',
+     '    return {"ok": True, "filename": dest.name, "item": _new_inbox_item(dest)}',
+     '    return {"ok": True, "filename": dest.name}',
+     'tools/serve.py'),
+    # A rendering error must not cost the save: the article is on disk either way.
+    ('new_inbox_item: a row that cannot be built does not fail the save',
+     '    except Exception:\n        log.exception("could not build the row for %s", path)\n        return None',
+     '    except Exception:\n        raise',
+     'tools/serve.py'),
+    ('inbox: saving draws the row from its own reply',
+     '    if (!data.item || !insertItems([data.item])) pollSoon();',
+     '    pollSoon();',
+     'tools/templates/inbox.html'),
+    ('inbox: the save button says it is saving',
+     "  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }",
+     '  if (btn) { }',
+     'tools/templates/inbox.html'),
+    # Returning from the share sheet restores from the bfcache: the page is resumed, not
+    # loaded, so visibilitychange alone leaves the list as stale as when you left it.
+    ('inbox: a bfcache restore re-polls',
+     "  window.addEventListener('pageshow', (e) => { if (e.persisted) schedule(0); });",
+     '  ;',
+     'tools/templates/inbox.html'),
+    ('inbox: regaining focus re-polls',
+     "  window.addEventListener('focus', () => schedule(0));",
+     '  ;',
+     'tools/templates/inbox.html'),
+    # Six copies of the launcher globbed a directory layout the browser images do not
+    # use, so every browser test skipped with "chromium unavailable" while a working
+    # chromium sat right there — 65 tests silently uncovered.
+    ('harness: the chromium launcher finds a browser whatever its layout',
+     '            found += [str(p) for p in root.glob(pat) if p.is_file() and os.access(p, os.X_OK)]',
+     '            pass',
+     'tests/harness.py'),
     # The reading list's header at 390px: one flex row that could neither wrap nor
     # shrink, so it overlapped itself — the count under the filter, Wikify All on top of
     # + Save. Reported with a screenshot.

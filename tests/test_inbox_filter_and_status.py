@@ -184,11 +184,21 @@ class ColourSchemeTest(unittest.TestCase):
         for other in ("read", "open", "archive", "wikify"):
             self.assertNotIn("var(--danger)", self._rule(other), other)
 
-    def test_green_means_done_and_nothing_else(self):
-        """The badge and the button that leads to what it produced."""
+    def test_green_means_a_state_and_never_an_action(self):
+        """The badge, the button that leads to what it produced, and the mark on a row
+        that has just been saved. All three are STATES — the rule is that green is never
+        an action, not that only two things may be green."""
         greens = re.findall(r"^\s*(\.[\w.-]+) \{[^}]*var\(--success\)[^}]*\}",
                             self.src, re.MULTILINE)
-        self.assertEqual(set(greens), {".wikified-badge", ".act-btn.wikipage"}, greens)
+        self.assertEqual(set(greens),
+                         {".wikified-badge", ".act-btn.wikipage", ".just-saved"}, greens)
+
+    def test_no_action_button_is_green(self):
+        """The half that actually carries the rule: whatever else becomes green, an
+        `.act-btn` that DOES something must not — except `.wikipage`, which is the badge's
+        clickable half and reports the same state."""
+        for act in ("read", "open", "archive", "wikify", "delete"):
+            self.assertNotIn("var(--success)", self._rule(act), act)
 
     def test_the_warn_colour_exists_in_every_theme(self):
         """Light, the prefers-color-scheme block, and the explicit dark theme — a button
@@ -246,12 +256,24 @@ class FilterTest(unittest.TestCase):
         body = re.search(r"function applyFilters\(\)[\s\S]*?\n\}", self.src).group(0)
         self.assertIn("querySelector('.wikified-badge')", body)
 
-    def test_new_rows_from_the_poll_obey_the_filter(self):
-        """The poll PREPENDS arrivals; without this they appear regardless of the filter,
-        and they also used to overwrite the element applyFilters writes the count into."""
+    def test_newly_inserted_rows_obey_the_filter(self):
+        """Rows are PREPENDED; without this they appear regardless of the filter, and
+        they also used to overwrite the element applyFilters writes the count into.
+
+        Asserted on `insertItems` rather than on `pollInbox`, because the insert moved
+        there when saving an article started drawing its own row from the reply — and
+        that is the point: ONE inserter means the filter cannot be honoured on the poll's
+        path and forgotten on the save's."""
+        ins = re.search(r"function insertItems\([\s\S]*?\n\}", self.src).group(0)
+        self.assertIn("applyFilters()", ins)
+        self.assertNotIn("' saved'", ins)
+
+    def test_the_poll_does_not_insert_rows_itself(self):
+        """What keeps the test above honest: if the poll grows its own insert again,
+        asserting on insertItems would prove nothing about the rows the poll adds."""
         poll = re.search(r"async function pollInbox\(\)[\s\S]*?\n\}", self.src).group(0)
-        self.assertIn("applyFilters()", poll)
-        self.assertNotIn("' saved'", poll)
+        self.assertNotIn("insertBefore", poll)
+        self.assertIn("insertItems(", poll)
 
     def test_a_row_that_becomes_wikified_is_re_filtered(self):
         m = re.search(r"function markRowWikified\([\s\S]*?\n\}", self.src)

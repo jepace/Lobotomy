@@ -20,6 +20,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import harness
 from harness import TempWikiTestCase, TempWiki
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
@@ -147,19 +148,11 @@ class BrowserTest(unittest.TestCase):
         # Launch whatever chromium is on disk: the pinned playwright build and the
         # installed browser build drift apart, and the default launch then tells you to
         # run "playwright install", which a test must never do.
-        cands = [None] + sorted(
-            str(p) for pat in ("chromium*/chrome-linux/chrome",
-                               "chromium_headless_shell*/chrome-linux/headless_shell")
-            for p in Path("/opt/pw-browsers").glob(pat))
-        last = None
-        for exe in cands:
-            try:
-                cls.browser = cls._pw.chromium.launch(executable_path=exe)
-                return
-            except Exception as e:
-                last = e
-        cls._pw.stop()
-        raise unittest.SkipTest(f"chromium unavailable: {last}")
+        try:
+            cls.browser = harness.launch_chromium(cls._pw)
+        except Exception as e:
+            cls._pw.stop()
+            raise unittest.SkipTest(str(e))
 
     @classmethod
     def tearDownClass(cls):

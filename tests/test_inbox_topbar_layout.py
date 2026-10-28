@@ -38,17 +38,10 @@ DESKTOP = {"width": 1200, "height": 900}
 def _chromium(pw):
     """Whatever chromium is on disk: the pinned playwright build and the installed
     browser build drift apart, and the default launch then tells you to download one."""
-    candidates = [None] + sorted(
-        str(p) for pat in ("chromium*/chrome-linux/chrome",
-                           "chromium_headless_shell*/chrome-linux/headless_shell")
-        for p in Path("/opt/pw-browsers").glob(pat))
-    last = None
-    for exe in candidates:
-        try:
-            return pw.chromium.launch(executable_path=exe)
-        except Exception as e:
-            last = e
-    raise unittest.SkipTest(f"chromium unavailable: {last}")
+    try:
+        return harness.launch_chromium(pw)
+    except Exception as e:
+        raise unittest.SkipTest(str(e))
 
 
 class TopbarLayoutTest(unittest.TestCase):
