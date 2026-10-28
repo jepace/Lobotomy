@@ -123,3 +123,83 @@ class RequestLineTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SlowGetIsLoggedTest(unittest.TestCase):
+    """A successful GET was never logged, at any duration.
+
+    Reported as *"clicking Read page after successful ingestion is taking like 18
+    seconds"* and *"hitting the back button took 46 seconds"* — with nothing in the log
+    for either, because the condition was `method != "GET" or status >= 400`.
+    `_SLOW_REQUEST_MS` existed and only chose the LEVEL for lines already being written;
+    it never admitted one.
+
+    That inverts this project's own rule. An empty log was being read as "the request
+    never arrived" when it could equally mean "it arrived and took 46 seconds", and a
+    slow page view is the single most useful line the server can write about itself.
+    """
+
+    def setUp(self):
+        self.w = harness.TempWiki()
+        self.w.__enter__()
+        self.addCleanup(self.w.__exit__, None, None, None)
+        self._saved = (serve.RAW_DIR, serve.WIKI_DIR, serve._SLOW_REQUEST_MS)
+        serve.RAW_DIR, serve.WIKI_DIR = self.w.raw, self.w.wiki
+        self.addCleanup(lambda: setattr(serve, "_SLOW_REQUEST_MS", self._saved[2]))
+        self.addCleanup(lambda: (setattr(serve, "RAW_DIR", self._saved[0]),
+                                 setattr(serve, "WIKI_DIR", self._saved[1])))
+        self.c = serve.app.test_client()
+        with self.c.session_transaction() as s:
+            s["logged_in"] = True
+        d = self.w.wiki / "entities"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "alpha.md").write_text(
+            '---\ntitle: "Alpha"\ntype: entity\ntags: []\ncreated: 2026-01-01\n'
+            'updated: 2026-01-01\nsources: []\n---\n\n# Alpha\n\n## Overview\n\nText.\n',
+            encoding="utf-8")
+        self.records = []
+
+        class _Cap(logging.Handler):
+            def emit(_s, record):
+                self.records.append(record)
+
+        self.h = _Cap()
+        serve.log.addHandler(self.h)
+        self.addCleanup(serve.log.removeHandler, self.h)
+
+    def _lines(self):
+        return [r.getMessage() for r in self.records]
+
+    def test_a_slow_page_view_is_logged(self):
+        serve._SLOW_REQUEST_MS = -1          # every request counts as slow
+        self.c.get("/wiki/entities/alpha.md")
+        hits = [l for l in self._lines() if "GET /wiki/entities/alpha.md" in l]
+        self.assertTrue(hits, f"a slow page view left no trace: {self._lines()}")
+        self.assertIn("SLOW", hits[0])
+
+    def test_it_is_logged_at_warning_so_it_stands_out(self):
+        serve._SLOW_REQUEST_MS = -1
+        self.c.get("/wiki/entities/alpha.md")
+        hit = [r for r in self.records if "GET /wiki/entities/alpha.md" in r.getMessage()]
+        self.assertEqual(hit[0].levelno, logging.WARNING)
+
+    def test_an_ordinary_fast_page_view_is_still_not_logged(self):
+        """The reason this was not simply logging every GET: one tab left open writes a
+        line per navigation, and this project has already had a disk filled by its own
+        log volume. Only the ones that have already cost seconds are written."""
+        serve._SLOW_REQUEST_MS = 60_000
+        self.c.get("/wiki/entities/alpha.md")
+        self.assertEqual([l for l in self._lines() if "GET /wiki/entities" in l], [])
+
+    def test_a_slow_poll_is_still_quiet(self):
+        """`_QUIET_PATHS` wins over slowness: /inbox/list runs every 8 seconds, and a
+        slow one would write a line every 8 seconds for as long as it stayed slow."""
+        serve._SLOW_REQUEST_MS = -1
+        self.c.get("/inbox/list")
+        self.assertEqual([l for l in self._lines() if "/inbox/list" in l], [])
+
+    def test_the_line_carries_the_duration(self):
+        serve._SLOW_REQUEST_MS = -1
+        self.c.get("/wiki/entities/alpha.md")
+        hits = [l for l in self._lines() if "GET /wiki/entities/alpha.md" in l]
+        self.assertRegex(hits[0], r"-> 200 in \d+ms")

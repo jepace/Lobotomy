@@ -183,6 +183,7 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title, _H1_RE,
                    _fix_wiki_links, _rebuild_index, _validate_ingest,
                    heal_index_if_stale, heal_pages, _atomic_write, search_wiki_core,
                    HISTORY_DIR, wiki_pages, _autolink, relink_all, begin_write_scope,
+                   session_touched_pages as agent_session_touched_pages,
                    _normalize_capture_url)
 
 from job_queue import JobQueue
@@ -401,13 +402,29 @@ def _log_request(resp):
             line = _note_probe(_client_ip(), request.path)
             if line:
                 log.warning("%s", line)
-        elif request.method != "GET" or resp.status_code >= 400:
-            if not request.path.startswith(_QUIET_PATHS):
-                ms = (time.monotonic() - g.get("_t0", time.monotonic())) * 1000
-                log.log(logging.WARNING if (resp.status_code >= 400 or ms > _SLOW_REQUEST_MS)
+        else:
+            ms = (time.monotonic() - g.get("_t0", time.monotonic())) * 1000
+            # A SLOW GET is logged even though an ordinary one is not. Reported as
+            # *"clicking Read page after successful ingestion is taking like 18
+            # seconds"* — and there was no line for it anywhere, because the condition
+            # here was `method != "GET" or status >= 400`, so a successful GET was
+            # invisible at any duration. `_SLOW_REQUEST_MS` existed and only ever chose
+            # the LEVEL for requests already being logged; it never admitted one.
+            #
+            # That is this project's own "silence is not evidence" rule turned against
+            # it: an empty log was being read as "the request never arrived" when it
+            # could equally mean "it arrived and took 18 seconds". A slow page view is
+            # the single most useful line the server can write about itself, and it was
+            # the one shape it could not write. Volume is not a concern — this fires
+            # only above the threshold, where the request has already cost 2s.
+            _slow = ms > _SLOW_REQUEST_MS
+            if (_slow or request.method != "GET" or resp.status_code >= 400) \
+                    and not request.path.startswith(_QUIET_PATHS):
+                log.log(logging.WARNING if (resp.status_code >= 400 or _slow)
                         else logging.INFO,
-                        "%s %s -> %d in %dms from %s", request.method, request.path,
-                        resp.status_code, ms, _client_ip())
+                        "%s %s -> %d in %dms from %s%s", request.method, request.path,
+                        resp.status_code, ms, _client_ip(),
+                        "  << SLOW" if _slow else "")
     except Exception:           # logging must never break the response it describes
         pass
     return resp
@@ -1839,9 +1856,12 @@ def wiki_sections() -> list:
     for d in ["sources", "entities", "concepts", "synthesis"]:
         dpath = WIKI_DIR / d
         if dpath.is_dir():
-            # Only show tab if directory has content beyond the stub index.md
-            extra = [f for f in dpath.glob("*.md") if f.name != "index.md"]
-            if extra:
+            # Only show the tab if the directory has content beyond the stub index.md —
+            # which needs ONE entry, not all of them. This built a list of every page in
+            # the directory and then used it as a boolean: at 13,000 pages that is a full
+            # directory walk per page VIEW, measured at 19ms, about 40% of the cost of
+            # rendering a page at all. `next` stops at the first hit.
+            if next((f for f in dpath.glob("*.md") if f.name != "index.md"), None):
                 pages.append({"path": d + "/", "label": d.title()})
     return pages
 
@@ -2080,13 +2100,19 @@ def _mark_inbox_wikified(filename: str) -> None:
         log.info("fix_wiki_links: %s", result)
         # Heal before validating, so the report reflects what is actually left wrong
         # rather than re-flagging defects the system already knows how to fix.
-        healed = heal_pages()
+        # Scoped to what this ingest wrote. Measured at 13,000 pages the whole-wiki
+        # sweep is 2.6s and validate is 7.3s, both run after EVERY article, while the
+        # ingest touched ~20 pages — so ~11s of the server being busy was almost
+        # entirely re-reading pages this ingest never looked at. The sweep still runs at
+        # startup, so nothing stops being repaired; it stops being repaired 30× a day.
+        _touched = agent_session_touched_pages()
+        healed = heal_pages(only=_touched or None)
         if healed["pages"]:
             log.info("heal_pages: repaired %d page(s) — %d frontmatter field(s), %d reader URL(s)",
                      healed["pages"], healed["frontmatter"], healed["reader_urls"])
         result = _rebuild_index({})
         log.info("rebuild_index: %s", result)
-        report = _validate_ingest({})
+        report = _validate_ingest({"paths": _touched} if _touched else {})
         log.info("validate_ingest:\n%s", report)
     except Exception as e:
         log.error("_mark_inbox_wikified failed for %s: %s", filename, e)

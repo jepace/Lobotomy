@@ -5675,13 +5675,43 @@ def _unlink_headings_impl(dry_run: bool = False) -> dict:
     return result
 
 
-def heal_pages(dry_run: bool = False) -> dict:
-    """Repair frontmatter across the wiki. See _heal_pages_impl."""
+def session_touched_pages() -> list:
+    """Absolute paths of every wiki page the CURRENT session wrote, source page included.
+
+    The post-ingest chain runs on the worker thread that ran the agent, so the
+    thread-local session context is still the one that did the work. An empty list means
+    "no session here", and every caller treats that as *sweep the wiki* rather than
+    *check nothing* — being wrong in the cheap direction, since a sweep is slow and
+    skipping the checks entirely is how damage goes unreported.
+    """
+    try:
+        ctx = _ctx()
+        rel = list(ctx._session_entity_pages) + list(ctx._session_updated_pages)
+        if ctx._current_source_page:
+            rel.append(ctx._current_source_page)
+    except Exception:
+        return []
+    out, seen = [], set()
+    for r in rel:
+        p = (WIKI_DIR / r) if not str(r).startswith(str(WIKI_DIR)) else Path(r)
+        k = str(p)
+        if k not in seen and p.is_file():
+            seen.add(k)
+            out.append(p)
+    return out
+
+
+def heal_pages(dry_run: bool = False, only=None) -> dict:
+    """Repair frontmatter across the wiki, or across `only` if given.
+
+    `only` is a list of paths — the pages one ingest touched. The whole-wiki sweep still
+    runs at startup; this is about not repeating it after every single article.
+    """
     with write_reason("heal"):
-        return _heal_pages_impl(dry_run)
+        return _heal_pages_impl(dry_run, only=only)
 
 
-def _heal_pages_impl(dry_run: bool = False) -> dict:
+def _heal_pages_impl(dry_run: bool = False, only=None) -> dict:
     """Repair mechanically-fixable page defects across the whole wiki.
 
     Runs in the post-ingest chain next to _fix_wiki_links (which already auto-repairs bad
@@ -5704,14 +5734,23 @@ def _heal_pages_impl(dry_run: bool = False) -> dict:
               "types_healed": 0, "stale_openers": []}
 
     targets = []
-    for subdir in _HEAL_SUBDIRS:
-        d = WIKI_DIR / subdir
-        if d.is_dir():
-            targets.extend((f, True) for f in sorted(d.glob("*.md")) if f.name != "index.md")
-    # raw/ carries the same reader-mode URL from capture, but has no wiki frontmatter
-    # contract — unwrap URLs there, don't impose created:/tags:/sources: on it.
-    if RAW_DIR.is_dir():
-        targets.extend((f, False) for f in sorted(RAW_DIR.glob("*.md")) if f.name != "index.md")
+    if only is not None:
+        # Scoped to the pages one ingest touched. The whole-wiki sweep still runs at
+        # startup, which is what makes this safe: a defect anywhere is still found, just
+        # not re-found after every single article. Measured at 13,000 pages the sweep is
+        # 2.6s, and an ingest touches ~20 — so ~99.8% of that was re-reading pages this
+        # ingest never looked at, with the server blocked for the duration.
+        targets = [(Path(f), True) for f in only
+                   if Path(f).is_file() and Path(f).name != "index.md"]
+    else:
+        for subdir in _HEAL_SUBDIRS:
+            d = WIKI_DIR / subdir
+            if d.is_dir():
+                targets.extend((f, True) for f in sorted(d.glob("*.md")) if f.name != "index.md")
+        # raw/ carries the same reader-mode URL from capture, but has no wiki frontmatter
+        # contract — unwrap URLs there, don't impose created:/tags:/sources: on it.
+        if RAW_DIR.is_dir():
+            targets.extend((f, False) for f in sorted(RAW_DIR.glob("*.md")) if f.name != "index.md")
 
     for f, is_wiki_page in targets:
         try:
@@ -8052,8 +8091,21 @@ def _validate_ingest(args: dict) -> str:
     import re
 
     source_slug = args.get("source_slug", "")
-    # Collect all wiki pages to check (full wiki scan is safe — files are small)
-    all_pages = list(wiki_pages())
+    # The comment here used to read "full wiki scan is safe — files are small", and it
+    # was true when it was written. At 13,000 pages this pass measures **7.3 seconds**,
+    # it runs after EVERY article, and the docstring above already claims it checks
+    # "all new/touched pages" — so the code and its own description had drifted apart,
+    # and the expensive one won.
+    #
+    # Scoped to what the ingest wrote. That is the right scope for validating an INGEST:
+    # this run can only have introduced a broken link or a missing field on a page it
+    # touched. Damage from anywhere else is a SWEEP's job, which `/wiki/lint` already
+    # does and which still sees the whole wiki — `only` absent means scan everything, so
+    # lint and startup are unchanged.
+    only = args.get("paths")
+    if only is None and not args.get("full"):
+        only = session_touched_pages() or None
+    all_pages = [Path(p) for p in only] if only else list(wiki_pages())
     index_text = (WIKI_DIR / "index.md").read_text(encoding="utf-8") if (WIKI_DIR / "index.md").exists() else ""
 
     required_fields = {"title", "type", "tags", "created", "updated", "sources"}

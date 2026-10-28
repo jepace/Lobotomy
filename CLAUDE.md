@@ -121,6 +121,76 @@ were **equal**. Adding raw files does not touch `wiki/sources/`, so the second l
 reads it zero times — the assertion the test was making is better satisfied than before,
 while equality would pin the absence of a cache. The letter changed; the intent did not.
 
+**The post-ingest chain walked the WHOLE WIKI after every article** (`session_touched_pages`,
+`heal_pages(only=…)`, `_validate_ingest`'s `paths`). Reported as *"navigating while it is
+ingesting an article has gotten painful. I think we're at the point when the architecture
+needs to separate the tasks more."* Measured at 13,000 pages, run after every wikify:
+
+    _validate_ingest   7.3s     whole wiki
+    heal_pages         2.6s     whole wiki
+    _rebuild_index     0.87s    whole wiki   (has to be — it builds the index)
+    _fix_wiki_links    0.2s     whole wiki
+
+**An ingest touches ~20 pages**, so almost all of ~11s per article was re-reading pages
+the ingest never looked at, with navigation competing for the interpreter throughout —
+measured at 21ms idle against 311ms during `heal_pages`. Scoped: **heal 2240ms → 4ms,
+validate 483ms → 1ms.**
+
+`_validate_ingest`'s own docstring already said it checked *"all new/touched pages"* while
+the code read `wiki_pages()`, under a comment reading *"full wiki scan is safe — files are
+small"* — true when written, false at this size. **The code and its own description had
+drifted, and the expensive one won.**
+
+**The sweep is not gone, it moved**, and that is what makes the scoping safe: `heal_pages()`
+with no `only` still walks everything and still runs at **startup**, `/wiki/lint` is still
+the whole-wiki link check, and `_validate_ingest({"full": True})` is still there. A defect
+from anywhere is still repaired — just not re-repaired thirty times a day. The call site
+passes `_touched or None`, so a session that recorded nothing gets the **sweep** rather
+than silently checking nothing: wrong in the cheap direction.
+
+`wiki_sections()` runs on every page VIEW and built a list of every `.md` in all four
+directories to answer *"is this one non-empty"* — 19ms at 13,000 pages, about 40% of the
+cost of rendering a page at all. `next` stops at the first entry.
+
+**Two mutations came back MISSED and both were real gaps.** Reverting the call site to a
+whole-wiki `heal_pages()` broke nothing, because the RESULT is identical and only the cost
+differs — a scoping fix whose call site is untested silently un-applies itself, so a test
+now drives the real chain and asserts an untouched page is left alone. And the
+`wiki_sections` test asserted the old comprehension's *text* was absent, so a mutation
+spelling the same waste differently walked straight through; it counts how many directory
+entries are **consumed** now, which is the property that matters.
+
+**The architecture question was asked and is answered "not yet", with numbers.** Separating
+the ingest into its own process does fix contention — the GIL is per-process, and job
+events already go through `.ndjson` files on disk, so the live view is decoupled already.
+But it does not remove this waste, and it turns a **single-writer** wiki into a two-writer
+one, which is exactly what the autolinker's cache invalidation assumes is not true (the
+mtime backstop would become load-bearing rather than a backstop). Cut the work first,
+re-measure, then decide. `in_flight()`, cancel and `on_done` are what a split would still
+have to rebuild across the boundary.
+
+**A successful GET was never logged, at any duration, and that is how 18 and 46 seconds
+left no trace.** Reported as *"clicking Read page after successful ingestion is taking
+like 18 seconds"* and *"hitting the back button took 46 seconds to return to the reading
+list"*. The condition was `request.method != "GET" or resp.status_code >= 400`, so a
+successful page view was invisible however long it took; `_SLOW_REQUEST_MS` existed and
+only ever chose the **level** for lines already being written. That inverts this file's own
+rule — an empty log was being read as *"the request never arrived"* when it could equally
+mean *"it arrived and took 46 seconds"*. A request over the threshold is now logged with
+its duration and `<< SLOW`, at WARNING. `_QUIET_PATHS` still wins, because a slow
+`/inbox/list` would otherwise write a line every 8 seconds for as long as it stayed slow.
+
+**Three attempts failed to reproduce those numbers and that is recorded rather than
+papered over.** On the development machine the same operations run in tens of
+milliseconds: a 150KB page during `heal_pages` is 249ms, `/inbox` with a cold source-page
+index is 63ms, `_raw_source_index`'s rebuild is 1ms. Every model came in 100–1000× too
+fast. **The remaining difference is almost certainly I/O, not CPU** — this sandbox is
+warm-cache NVMe, the live jail reads cold across ~13,000 pages plus up to 50 revisions each
+in `.history`. The measurements above are of work genuinely removed; they are **not** a
+claim to have explained 18s or 46s. The two instruments that will: the slow-request line
+above, and `kill -USR1 <pid>`, which already dumps every thread's stack to
+`server-stacks.log` and will name the exact line a hung request is sitting on.
+
 **Still open, measured, and not fixed here:** `_autolink` calls `_build_title_map()` on
 every invocation, and its mtime backstop `stat()`s every page — **13,208 stats, ~90ms, per
 autolink call** at the live wiki's scale, even when nothing has changed. `relink_all`'s own

@@ -1569,6 +1569,36 @@ MUTATIONS = [
      '    if isinstance(exc, _LLMError) and exc.long_backoff:\n        evt["msg"] = (',
      '    if False:\n        evt["msg"] = (',
      'tools/agent.py'),
+    # The post-ingest chain walked the whole wiki after every article: 2.6s heal + 7.3s
+    # validate at 13,000 pages, for an ingest that touched ~20.
+    ('post_ingest: heal is scoped to the pages the ingest touched',
+     '        healed = heal_pages(only=_touched or None)',
+     '        healed = heal_pages()',
+     'tools/serve.py'),
+    ('heal_pages: a scoped heal does not walk the whole wiki',
+     '        targets = [(Path(f), True) for f in only\n                   if Path(f).is_file() and Path(f).name != "index.md"]',
+     '        targets = []',
+     'tools/agent.py'),
+    ('validate_ingest: scoped to the ingest, not the wiki',
+     '    all_pages = [Path(p) for p in only] if only else list(wiki_pages())',
+     '    all_pages = list(wiki_pages())',
+     'tools/agent.py'),
+    # An empty session must mean "sweep", never "check nothing".
+    ('session_touched: a page that is gone is not reported as touched',
+     '        if k not in seen and p.is_file():',
+     '        if k not in seen:',
+     'tools/agent.py'),
+    # A successful GET was never logged at any duration, so an 18-second page view left
+    # no trace in the one log this project reads.
+    ('request_log: a slow GET is logged',
+     '            if (_slow or request.method != "GET" or resp.status_code >= 400) \\',
+     '            if (request.method != "GET" or resp.status_code >= 400) \\',
+     'tools/serve.py'),
+    # Per page VIEW, at 13,000 pages: a full directory walk to compute a boolean.
+    ('wiki_sections: the tab check stops at the first page',
+     '            if next((f for f in dpath.glob("*.md") if f.name != "index.md"), None):',
+     '            if [f for f in dpath.glob("*.md") if f.name != "index.md"]:',
+     'tools/serve.py'),
     # "When I add an article, it doesn't show up in the list for a while." The browser
     # asked /inbox/list to learn what it had just saved — a second round trip to describe
     # the one file the save already had in its hand.
