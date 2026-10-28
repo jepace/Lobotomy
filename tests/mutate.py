@@ -1569,6 +1569,21 @@ MUTATIONS = [
      '    if isinstance(exc, _LLMError) and exc.long_backoff:\n        evt["msg"] = (',
      '    if False:\n        evt["msg"] = (',
      'tools/agent.py'),
+    # A page view arrived 16s into a 39s autolink and finished one second after it
+    # ended: 2496ms at the stock 5ms switch interval, 157ms at 0.2ms, with the autolink
+    # itself no slower.
+    ('gil: the switch interval is shortened at startup',
+     '    sys.setswitchinterval(iv)',
+     '    pass',
+     'tools/serve.py'),
+    ('gil: a nonsensical interval is refused rather than applied',
+     '    if not (0.00001 <= iv <= 0.05):',
+     '    if False:',
+     'tools/serve.py'),
+    ('gil: startup actually calls the tuner',
+     '    _tune_gil()\n    _warn_low_disk()',
+     '    _warn_low_disk()',
+     'tools/serve.py'),
     # The post-ingest chain walked the whole wiki after every article: 2.6s heal + 7.3s
     # validate at 13,000 pages, for an ingest that touched ~20.
     ('post_ingest: heal is scoped to the pages the ingest touched',

@@ -285,6 +285,59 @@ _QUIET_PATHS = ("/inbox/list", "/chat/status", "/chat/queue", "/static/")
 _LOW_DISK_BYTES = 500 * 1024 * 1024      # 500MB
 
 
+def _tune_gil() -> float:
+    """Hand the interpreter over more often, so a page view is not stuck behind an ingest.
+
+    Reported as *"navigating while it is ingesting an article has gotten painful"*, then
+    *"clicking Read page is taking like 18 seconds"* — and the log, once slow GETs were
+    logged at all, showed the mechanism exactly:
+
+        15:49:52  Tool call: update_section … barack-obama.md § Overview
+        15:50:08  (the page request arrives)
+        15:50:31  autolink: linked 62 title(s) (39.1s, 16702 titles checked)
+        15:50:32  GET /wiki/sources/… -> 200 in 23491ms  << SLOW
+
+    The request arrived 16s into a 39-second autolink and finished ONE SECOND after it
+    ended. Not slowed in proportion — held, then released.
+
+    **It is not one long hold.** A monitor thread through a 53-second autolink at 16,700
+    titles saw a MAX stall of 19ms and zero stalls over 100ms, so no single call hogs the
+    interpreter. What it saw is the median: a thread asking for 1ms waited **6.35ms** to
+    be given the interpreter back, every time. A request needing a few hundred of those
+    round trips pays seconds for a page that renders in 21ms alone, and no amount of
+    trimming its syscalls changes the multiplier — measured at **133×**, and cutting
+    `wiki_sections`' full directory glob moved it only 3213ms → 2786ms.
+
+    `sys.setswitchinterval` is that round trip. Measured, same page, same autolink:
+
+        5ms   (the default)   2496ms
+        1ms                    558ms
+        0.2ms                  157ms      <- 16x
+
+    **And it costs the ingest nothing**: the same autolink ran 56.5s / 36.7s / 38.5s at
+    those three settings, so the work does not get slower — only more interruptible. That
+    is the whole trade, and it is why this is worth a line of code rather than a second
+    process. A split is still the robust answer for CPU this heavy; this is what makes
+    the machine usable before then, and it does not make the split harder.
+    """
+    iv = cfg_get("server", "gil_switch_interval", 0.0002)
+    try:
+        iv = float(iv)
+    except (TypeError, ValueError):
+        log.warning("server.gil_switch_interval is not a number (%r) — leaving default", iv)
+        return sys.getswitchinterval()
+    # A nonsensical value is worse than the default: 0 spins, and something large makes
+    # exactly the stall this exists to remove. Clamp rather than refuse, and say so.
+    if not (0.00001 <= iv <= 0.05):
+        log.warning("server.gil_switch_interval %.6fs out of range — leaving default", iv)
+        return sys.getswitchinterval()
+    sys.setswitchinterval(iv)
+    log.info("GIL switch interval set to %.1fms (was %.1fms) — keeps page views "
+             "responsive while an ingest is linking",
+             iv * 1000, 5.0)
+    return iv
+
+
 def _warn_low_disk(path=None) -> int:
     """Log how much room is left, loudly when it is nearly gone. Returns bytes free.
 
@@ -4361,6 +4414,7 @@ if __name__ == "__main__":
     provider = cfg_get("llm", "provider", "openai")
     _ver = deployed_version()
     log.info("Lobotomy starting — version: %s", _ver)
+    _tune_gil()
     _warn_low_disk()
     # Re-queue what was waiting when this process last stopped. A deploy is a restart, and
     # a thirty-article batch is ~20 hours of work at max_rpm 1 — it used to vanish, with

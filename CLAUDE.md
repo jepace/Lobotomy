@@ -180,6 +180,44 @@ mean *"it arrived and took 46 seconds"*. A request over the threshold is now log
 its duration and `<< SLOW`, at WARNING. `_QUIET_PATHS` still wins, because a slow
 `/inbox/list` would otherwise write a line every 8 seconds for as long as it stayed slow.
 
+**And then the log answered it, the morning the slow line shipped** (`_tune_gil`,
+`server.gil_switch_interval`):
+
+    15:49:52  Tool call: update_section … barack-obama.md § Overview
+    15:50:08  (the page request arrives)
+    15:50:31  autolink: linked 62 title(s) in barack-obama.md (39.1s, 16702 titles)
+    15:50:32  GET /wiki/sources/alissa-quart-… -> 200 in 23491ms  << SLOW
+
+The request arrived **16 seconds into a 39-second autolink and finished one second after
+it ended**. Not slowed in proportion — held, then released. That shape is the whole
+finding, and no amount of reasoning from the symptom produced it; one log line did.
+
+**It is not one long hold, and the earlier entry above is right about that.** A monitor
+thread through a 53-second autolink at 16,700 titles saw a **max stall of 19ms** and zero
+over 100ms. The mechanism is the MEDIAN: a thread asking for 1ms waited **6.35ms** to be
+handed the interpreter back, *every time*. A request needing a few hundred of those round
+trips pays seconds for a page that renders in 21ms on its own — measured at **133×** — and
+**cutting `wiki_sections`' full directory glob moved it only 3213ms → 2786ms**, which is
+what proves the multiplier is structural rather than anything in the handler. This is the
+file's own "latency ≈ blocking operations × 5ms" rule, met from the other side: the fix is
+not fewer operations, it is a cheaper handoff.
+
+`sys.setswitchinterval` **is** that handoff, and it is a one-line setting:
+
+    5ms (the interpreter default)   2496ms      <- what shipped
+    1ms                              558ms
+    0.2ms                            157ms      <- 16x
+
+**It costs the ingest nothing.** The same autolink ran 56.5s / 36.7s / 38.5s at those
+three settings — the work does not get slower, only more interruptible. A nonsensical
+value is clamped rather than applied, because `0` spins and a large one recreates exactly
+the stall this removes, and a typo in a performance knob must not stop the server booting.
+
+**This does not retire the architecture question, it answers "not yet" with better
+numbers.** A 39-second CPU-bound autolink inside the web server's interpreter is still the
+thing to move, and a split remains the robust answer; this is what makes the machine usable
+first, and it makes the split no harder.
+
 **Three attempts failed to reproduce those numbers and that is recorded rather than
 papered over.** On the development machine the same operations run in tens of
 milliseconds: a 150KB page during `heal_pages` is 249ms, `/inbox` with a cold source-page
@@ -2602,7 +2640,8 @@ popup's keyboard navigation would just stop working with nothing in any log.
 ```json
 {
   "admin":  { "email": "...", "password": "..." },
-  "server": { "host": "127.0.0.1", "port": 8080, "https": false, "base_url": "..." },
+  "server": { "host": "127.0.0.1", "port": 8080, "https": false, "base_url": "...",
+              "gil_switch_interval": 0.0002 },
   "llm":    { "active": "gemini",
               "providers": { "gemini": { "api_key": "...", "model": "...",
                                          "fallback_models": ["..."] } },

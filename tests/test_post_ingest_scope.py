@@ -274,3 +274,71 @@ class PostIngestChainIsScopedTest(unittest.TestCase):
                       "the ingest did not heal the page it wrote")
         self.assertIn("type: concept", untouched.read_text(encoding="utf-8"),
                       "the post-ingest chain healed the whole wiki again")
+
+
+class GilSwitchIntervalTest(unittest.TestCase):
+    """A page view was not slowed by an ingest, it was HELD by one.
+
+    From the live log, once slow GETs were logged at all:
+
+        15:49:52  Tool call: update_section … barack-obama.md § Overview
+        15:50:08  (the page request arrives)
+        15:50:31  autolink: linked 62 title(s) (39.1s, 16702 titles checked)
+        15:50:32  GET /wiki/sources/… -> 200 in 23491ms  << SLOW
+
+    Arrived 16s into a 39s autolink, finished one second after it ended.
+
+    It is not one long hold: a monitor thread through a 53-second autolink at 16,700
+    titles saw a max stall of 19ms and none over 100ms. It is the MEDIAN — a thread
+    asking for 1ms waited 6.35ms to get the interpreter back, every time, and a request
+    needing hundreds of those pays seconds. Measured at 133x, and trimming the request's
+    own syscalls moved it only 3213ms -> 2786ms, which is what says the multiplier is
+    structural rather than anything in the handler.
+
+    `sys.setswitchinterval` IS that round trip: 5ms -> 2496ms, 1ms -> 558ms,
+    0.2ms -> 157ms, with the autolink itself no slower (56.5 / 36.7 / 38.5s).
+    """
+
+    def setUp(self):
+        self._iv = sys.getswitchinterval()
+        self.addCleanup(sys.setswitchinterval, self._iv)
+        self._cfg = serve.cfg_get
+        self.addCleanup(lambda: setattr(serve, "cfg_get", self._cfg))
+
+    def _with(self, value):
+        serve.cfg_get = lambda s, k, d=None: (
+            value if (s, k) == ("server", "gil_switch_interval") else self._cfg(s, k, d))
+
+    def test_it_shortens_the_interval(self):
+        sys.setswitchinterval(0.005)
+        self._with(0.0002)
+        serve._tune_gil()
+        self.assertAlmostEqual(sys.getswitchinterval(), 0.0002, places=6)
+
+    def test_the_default_is_shorter_than_the_interpreter_default(self):
+        """The whole point. 5ms is the stock value and the one that measured 2496ms."""
+        sys.setswitchinterval(0.005)
+        serve._tune_gil()
+        self.assertLess(sys.getswitchinterval(), 0.005)
+
+    def test_a_non_numeric_setting_leaves_the_interval_alone(self):
+        """Config is hand-edited. Crashing the server at startup over a typo in a
+        performance knob would be worse than the slowness it tunes."""
+        sys.setswitchinterval(0.005)
+        self._with("nonsense")
+        serve._tune_gil()
+        self.assertEqual(sys.getswitchinterval(), 0.005)
+
+    def test_an_out_of_range_setting_leaves_the_interval_alone(self):
+        """0 spins the CPU and a large value recreates exactly the stall this removes,
+        so a nonsensical number is refused rather than applied."""
+        for bad in (0.0, 99.0, -1.0):
+            sys.setswitchinterval(0.005)
+            self._with(bad)
+            serve._tune_gil()
+            self.assertEqual(sys.getswitchinterval(), 0.005, bad)
+
+    def test_startup_actually_calls_it(self):
+        """A tuning function nothing calls is a comment. The call site is in main()."""
+        src = Path(serve.__file__).read_text(encoding="utf-8")
+        self.assertIn("    _tune_gil()", src)
