@@ -1569,6 +1569,23 @@ MUTATIONS = [
      '    if isinstance(exc, _LLMError) and exc.long_backoff:\n        evt["msg"] = (',
      '    if False:\n        evt["msg"] = (',
      'tools/agent.py'),
+    # One /reading-list load read 8.2 MB — 100% of the reading list — to draw a title
+    # and a 200-character excerpt per row. 18 seconds on the jail, while the server was
+    # idle in the ingest's pacing sleep.
+    ('inbox_listing: a row is drawn from a bounded prefix, not the whole article',
+     '            head = fh.read(_FM_PREFIX_BYTES)\n            complete = fh.read(1) == ""',
+     '            head = fh.read()\n            complete = True',
+     'tools/serve.py'),
+    # The cheap path may be slow; it may not be WRONG. has_content False for an article
+    # that has content hides its Read button and makes a saved story look empty.
+    ('inbox_listing: a body starting past the prefix falls back to a full read',
+     '    if unterminated_fm or no_body_yet:',
+     '    if False:',
+     'tools/serve.py'),
+    ('inbox_listing: frontmatter running past the prefix falls back too',
+     '    unterminated_fm = head.lstrip().startswith("---") and not fm',
+     '    unterminated_fm = False',
+     'tools/serve.py'),
     # A page view arrived 16s into a 39s autolink and finished one second after it
     # ended: 2496ms at the stock 5ms switch interval, 157ms at 0.2ms, with the autolink
     # itself no slower.

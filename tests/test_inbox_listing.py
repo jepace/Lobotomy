@@ -61,23 +61,33 @@ class InboxListingTest(unittest.TestCase):
                 f"---\ntitle: S{i}\ntype: source\n{rs}\n---\n\n# S{i}\n\nProse.\n")
 
     def _counted(self):
-        """Count read_text() calls per directory across one list_inbox()."""
-        counts = {"sources": 0, "raw": 0}
-        real = Path.read_text
+        """Count file OPENS per directory across one list_inbox().
 
-        def spy(p, *a, **kw):
+        It counted `read_text` alone until a reading-list row stopped needing the whole
+        article: `list_inbox` reads a bounded prefix through `Path.open` now, so a spy on
+        `read_text` saw ZERO raw reads and the count said the files were never touched.
+        Counting both paths keeps the question the same — how many times is each file
+        opened per listing — while the answer stops depending on which call does it.
+        """
+        counts = {"sources": 0, "raw": 0}
+        real_open = Path.open
+
+        # `Path.open` ONLY. `Path.read_text` is implemented by calling `self.open`, so
+        # spying on both counts every full read twice — which is how the first version
+        # of this change reported 800 source reads where there were 400.
+        def spy_open(p, *a, **kw):
             parts = p.parts
             if "sources" in parts:
                 counts["sources"] += 1
             elif "raw" in parts:
                 counts["raw"] += 1
-            return real(p, *a, **kw)
+            return real_open(p, *a, **kw)
 
-        Path.read_text = spy
+        Path.open = spy_open
         try:
             items = serve.list_inbox()
         finally:
-            Path.read_text = real
+            Path.open = real_open
         return items, counts
 
     # -- the bug ----------------------------------------------------------------

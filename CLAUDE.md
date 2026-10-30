@@ -218,6 +218,44 @@ numbers.** A 39-second CPU-bound autolink inside the web server's interpreter is
 thing to move, and a split remains the robust answer; this is what makes the machine usable
 first, and it makes the split no harder.
 
+**And the next log settled the rest of it: the remaining slowness is I/O**
+(`_read_capture_for_listing`). With the GIL and scoping fixes deployed:
+
+    14:39:19  autolink: linked 7 title(s) … (1.2s, 16901 titles checked)
+    14:39:40  ingest progress: 7/22 listed pages done      <- 21s pacing sleep
+    14:39:40  GET /reading-list -> 200 in 18043ms  << SLOW
+
+**The autolink is 1.2s there, not 39s** — those fixes worked — and the 21-second gaps
+between rounds are the ingest's own `max_rpm` pacing sleep, which releases the interpreter.
+So the server was **mostly idle** while that request took eighteen seconds. That rules out
+contention and leaves the thing three benchmarks here could not show, because a
+warm-cache NVMe sandbox never will.
+
+**Measured: one `/reading-list` load read 8.2 MB — 100% of the reading list — to display
+a title and a 200-character excerpt per row.** `list_inbox` called `read_text()` on every
+capture, and a capture is a whole news article. Bounded to a prefix: **1.8 MB, 4.6×**.
+
+The rule is `_raw_frontmatter_items`' one function below, and the second fallback is the
+one that matters: frontmatter that does not close inside the prefix makes every field a
+guess, and **finding no qualifying body line inside the prefix would report
+`has_content: False` for an article that HAS content** — hiding its Read button and making
+a saved story look empty. Either reads the file. *The cheap path may be slow; it may not
+be wrong.*
+
+`tests/test_inbox_bounded_read.py` is an **oracle** test, `test_search_prefilter`'s shape:
+it runs the original full-read logic beside the bounded one and requires every field of
+every row to match across the shapes a capture takes — long article, fat frontmatter, a
+body that only starts past the prefix, a fetch-failure placeholder, a frontmatter-less
+paste, a `.url` file, an empty file. A faster listing that says something subtly different
+is not a faster listing.
+
+**And `test_inbox_listing`'s counter had to follow it**, for the same reason its equality
+assertion did once before. It spied on `read_text`, which the prefix path does not call, so
+it reported **zero** raw reads and claimed the files were never touched. It counts
+`Path.open` now — and only `open`, because `read_text` is *implemented* by calling
+`self.open`, so spying on both double-counts every full read, which is how the first
+version of that change reported 800 source reads where there were 400.
+
 **Three attempts failed to reproduce those numbers and that is recorded rather than
 papered over.** On the development machine the same operations run in tens of
 milliseconds: a 150KB page during `heal_pages` is 249ms, `/inbox` with a cold source-page

@@ -1701,6 +1701,65 @@ def _capture_article_locked(url: str, *, title: str, content: str, source: str,
 _FM_PREFIX_BYTES = 8192
 
 
+def _read_capture_for_listing(f):
+    """Enough of a capture to draw its row: frontmatter, and the top of the body.
+
+    Reported as *"hitting the back button took 46 seconds"* and, once slow GETs were
+    logged, `GET /reading-list -> 200 in 18043ms` — **while the server was mostly idle**,
+    sitting in the ingest's pacing sleep between rounds. That rules out CPU contention and
+    leaves I/O, which is the one thing a warm-cache development machine cannot show: every
+    model of this ran in tens of milliseconds here and the jail took eighteen seconds.
+
+    **Measured: one `/reading-list` load read 8.2 MB — 100% of the reading list — to
+    display a title and a 200-character excerpt per row.** `list_inbox` called
+    `read_text()` on every capture, and a capture is a whole news article. Warm that is
+    25ms; cold, across 222 files, with an ingest writing a history snapshot per page
+    alongside it, it is physical seeks.
+
+    A row needs the frontmatter, the first three non-blank body lines, and whether there
+    is any body at all, so a bounded prefix covers it — the same trade
+    `_raw_frontmatter_items` already makes one function below.
+
+    **Two fallbacks, and the second is the one that matters.** Frontmatter that does not
+    close inside the prefix means every field is a guess, so read the file. And finding no
+    qualifying body line inside the prefix would report `has_content: False` for an
+    article that HAS content — hiding its Read button and making a saved story look
+    empty — so that reads the file too. The cheap path may be slow; it may not be wrong.
+    """
+    try:
+        with f.open("r", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(_FM_PREFIX_BYTES)
+            complete = fh.read(1) == ""
+    except OSError:
+        return "", {}, ""
+
+    def _split(t):
+        try:
+            return _parse_frontmatter(t)
+        except Exception:
+            return {}, t
+
+    fm, body = _split(head)
+    if complete:
+        return head, fm, body
+
+    # Frontmatter opened and did not close inside the prefix: nothing parsed is reliable.
+    unterminated_fm = head.lstrip().startswith("---") and not fm
+    # No body line yet, but there is more file — the article may be entirely past here.
+    no_body_yet = not any(
+        l.strip() and not l.startswith("#") and not l.startswith("<!--")
+        and "Content could not be fetched" not in l
+        for l in body.splitlines())
+    if unterminated_fm or no_body_yet:
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return head, fm, body
+        fm, body = _split(text)
+        return text, fm, body
+    return head, fm, body
+
+
 def _raw_frontmatter_items():
     """Every reading-list file as (path, frontmatter), reading only the frontmatter.
 
@@ -1778,14 +1837,7 @@ def list_inbox(show_archived: bool = False) -> list:
     # file was read three times per page load.
     parsed = []
     for f in candidates:
-        try:
-            text = f.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            text = ""
-        try:
-            fm, body = _parse_frontmatter(text)
-        except Exception:
-            fm, body = {}, text
+        text, fm, body = _read_capture_for_listing(f)
         parsed.append((f, text, fm, body))
 
     def _inbox_sort_key(item):
