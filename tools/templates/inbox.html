@@ -714,6 +714,24 @@ function toggleSave() {
   if (p.classList.contains('open')) document.getElementById('content').focus();
 }
 
+// What a batch of links actually did. A FUNCTION rather than a few lines inside
+// saveToInbox, so a test can call it: the first version built this string inline and the
+// test grepped for "Not saved:", which survived a mutation that deleted the condition
+// around it — mutate.py reported MISSED and was right. This file has recorded that trap
+// three times now, and the fix is always the same one.
+function batchSummary(data) {
+  const bits = [`${data.added} saved`];
+  if (data.duplicates.length) bits.push(`${data.duplicates.length} already here`);
+  if (data.failed.length)     bits.push(`${data.failed.length} failed`);
+  let msg = bits.join(', ') + '.';
+  // A count cannot be acted on. Which link, and why.
+  if (data.failed.length) {
+    msg += '\n\nNot saved:\n' + data.failed
+      .map(f => `  ${f.url}\n    ${f.error}`).join('\n');
+  }
+  return msg;
+}
+
 async function saveToInbox() {
   const content  = document.getElementById('content').value.trim();
   const filename = document.getElementById('filename').value.trim();
@@ -740,6 +758,19 @@ async function saveToInbox() {
     if (btn) { btn.disabled = false; btn.textContent = was; }
   }
   if (data.ok) {
+    // A paste of nothing but links is a BATCH, and a batch has three outcomes at once.
+    // Saying "ok" over twenty links while three of them went nowhere is the failure
+    // this whole file is built around, so each outcome is counted and the ones that
+    // did not land are named.
+    if (data.batch) {
+      document.getElementById('content').value  = '';
+      document.getElementById('filename').value = '';
+      document.getElementById('save-panel').classList.remove('open');
+      if (!data.items.length || !insertItems(data.items)) pollSoon();
+      else if (data.items[0]) flashSaved(data.items[0]);
+      alert(batchSummary(data));
+      return;
+    }
     // An add that found the story already here changed nothing on disk, so saying
     // "saved" would be a lie — and the thing worth knowing is whether it has been
     // wikified already, since that is the difference between "go read it" and

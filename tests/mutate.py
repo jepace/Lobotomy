@@ -1569,6 +1569,40 @@ MUTATIONS = [
      '    if isinstance(exc, _LLMError) and exc.long_backoff:\n        evt["msg"] = (',
      '    if False:\n        evt["msg"] = (',
      'tools/agent.py'),
+    # A paste of nothing but links became ONE junk item: is_url required no newline.
+    ('inbox_add: a paste of nothing but links is a batch',
+     '    batch = None if name else _split_url_batch(content)',
+     '    batch = None',
+     'tools/serve.py'),
+    # The safety half. An article that merely CONTAINS a URL line must never be split —
+    # destroying a paste is what this route has already been repaired for three times.
+    ('url_batch: every line must be a URL, or it is one note',
+     '    if len(urls) < 2 or not all(_BARE_URL_LINE.match(l) for l in urls):',
+     '    if len(urls) < 2:',
+     'tools/serve.py'),
+    ('url_batch: one URL is not a batch',
+     '    if len(urls) < 2 or not all(_BARE_URL_LINE.match(l) for l in urls):',
+     '    if not all(_BARE_URL_LINE.match(l) for l in urls):',
+     'tools/serve.py'),
+    # _fetch_and_patch spawns a thread per capture, so an unbounded paste fans out one
+    # concurrent fetch per URL at one site.
+    ('url_batch: the batch is capped',
+     '    over = urls[_MAX_URL_BATCH:]\n    urls = urls[:_MAX_URL_BATCH]',
+     '    over = []',
+     'tools/serve.py'),
+    # Twenty links and one failure must save nineteen, not none.
+    ('url_batch: one bad link does not lose the rest',
+     '        except Exception as e:                      # one bad URL must not lose the rest',
+     '        except NotImplementedError as e:',
+     'tools/serve.py'),
+    ('inbox: a batch names the links that did not land',
+     "  if (data.failed.length) {\n    msg += '\\n\\nNot saved:\\n' + data.failed",
+     "  if (false) {\n    msg += '\\n\\nNot saved:\\n' + data.failed",
+     'tools/templates/inbox.html'),
+    ('inbox: a batch counts duplicates and failures, not just what saved',
+     "  if (data.duplicates.length) bits.push(`${data.duplicates.length} already here`);",
+     "  if (false) bits.push(`${data.duplicates.length} already here`);",
+     'tools/templates/inbox.html'),
     # One /reading-list load read 8.2 MB — 100% of the reading list — to draw a title
     # and a 200-character excerpt per row. 18 seconds on the jail, while the server was
     # idle in the ingest's pacing sleep.

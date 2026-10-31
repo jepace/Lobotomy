@@ -3780,6 +3780,76 @@ def _new_inbox_item(path):
         return None
 
 
+#: One paste should not be able to open hundreds of sockets. `_fetch_and_patch` spawns a
+#: thread per capture, so an unbounded batch fans out one concurrent fetch per URL — at
+#: one site, each with a 15-second socket timeout. Fifty is far past any real paste and
+#: still bounded; the rest are reported rather than silently dropped.
+_MAX_URL_BATCH = 50
+
+_BARE_URL_LINE = re.compile(r"^https?://\S+$")
+
+
+def _split_url_batch(content: str):
+    """The URLs in `content`, but ONLY if the paste is nothing else. Else None.
+
+    **Every non-blank line must be a bare URL**, and there must be at least two. That
+    strictness is the whole safety argument: an article that merely CONTAINS a line with
+    a URL on it must never be split into pieces, because the thing this route must never
+    do is destroy a paste — the lesson `/inbox/add` already paid for three times over.
+    One URL is not a batch; it is the existing single-URL path, unchanged.
+    """
+    lines = [l.strip() for l in (content or "").splitlines()]
+    urls = [l for l in lines if l]
+    if len(urls) < 2 or not all(_BARE_URL_LINE.match(l) for l in urls):
+        return None
+    # Order preserved, exact repeats within the one paste collapsed — pasting the same
+    # link twice is a slip, and `_capture_article` would report the second as a duplicate
+    # of the first anyway, which reads as an error rather than as nothing happening.
+    seen, out = set(), []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def _add_url_batch(urls):
+    """Capture each URL, and report per URL rather than as one verdict.
+
+    A batch has three outcomes at once — saved, already here, failed — and collapsing
+    them into one message is how twenty links become "ok" while three of them went
+    nowhere. Each is captured through `_capture_article`, so a batch gets the same
+    duplicate check, the same `_unique_raw_name` collision handling and the same single
+    write chokepoint as every other door.
+    """
+    over = urls[_MAX_URL_BATCH:]
+    urls = urls[:_MAX_URL_BATCH]
+    items, duplicates, failed = [], [], []
+    for u in urls:
+        try:
+            res = _capture_article(u, source="manual")
+        except Exception as e:                      # one bad URL must not lose the rest
+            log.exception("batch add failed for %s", u)
+            failed.append({"url": u, "error": str(e)})
+            continue
+        if res.get("error"):
+            failed.append({"url": u, "error": res["error"]})
+        elif res.get("duplicate"):
+            duplicates.append({"url": u, "title": res.get("title") or u,
+                               "filename": res["path"].name,
+                               "wikified": res.get("wikified", False)})
+        else:
+            row = _new_inbox_item(res["path"])
+            if row:
+                items.append(row)
+    for u in over:
+        failed.append({"url": u, "error": f"over the {_MAX_URL_BATCH}-link limit for one paste"})
+    log.info("inbox/add batch: %d saved, %d already here, %d failed",
+             len(items), len(duplicates), len(failed))
+    return {"ok": True, "batch": True, "added": len(items), "items": items,
+            "duplicates": duplicates, "failed": failed}
+
+
 @app.route("/inbox/add", methods=["POST"])
 @require_login
 def inbox_add():
@@ -3800,6 +3870,18 @@ def inbox_add():
         if not dot or len(ext) > 10:
             stem, ext = name, ""
         name = stem[:100] + ("." + ext if ext else "")
+    # A paste that is NOTHING BUT URLs is a batch of articles, not one note.
+    # Asked for by someone reading the NYT app on a phone: *"the share sheet is like 3
+    # clicks, with a big slow step, away"*. There is no API for a NYT saved list, so the
+    # cheap phone-side move is Copy Link (instant, native, no Shortcut launch) into a
+    # running note, and then one paste here — which until now produced a single junk item
+    # whose title was the first 60 characters of a URL.
+    #
+    # An explicit filename opts OUT: naming one file and handing over twenty URLs is
+    # ambiguous, and the unambiguous reading is "this is one item".
+    batch = None if name else _split_url_batch(content)
+    if batch:
+        return _add_url_batch(batch)
     # If the content is just a bare URL, save immediately and fetch in background
     is_url = content.startswith("http") and "\n" not in content and " " not in content.strip()
     if is_url:

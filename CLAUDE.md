@@ -371,6 +371,42 @@ web form's alone: an article whose fetch failed could not be retried from the sh
 which answered "Already saved" and left the empty item sitting there, and the reasoning for
 that exception never had anything to do with which door you came through.
 
+**A paste of nothing but links is a BATCH of articles, not one note** (`_split_url_batch`,
+`_add_url_batch`, `_MAX_URL_BATCH`, `batchSummary`). Asked for by someone reading the NYT
+app on a phone: *"The share sheet is like 3 clicks, with a big slow step, away. Is there a
+way to access my NYT saved list or something?"*
+
+**There is no NYT saved-list API** — the developer program is public-content APIs (Article
+Search, Top Stories, RSS) with no account-scoped endpoint and no user OAuth, and scraping
+the list needs a logged-in session cookie against a JS-rendered page. So the cheap
+phone-side move is **Copy Link** — instant, native, no Shortcut launch — into a running
+note, then one paste here. Until now that produced a SINGLE junk item: `is_url` required
+`"\n" not in content`, so twenty links became one pasted note whose filename was the first
+60 characters of the first URL.
+
+**The discriminator is the whole safety argument.** Every non-blank line must be a bare
+URL, and there must be at least two. An article that merely CONTAINS a line with a URL on
+it must never be split into pieces — destroying a paste is what this route has already
+been repaired for three separate times, and a batch rule that fired on prose would be a
+fourth. One URL is not a batch; it is the existing single-URL path, untouched. An explicit
+`filename` opts out, because naming one file and handing over twenty URLs is ambiguous and
+the unambiguous reading is *this is one item*.
+
+**A batch has three outcomes at once** — saved, already here, failed — so it reports per
+URL rather than as one verdict: collapsing them is how twenty links report "ok" while
+three went nowhere. One bad URL cannot lose the rest. And it is **capped at
+`_MAX_URL_BATCH`**, because `_fetch_and_patch` spawns a thread per capture, so an
+unbounded paste fans out one concurrent fetch per URL at one site, each with a 15-second
+socket timeout; the overflow is reported rather than silently dropped.
+
+**`batchSummary` is a function for one reason, and it is this file's oldest trap.** The
+first test asserted that the string `"Not saved:"` appears in `saveToInbox`. It does — and
+a mutation replacing the condition around it with `if (false)` left the string untouched,
+so the test passed over a batch that had stopped naming its failures entirely.
+`mutate.py` reported MISSED and was right. **The fix is the one that always works: make it
+something a test can CALL**, which is why the summary is lifted and run under `node`
+rather than grepped. That is the fourth time this file has recorded the same trap.
+
 **A URL lookup now reads frontmatter, not whole articles.** Both copies called `read_text()`
 on every file in `raw/` to compare one field; measured at 600 captures that is ~60MB of
 reads per save. A bounded 8KB prefix covers it, and frontmatter that runs past the prefix
