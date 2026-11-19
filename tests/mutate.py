@@ -35,6 +35,32 @@ RUNNER = REPO / "tests" / "run_all.py"
 # the mutation is reported as STALE rather than silently skipped: an anchor that stopped
 # matching means the code moved and the mutation is no longer testing what it claims.
 MUTATIONS = [
+    # An ingest was handed 93,637 chars of one section and asked to rewrite it against a
+    # 65,536-char output budget. It had no legal move. Both doors that hand a section back
+    # must cap it — capping one routes the model into the other.
+    ("section-handback: the cap exists at all",
+     '    if _section_rewritable(_unlinked_len(text)):\n        return f"{heading}\\n{text}"',
+     '    if True:\n        return f"{heading}\\n{text}"'),
+    ("section-handback: read_section goes through it",
+     '    return f"{_section_handback(path, section, heading, body[start:end].strip())}{outline}"',
+     '    return f"{heading}\\n{body[start:end].strip()}{outline}"'),
+    ("section-handback: the unread-section refusal goes through it too",
+     '            f\'{_section_handback(path, section, heading, old_text)}\\n</section>\'',
+     '            f\'{heading}\\n{old_text}\\n</section>\''),
+    # Bounding each block's preview bounds nothing: 600 short bullets outlined to a
+    # payload LARGER than the text it stood in for.
+    ("section-handback: the outline is bounded in block COUNT",
+     '    for flat in flats[:max_blocks]:',
+     '    for flat in flats:'),
+    # A refusal naming a move that cannot be made is principle 4's worst case: telling the
+    # model to MERGE into text it was never given.
+    ("section-handback: the refusal's advice follows its payload",
+     '        _quoted = _section_rewritable(_unlinked_len(old_text))',
+     '        _quoted = True'),
+    ("page-report: RATCHET reports a section no tool can consolidate",
+     '        if s["generated"] or s["is_title"] or _section_rewritable(s["chars"]):\n            continue',
+     '        if True:\n            continue',
+     "tools/page_report.py"),
     ("heading-rule: date",
      '        elif _DATED_HEADING_RE.search(name):\n            bad.append((name, "names a date"))',
      '        elif False:\n            bad.append((name, "names a date"))'),
@@ -1797,6 +1823,21 @@ def main() -> int:
     print(f"\n{caught} caught, {missed} missed, {stale} stale.")
     if missed or stale:
         print("A MISSED guard can be deleted without any test objecting. Write the test.")
+
+    # A pattern that matches NOTHING used to print "0 caught, 0 missed, 0 stale" and exit
+    # 0 — identical to a clean run, so a run that verified no guard at all read as a pass.
+    # Observed: `mutate.py "section-handback|page-report"` selected zero mutations, because
+    # the pattern is a substring test and not a regex, and the result was very nearly
+    # accepted as six CAUGHT.
+    #
+    # Same shape as the chromium launcher in CLAUDE.md, where breaking it made 65 tests
+    # SKIP and no runner counted that as a failure: the defect and its own symptom are
+    # indistinguishable, so the only fix is to make the empty case loud.
+    if pattern and not (caught or missed or stale):
+        print(f"\nNo mutation name contains {pattern!r} — nothing was tested, and this is "
+              f"NOT a pass.\nThe argument is a plain substring, not a regex and not a "
+              f"list: run one pattern at a time.")
+        return 2
     return 1 if (missed or stale) else 0
 
 

@@ -377,10 +377,21 @@ app on a phone: *"The share sheet is like 3 clicks, with a big slow step, away. 
 way to access my NYT saved list or something?"*
 
 **There is no NYT saved-list API** — the developer program is public-content APIs (Article
-Search, Top Stories, RSS) with no account-scoped endpoint and no user OAuth, and scraping
-the list needs a logged-in session cookie against a JS-rendered page. So the cheap
-phone-side move is **Copy Link** — instant, native, no Shortcut launch — into a running
-note, then one paste here. Until now that produced a SINGLE junk item: `is_url` required
+Search, Top Stories, RSS) with no account-scoped endpoint and no user OAuth, and reaching
+the list needs a logged-in session cookie.
+
+**This entry used to present the batch paste as the ANSWER to that question, and it is
+not.** Replying *"so the cheap phone-side move is Copy Link into a running note, then one
+paste here"* answered a question nobody asked: *"i dont understand what you built. i have
+to copy the url and switch to the web page and add the thing to lobotomy? fuck that..."* —
+correct, and the right objection. The ask was for the saved list to BE the queue, which
+means one tap in the app and nothing afterwards; a paste on the desktop is more work than
+the share sheet it was meant to replace. **A true finding ("no API") does not license
+substituting a chore for the feature** — the honest reply is that it needs the session
+cookie, with the costs named, not a different workflow presented as a win. The batch paste
+is kept because it is cheap, tested and occasionally handy, and it is **not** a fix for
+the share-sheet cost. Until it existed a multi-link paste produced a SINGLE junk item:
+`is_url` required
 `"\n" not in content`, so twenty links became one pasted note whose filename was the first
 60 characters of the first URL.
 
@@ -2385,6 +2396,106 @@ requests. Without an offset you get the outline; with an explicit `offset=0` you
 paged chunk. That distinction is load-bearing — the Regenerate Workflow rewrites a whole
 page with `update_file`, which requires full read coverage, which requires paging to be
 reachable.
+
+**And `read_section` never learned that lesson, which is how an ingest was handed a task
+it could not perform** (`_section_handback`, `_section_rewritable`, `_section_outline`).
+Reported as *"he read it and then tried to nuke it?!?"* over this log:
+
+    ⚙ read_section wiki/entities/donald-trump.md § Key Policies & Actions (2026)
+    ✗ update_section … — this would cut 'Key Policies & Actions (2026)' by 100%
+      (93637 chars of prose now, 895 in what you sent; links are discounted)
+
+**The model was not misbehaving and the guard was right.** `_read_section` returned
+`body[start:end]` with **no size cap at all** — 93,637 chars, ~23,000 tokens — while
+`max_tokens` is 16,384, so the output budget is ~65,536 chars. **The section was 1.4×
+everything the model can emit in one response.** It read all of it, could not reproduce
+it, and sent the only thing it could: a summary. There was no legal move, and the shrink
+guard's long branch then said exactly the right thing (*don't retry a condensed version,
+call `append_section`*). Principle 4's worst case arriving through a READ rather than a
+refusal.
+
+Two costs, and the quiet one is worse. The loud one is ~23,000 tokens re-sent on every
+remaining round of that ingest, which at `max_rpm: 1` is the most expensive thing in the
+run. The quiet one is that **the payload cannot be acted on as a rewrite at all**, so
+those bytes buy a refusal instead of a merge.
+
+**Two doors hand a section back and both were uncapped**, so they share one helper:
+`read_section`, and `update_section`'s unread-section refusal. Capping either alone routes
+the model into the other one round later and changes nothing — the same
+two-readers-of-one-thing shape this file keeps paying for.
+
+The threshold is **`_read_file`'s own whole-page rewrite rule** (`max_tokens * 4 // 2`),
+not a new constant: three places already ask "can this be rewritten whole", and a fourth
+is a fourth thing to drift. Above it the reply carries the section's *blocks* — paragraphs
+and list items, with sizes and openings — so the agent can still see that its new material
+is already covered, which is the one thing a merge was buying.
+
+Three things it has to get right:
+
+- **`max_blocks` is load-bearing, not tidiness.** Bounding each block's preview bounds
+  nothing: the shape this exists for is a section grown one bullet per ingest, so 600
+  short bullets outlined to a payload **larger** than the text it stood in for — a cap
+  that makes the expensive case more expensive. The first version had exactly that hole.
+  Measured after: 54,599 → 7,156 chars on the bullet shape, 36,078 → 2,592 on the prose
+  one.
+- **The refusal's prose has to follow its payload.** It said "MERGE your changes into it",
+  which above the cap instructs the model to merge into text it was never given —
+  principle 4's worst case again, one violation renamed into another. Above the cap both
+  the handback and the surrounding refusal name `append_section`, and both rule out
+  re-reading, since `read_section` now returns the same outline.
+- **Read coverage is still credited for a capped read.** Withholding it looks more honest
+  and is worse: it would bounce the agent into `update_section`'s refusal for the same
+  outline a round later. The gate on a condensed rewrite is the shrink guard, which
+  already names `append_section` for exactly this size.
+
+**The underlying defect is not fixed by this and is now reported instead: that section is
+write-locked except for growth.** Walk the options on a section past the rewrite budget —
+`update_section` is refused for shrinking; `allow_shrink` needs it re-emitted whole, which
+exceeds the budget; `update_file` is steered to the section tools well below that size;
+`append_section` succeeds **and only ever makes it bigger**. A one-way ratchet, so every
+future ingest can add and none can ever consolidate. `page_report.py`'s new **RATCHET**
+check reports it, kept distinct from `PILE` because the two call for different work: a
+pile is untidy and an LLM pass repairs it, while this **cannot be repaired by the agent at
+any cost** and needs a human. It imports `_section_rewritable` rather than copying the
+rule, and a test asserts `page_report._section_rewritable is agent._section_rewritable` —
+two copies would disagree about which sections are stuck. The real repair is splitting one
+into its own page, which is a judgement about the subject, so there is no `--apply`.
+
+Also observed on that page and not fixed: the heading is `Key Policies & Actions (2026)`,
+a bolted-on date qualifier that `_absorb_date_qualifiers` exists to strip. It predates the
+guard, and nothing sweeps existing headings — and `page_report.py`'s own docstring already
+records why a mechanical fix is unsafe there, since stripping the date collides it with
+`(2025)` into a duplicate.
+
+**`mutate.py` reported the second door MISSED and the test was the thing at fault — this
+file's oldest trap in a new disguise.** The assertion was
+`assertNotIn(self.text, out)`, and `old_text` is `body[start:end].strip()` while the
+fixture's paragraphs end in a trailing space from `"word " * 900`. So **that assertion was
+true whatever the code did**: with the refusal reverted to a raw dump the reply was 41,502
+chars and all eighteen tests passed. Previous occurrences were a test grepping a string
+the code and a COMMENT both contained; this one never mentions a comment, which is the
+point — **the root cause is not grep, it is an assertion pinned to an exact string that
+can stop reaching the code with nothing saying so.** It measures the PROPERTY now (the
+reply is bounded relative to the section) and fails with the number:
+
+    AssertionError: 41502 not less than 10205 : the unread-section refusal is
+    dumping the section: 41,502 chars for a 40,822-char section
+
+Two more fixture faults, both familiar. A small-page fixture asserted the per-section
+branch's "MERGE" wording and got the WHOLE-PAGE branch's "REVISE", because that refusal
+only reaches the per-section branch above `_WIKI_READ_LIMIT` — the identical branch-split
+trap recorded for `test_handback_refusals.py`, where `mutate.py` reported the long branch
+MISSED. And a fixture reusing the name `Overview` built a page with two of them, so
+`_find_section` returned the template's copy.
+
+**And `mutate.py` itself accepted a pattern matching nothing and called it a pass.**
+`mutate.py "section-handback|page-report"` printed `0 caught, 0 missed, 0 stale` and
+exited 0 — byte-identical to a clean run — because the argument is a plain substring test,
+not a regex and not a list. A run that verified **no guard at all** was very nearly read
+as six CAUGHT. That is the chromium-launcher shape exactly: breaking the launcher made 65
+tests SKIP and no runner counts a skip as failure, so **the defect and its own symptom are
+indistinguishable** and the only fix is to make the empty case loud. A zero-match pattern
+now exits 2 and says the argument takes one pattern at a time.
 
 ### Reorganizing a page
 

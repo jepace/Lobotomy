@@ -12,7 +12,7 @@ re-run after each repair pass and watched going down.
 It reads. It never writes, and it offers no `--apply`, for the same reason
 `overview_drift.py` does not: every repair here is a judgement about what the page is for.
 
-Nine checks, each reported separately because each calls for different work:
+Ten checks, each reported separately because each calls for different work:
 
   EMPTY         a section heading with no body under it. Benign on a new page; on an old
                 one with sources for that heading's subject in its frontmatter, it means
@@ -34,6 +34,12 @@ Nine checks, each reported separately because each calls for different work:
                 page's main section is supposed to be its largest — so both signals are
                 required. This is what distinguishes "Second Presidential Term", holding
                 some thirty-five unrelated topics, from a long section about one thing.
+  RATCHET       a section past what the model can emit in one response, so NO write tool
+                can consolidate it: update_section is refused for shrinking, allow_shrink
+                needs it re-emitted whole, update_file is steered away, and
+                append_section — the one call that works — only makes it bigger. Distinct
+                from PILE because a pile is untidy and an LLM pass fixes it, while this
+                needs a human: every future ingest can add to it and none can ever cut it.
   REPEATS       near-identical paragraphs and list items, wherever they sit on the page.
                 The expensive finding: a page with two parallel sections for one pile (one
                 prose, one bullets) says everything twice, and the duplicates DRIFT — two
@@ -75,7 +81,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent
 from agent import (_DATED_OPENER_RE, _MD_LINK_RE, _SUMMARY_SECTIONS, _TRAILING_DATE_RE,
                    _WIKI_READ_LIMIT, _bad_headings, _fm_title, _heading_dupes,
-                   _norm_heading, _norm_prose, _sentences, wiki_pages)
+                   _norm_heading, _norm_prose, _section_rewritable, _sentences,
+                   wiki_pages)
 
 HEAD_RE = re.compile(r"^(#{1,6})[ \t]*(\S.*?)[ \t]*$", re.MULTILINE)
 
@@ -281,6 +288,42 @@ def piles(secs: list, share: float = 0.2, min_dated: int = 5) -> list:
             out.append({"name": s["name"], "chars": s["chars"],
                         "share": s["chars"] / total, "dated": len(dated)})
     out.sort(key=lambda r: -r["dated"])
+    return out
+
+
+# -- RATCHET ----------------------------------------------------------------------------
+
+def unrewritable(secs: list) -> list:
+    """Sections no write tool can ever consolidate — they can only grow.
+
+    A distinct finding from PILE, and the distinction is the point: a PILE is untidy and
+    an LLM pass can repair it, while this cannot be repaired by the agent at all, at any
+    cost, so it needs you rather than another ingest.
+
+    Walk what is available on a section past `_section_rewritable`:
+
+      update_section                  refused: any version short enough to emit cuts the
+                                      section by more than the shrink guard allows
+      update_section allow_shrink     needs the whole section re-emitted, which exceeds
+                                      the output budget. Not reachable
+      update_file                     steered to the section tools above half the budget,
+                                      and a page carrying a section this size is well past
+      append_section                  succeeds — and only ever makes it bigger
+
+    So every future ingest touching it can add and can never consolidate: a one-way
+    ratchet, and the thing that made one section of `donald-trump.md` 93,637 chars. The
+    repair is to split it, which is a judgement about what the subject is.
+
+    Reported against the output budget rather than `_WIKI_READ_LIMIT`, because the limit
+    that bites here is what the model can WRITE, not what it can be shown.
+    """
+    out = []
+    for s in secs:
+        if s["generated"] or s["is_title"] or _section_rewritable(s["chars"]):
+            continue
+        out.append({"name": s["name"], "chars": s["chars"],
+                    "blocks": len([p for p in re.split(r"\n\s*\n", s["body"]) if p.strip()])})
+    out.sort(key=lambda r: -r["chars"])
     return out
 
 
@@ -722,6 +765,7 @@ def analyze(page: Path, *, overlap: float = 0.5, subsets: bool = False) -> dict:
         "collisions": date_strip_collisions(secs),
         "drift": summary_drift(secs),
         "piles": piles(secs),
+        "ratchet": unrewritable(secs),
         "repeats": repeated_units(live, overlap=overlap),
         "echoes": repeated_sentences(live),
         "dead": dead_links(page, links),
@@ -823,6 +867,20 @@ def print_report(r: dict, *, only: set, repeats: int, subsets: bool, show_links:
         counted += len(r["piles"])
         print()
 
+    if want("ratchet") and r["ratchet"]:
+        _budget = (agent.cfg_int("llm", "max_tokens", default=16384) * 4) // 2
+        print(f"RATCHET  {len(r['ratchet'])} section(s) too long for any tool to "
+              f"consolidate — they can only grow")
+        for s in r["ratchet"]:
+            print(f"    ## {s['name']}  — {s['chars']:,} chars "
+                  f"({s['chars'] / _budget:.1f}× the {_budget:,}-char rewrite budget), "
+                  f"{s['blocks']:,} blocks")
+        print(f"  append_section is the only call that succeeds here, and it makes them "
+              f"bigger. Splitting one\n  into its own page is the repair, and it is a "
+              f"judgement about the subject — no pass can do it.")
+        counted += len(r["ratchet"])
+        print()
+
     if want("repeats") and r["repeats"]:
         ident = sum(1 for x in r["repeats"] if x["identical"])
         print(f"REPEATS  {len(r['repeats'])} near-duplicate pair(s), {ident} identical")
@@ -917,7 +975,7 @@ def main(argv=None) -> int:
     ap.add_argument("page", help="wiki-relative path or bare slug, e.g. donald-trump")
     ap.add_argument("--only", default="",
                     help="comma-separated checks: sections,empty,headings,drift,pile,"
-                         "repeats,echoes,links,targets,sources")
+                         "ratchet,repeats,echoes,links,targets,sources")
     ap.add_argument("--repeats", type=int, default=15,
                     help="how many REPEATS pairs to print (default 15)")
     ap.add_argument("--overlap", type=float, default=0.5,

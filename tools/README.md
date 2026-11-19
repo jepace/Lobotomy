@@ -428,7 +428,9 @@ loop.
 ### `page_report.py` — everything mechanically wrong with one page
 Written for `donald-trump.md`: 223,659 bytes, fourteen sections, 53.8s to autolink against
 13,195 titles, and "pretty much a complete mess". The mess was **nine separate defects**,
-most of them counting problems nobody can do by eye at that size.
+most of them counting problems nobody can do by eye at that size. Ten checks now:
+`RATCHET` was added after one of that page's sections turned out to be unrepairable by the
+agent at any cost.
 
 ```sh
 python3 tools/page_report.py entities/donald-trump.md
@@ -447,6 +449,7 @@ the count drop.
 | `HEADINGS` | what the write guards would refuse, plus the trap two of them make together: `(2025)` and `(2026)` each absorb to one name, so stripping the dates COLLIDES them into a duplicate |
 | `DRIFT` | the summary measured with `overview_drift.py`'s own numbers |
 | `PILE` | a section far larger than its siblings **and** full of dated news — both signals, since a page's main section is supposed to be its biggest |
+| `RATCHET` | a section past what the model can emit in one response, so **no write tool can consolidate it**: `update_section` is refused for shrinking, `allow_shrink` needs it re-emitted whole, `update_file` is steered away, and `append_section` — the only call that works — makes it bigger. Distinct from `PILE` because a pile is untidy and an LLM pass fixes it, while this needs a human |
 | `REPEATS` | near-identical paragraphs and bullets anywhere on the page |
 | `ECHOES` | one sentence appearing verbatim twice |
 | `LINKS` | dead targets, `White [House](…)`, body links into `wiki/sources/` |

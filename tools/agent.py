@@ -332,6 +332,105 @@ def _page_section_names(body: str, title: str = "") -> "list[tuple]":
     return out
 
 
+def _section_rewritable(cmp_len: int) -> bool:
+    """Can the model re-emit a section of this size, with its additions, in one response?
+
+    The same rule `_read_file` applies to a whole page (`_rewritable`), applied to a
+    section: at most half the output budget, so there is room for what is being added.
+    Deliberately that existing rule rather than a new constant — three places now ask
+    "can this be rewritten whole", and a fourth threshold is a fourth thing to drift.
+    """
+    return cmp_len <= (cfg_int("llm", "max_tokens", default=16384) * 4) // 2
+
+
+def _section_outline(text: str, preview: int = 200, max_blocks: int = 60) -> str:
+    """A section's own shape: each block, its size, and its opening `preview` chars.
+
+    `_page_outline` one level down, for a section too long to quote. A section's blocks
+    are its paragraphs and its list items, which is what the agent needs in order to say
+    "the thing I am adding is already covered in the fourth bullet" without being handed
+    twenty thousand tokens it cannot act on.
+
+    **`max_blocks` is load-bearing, not tidiness.** Bounding each block's preview bounds
+    nothing overall: the shape this exists for is a section that grew one bullet per
+    ingest, so 500 short bullets would outline to a payload LARGER than the text it is
+    standing in for — a cap that makes the expensive case more expensive. The first
+    version of this had exactly that hole.
+    """
+    blocks, buf = [], []
+    for line in text.splitlines():
+        if _TL_BULLET_LIKE.match(line) or not line.strip():
+            if buf:
+                blocks.append("\n".join(buf))
+                buf = []
+            if line.strip():
+                buf = [line]
+        else:
+            buf.append(line)
+    if buf:
+        blocks.append("\n".join(buf))
+    flats = [f for f in (" ".join(b.split()) for b in blocks) if f]
+    # Shorter previews when there are many blocks, so the whole outline stays bounded
+    # whatever shape the section grew into.
+    if len(flats) > max_blocks // 3:
+        preview = max(60, preview // 2)
+    lines = []
+    for flat in flats[:max_blocks]:
+        shown = flat[:preview]
+        more = f" …[+{len(flat) - len(shown):,} more chars]" if len(flat) > len(shown) else ""
+        lines.append(f"  - ({len(flat):,} chars) {shown}{more}")
+    if len(flats) > max_blocks:
+        lines.append(f"  … and {len(flats) - max_blocks:,} more block(s), not listed. "
+                     f"A section with this many blocks is a page waiting to be split.")
+    return "\n".join(lines) if lines else "  (no content)"
+
+
+#: A line that starts a block of its own in `_section_outline`: a bullet or a numbered
+#: row. Looser than `_TL_BULLET_RE`, which parses a timeline entry — this only has to
+#: decide where one block ends and the next begins.
+_TL_BULLET_LIKE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+
+
+def _section_handback(path: str, section: str, heading: str, text: str) -> str:
+    """A section's content for a reply, quoted whole or outlined when it is too long.
+
+    **Two doors hand a section back and both dumped it unbounded**, which is how an
+    ingest was handed 93,637 characters of `donald-trump.md` § "Key Policies & Actions
+    (2026)" and then asked to rewrite it. `max_tokens` is 16,384, so the output budget is
+    ~65,536 chars: the section was 1.4× everything the model can emit in one response. It
+    read all of it, could not reproduce it, and sent 895 chars — which the shrink guard
+    correctly refused. Reported as *"he read it and then tried to nuke it?!?"*; it was
+    not a misbehaving model, it was the only move available to one.
+
+    Two costs, and the quiet one is worse. The obvious one is ~23,000 tokens re-sent on
+    every remaining round of that ingest, which at `max_rpm: 1` is the most expensive
+    thing in the run. The quiet one is that the payload CANNOT be acted on as a rewrite,
+    so the bytes buy a refusal rather than a merge — the `read_file` outline lesson
+    exactly, in the one reader that never learned it.
+
+    `read_section` and `update_section`'s unread refusal share this, because capping one
+    alone routes the model straight into the other and nothing would have changed. The
+    rule is `_section_rewritable`, which is `_read_file`'s own whole-page rule.
+    """
+    if _section_rewritable(_unlinked_len(text)):
+        return f"{heading}\n{text}"
+    return (
+        f"{heading}\n"
+        f"[This section is {_unlinked_len(text):,} chars of prose — more than half of "
+        f"what you can emit in one response, so it is NOT quoted here and you cannot "
+        f"rewrite it whole. Its blocks are listed below so you can see what it already "
+        f"covers.]\n\n"
+        f"{_section_outline(text)}\n\n"
+        f"[To add new material here call append_section(path='{path}', "
+        f"section='{section}', text=…) with ONLY the new material — an update_section "
+        f"rewrite of this section will be refused, because any version short enough for "
+        f"you to send discards most of it. If what you have to add is already "
+        f"covered by one of those blocks, add nothing. If it is a subject of its own, "
+        f"give it its own page instead, which is the better answer for a section this "
+        f"size.]"
+    )
+
+
 def _page_outline(body: str, title: str = "", preview: int = 0) -> str:
     """The page's shape: every section, its size, and optionally its opening `preview`
     chars. Shared by read_file (for a page too large to quote) and by read_section's
@@ -2283,7 +2382,12 @@ def _read_section(args: dict) -> str:
               if h.strip().lower() not in _skip]
     outline = (f"\n\n[Other sections on this page: {', '.join(others)}. "
                f"Put the new information wherever it actually belongs.]") if others else ""
-    return f"{heading}\n{body[start:end].strip()}{outline}"
+    # Capped by _section_handback when the section is too long to re-emit. Read coverage
+    # is still credited above, deliberately: both handback doors cap now, so withholding
+    # the credit would only bounce the agent into update_section's refusal for the same
+    # outline a round later. The gate on a condensed rewrite is the shrink guard, which
+    # names append_section for exactly this size of section.
+    return f"{_section_handback(path, section, heading, body[start:end].strip())}{outline}"
 
 
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
@@ -3108,16 +3212,31 @@ def _update_section(args: dict) -> str:
             f"belongs in one of those instead, call update_section on that one — you have "
             f"the list, so do not re-read the page to find it."
         ) if _others else ""
+        # The section itself may be too long to quote — see _section_handback, which is
+        # shared with read_section so capping one door cannot leave the other open. The
+        # advice has to follow the payload: telling the model to MERGE into text it has
+        # not been given is principle 4's worst case, a refusal naming a move that cannot
+        # be made. Above the cap the handback names append_section and so does this.
+        _quoted = _section_rewritable(_unlinked_len(old_text))
+        _how = (
+            "Its current content is below, and is now marked as read. Merge your changes "
+            "into it and call update_section again — do NOT call read_section first.\n\n"
+            "**You composed that draft without this text in front of you.** MERGE, do not "
+            "replace: the section may already say what you were about to add. Resending "
+            "the same content unchanged is the one response that wastes what you are "
+            "being handed."
+        ) if _quoted else (
+            "This section is too long to quote back or to rewrite whole — its shape is "
+            "below and it is now marked as read, so do NOT call read_section on it: that "
+            "returns this same outline. Use append_section with only your new material, "
+            "as the note below says."
+        )
         return (
             f"Error: update_section refused — you had not read '{section}' in {path} this "
             f"session, so your rewrite would discard what is there.\n\n"
-            f"Its current content is below, and is now marked as read. Merge your changes "
-            f"into it and call update_section again — do NOT call read_section first.\n\n"
-            f"**You composed that draft without this text in front of you.** MERGE, do not "
-            f"replace: the section may already say what you were about to add. Resending "
-            f"the same content unchanged is the one response that wastes what you are "
-            f"being handed.\n\n"
-            f'<section path="{path}" name="{section}">\n{heading}\n{old_text}\n</section>'
+            f"{_how}\n\n"
+            f'<section path="{path}" name="{section}">\n'
+            f'{_section_handback(path, section, heading, old_text)}\n</section>'
             f"{_elsewhere}"
         )
     _old_cmp, _new_cmp = _unlinked_len(old_text), _unlinked_len(new_text)
