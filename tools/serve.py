@@ -186,7 +186,8 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title, _H1_RE,
                    session_touched_pages as agent_session_touched_pages,
                    _normalize_capture_url,
                    _read_file, _read_section, init_session,
-                   output_budget, output_budget_tokens)
+                   output_budget, output_budget_tokens,
+                   immutable_page_reason, _replace_text, _unlinked_len)
 
 from job_queue import JobQueue
 from auth  import (user_exists, create_user, authenticate, get_user, update_password,
@@ -2599,6 +2600,14 @@ def wiki_save(page_path):
         return {"error": "Invalid path"}, 400
     if not p.exists():
         return {"error": "Page not found"}, 404
+    # The editor used to refuse only a path outside wiki/ and a page that was not there,
+    # while the agent tools refused source pages and the generated ones — the same rule
+    # described as an invariant, holding on one door and not the other. Asked to close it:
+    # *"Close the holes. If I need to I have vim."* A shell on the box is a deliberate and
+    # visible way round; an unguarded route is an accident waiting for the next client.
+    _why = immutable_page_reason(p)
+    if _why:
+        return {"error": _why, "code": "IMMUTABLE"}, 400
     data = request.get_json(silent=True) or {}
     content = data.get("content")
     if content is None:
@@ -3315,6 +3324,115 @@ def api_mcp_read():
                 "budget_tokens": output_budget_tokens(), "content": body}
 
 
+def _mcp_write_target(raw_path: str):
+    """Resolve and authorise a page for an MCP write. Returns (Path, error_or_None)."""
+    path, perr = _mcp_path(raw_path)
+    if perr:
+        return None, (perr, 400)
+    p = REPO_ROOT / path
+    if not p.is_file():
+        return None, ({"error": f"no page at {path}", "code": "NOT_FOUND"}, 404)
+    why = immutable_page_reason(p)
+    if why:
+        return None, ({"error": why, "code": "IMMUTABLE"}, 400)
+    return p, None
+
+
+@app.route("/api/mcp/write", methods=["POST"])
+def api_mcp_write():
+    """Replace a whole page — the editor's own shape, for a caller holding `mcp_key`.
+
+    Deliberately `wiki_save`'s behaviour rather than `update_file`'s: one get, one write,
+    `_atomic_write` for the history snapshot and the ownership inheritance, then the
+    autolink. The accretion guards are not applied here and `_truncation_refusal` is, for
+    the reasons at the top of this block.
+
+    `begin_write_scope()` and the `write_reason` are what put this in page history as one
+    revision labelled for what it was, so `/wiki/<path>/history` can tell an MCP rewrite
+    from an ingest and from a hand edit — and revert either.
+    """
+    ok, err = _api_auth("mcp_key")
+    if not ok:
+        return err
+    data = request.get_json(silent=True) or {}
+    p, err = _mcp_write_target(data.get("path", ""))
+    if err:
+        return err
+    content = data.get("content")
+    if not isinstance(content, str):
+        return {"error": "content must be a string", "code": "BAD_CONTENT"}, 400
+
+    budget_tokens = _mcp_budget()
+    with output_budget(budget_tokens):
+        budget_chars = output_budget_tokens() * 4
+        old = p.read_text(encoding="utf-8", errors="replace")
+        why = _truncation_refusal(old, content, budget_chars,
+                                  bool(data.get("acknowledge_shrink")))
+        if why:
+            return {"error": f"refused — {why}", "code": "TRUNCATION"}, 409
+        rel = p.resolve().relative_to(WIKI_DIR.resolve()).as_posix()
+        begin_write_scope()
+        with write_reason("mcp-rewrite"):
+            _atomic_write(p, content)
+        linked = ""
+        try:
+            linked = _autolink({"path": f"wiki/{rel}"})
+        except (OSError, ValueError) as e:
+            # The page is saved; a linking failure must not be reported as a failed write,
+            # which is the ordering wiki_save pins too — losing the text to a link would
+            # be the worse trade.
+            log.warning("api_mcp_write: autolink failed for %s: %s", rel, e)
+        log.info("api_mcp_write %s: %d -> %d chars; %s",
+                 rel, len(old), len(content), linked or "no links changed")
+        return {"ok": True, "path": f"wiki/{rel}", "bytes": len(content),
+                "autolink": linked, "revert": f"/wiki/{rel}/history"}
+
+
+@app.route("/api/mcp/replace", methods=["POST"])
+def api_mcp_replace():
+    """Replace one exactly-quoted passage — `replace_text`, over HTTP.
+
+    **The tool to reach for on a large page, and the closest thing here to what a person
+    actually does in the editor:** you do not retype a page to change a paragraph. It is
+    also the answer to the one asymmetry a whole-page route cannot fix — a browser posts
+    back bytes it is already holding, while a client has to emit every byte it writes, so
+    on a 223KB page a splice is the difference between a few hundred characters and
+    fifty-six thousand tokens of regeneration.
+
+    `agent._replace_text` is shared rather than reimplemented, so its uniqueness contract
+    holds identically on both doors: a quote matching nothing, or matching twice, is
+    refused rather than guessed at.
+    """
+    ok, err = _api_auth("mcp_key")
+    if not ok:
+        return err
+    data = request.get_json(silent=True) or {}
+    p, err = _mcp_write_target(data.get("path", ""))
+    if err:
+        return err
+    old_text, new_text = data.get("old_text"), data.get("new_text")
+    if not isinstance(old_text, str) or not old_text:
+        return {"error": "old_text must be a non-empty string quoted from the page",
+                "code": "BAD_ARGS"}, 400
+    if not isinstance(new_text, str):
+        return {"error": 'new_text must be a string ("" to delete the passage)',
+                "code": "BAD_ARGS"}, 400
+    rel = p.resolve().relative_to(WIKI_DIR.resolve()).as_posix()
+    init_session()
+    with output_budget(_mcp_budget()):
+        begin_write_scope()
+        with write_reason("mcp-edit"):
+            res = _replace_text({"path": f"wiki/{rel}", "old_text": old_text,
+                                 "new_text": new_text})
+    # The tool answers in prose for the model and starts refusals with "Error:", which is
+    # the one thing that distinguishes a refusal from a success in its reply.
+    if isinstance(res, str) and res.lstrip().startswith("Error:"):
+        return {"error": res, "code": "REFUSED"}, 409
+    log.info("api_mcp_replace %s: %d -> %d chars", rel, len(old_text), len(new_text))
+    return {"ok": True, "path": f"wiki/{rel}", "result": res,
+            "revert": f"/wiki/{rel}/history"}
+
+
 @app.route("/api/mcp/search")
 def api_mcp_search():
     """Search the wiki. `search_wiki_core` is shared with the agent's own search tool."""
@@ -3394,6 +3512,99 @@ def api_mcp_report():
 
 #: Findings reported per check. `page_report.py`'s CLI defaults to 15 for the same reason.
 _MCP_MAX_FINDINGS = 15
+
+
+# ---------------------------------------------------------------------------
+# The MCP write tier
+# ---------------------------------------------------------------------------
+#
+# **Capability follows the credential, which the server verifies — never a claim the
+# client makes.** Asked for as *"I don't want the script and dumb Gemini to have access to
+# this, but the mcp is higher access for higher quality, more human interactions."* The
+# ingest agent calls `agent.py` in-process with no key and keeps every guard; a caller
+# presenting `api.mcp_key` reaches these routes. Nothing here is reachable from the agent's
+# tool table, and nothing here changes it.
+#
+# **The budget must never become an authorization parameter.** It is self-declared and
+# unverifiable, so if write latitude scaled with it any client would escalate by claiming
+# a bigger number. It sizes how much text a READ hands back and nothing else; these routes
+# read it only to judge truncation, where a bigger claim makes the check STRICTER rather
+# than more permissive.
+#
+# What this tier drops, all of it ingest-accretion machinery that a directed reorganize is
+# not doing: read-before-write coverage (stateless, and a rewrite has the text by
+# construction), the 40% shrink refusal (consolidating IS shrinking — that guard exists to
+# catch a model running out of room, which is what `_truncation_refusal` replaces), the
+# heading rules and the summary-accretion check (`heal_pages` absorbs most of those at
+# startup anyway).
+#
+# What it keeps, because each is structural rather than stylistic: containment,
+# `immutable_page_reason` (source pages and the generated ones), and truncation.
+
+#: A body ending in one of these is a finished thought. Anything else — a bare word, a
+#: dangling comma, half a markdown link — is what a response cut off at the ceiling
+#: looks like.
+_SENTENCE_END = tuple(".!?:\"'`)]}*_|-")
+
+
+def _truncation_refusal(old_body: str, new_body: str, budget_chars: int,
+                        acknowledged: bool = False) -> "str | None":
+    """Why this rewrite looks like one that ran out of room, or None.
+
+    **This is the one guard the web editor legitimately lacks and an MCP write legitimately
+    needs**, and the asymmetry is not about trust: a human editing a textarea does not
+    silently stop typing at a token ceiling, and a model does. `update_file`'s 40% shrink
+    refusal is the agent-path answer, and it is the wrong one here — consolidating a page
+    IS shrinking it, so a guard that refuses a cut would refuse the whole point.
+
+    So the test is for the SHAPE of a truncation rather than its size:
+
+    - **It ends mid-thought.** A response cut at the ceiling stops on a bare word or half a
+      link; a finished rewrite ends on punctuation or a structural character. This is the
+      direct signature and the cheapest one.
+    - **It fills the caller's own declared budget.** Within 5% of what the client said it
+      can emit is overwhelmingly a client that hit the wall rather than one that happened
+      to need exactly that much. Note the direction: a LARGER declared budget makes this
+      check fire sooner relative to the text, so the budget cannot buy latitude here.
+    - **It lost the frontmatter or the H1.** Those sit at the TOP, so losing them means the
+      write began somewhere other than the beginning — a different failure from running out
+      at the end, and one that destroys `created:`, `raw_source:` and `type:`.
+
+    A big deliberate cut is legitimate and gets a flag rather than a refusal
+    (`acknowledged`), which is `allow_shrink`'s bargain: the caller states the intent and
+    the write proceeds. Every one of these is revertable from `/wiki/<path>/history`
+    regardless — that is what makes a flag an acceptable answer instead of a wall.
+    """
+    new_stripped = new_body.rstrip()
+    if not new_stripped:
+        return "the new content is empty — nothing is written by an empty rewrite."
+    if not new_stripped.endswith(_SENTENCE_END):
+        tail = new_stripped[-60:].replace("\n", " ")
+        return (f"the content ends mid-thought, which is what a response cut off at its "
+                f"output ceiling looks like: …{tail!r}. Send the rewrite complete, or use "
+                f"replace_text to change part of the page instead of re-emitting all of it.")
+    if budget_chars and len(new_body) >= budget_chars * 0.95:
+        return (f"the content is {len(new_body):,} chars against a declared budget of "
+                f"{budget_chars:,} — within 5% of your own stated ceiling, which is far "
+                f"more often a response that ran out of room than one that needed exactly "
+                f"that much. Use replace_text for a page this size.")
+    if not new_body.lstrip().startswith("---"):
+        return ("the frontmatter is missing from the top of the content. It carries "
+                "created:, raw_source: and type:, which are not recoverable from the body.")
+    if "\n# " not in new_body[:4000] and not new_body.lstrip().startswith("# "):
+        if "\n# " in old_body[:4000] or old_body.lstrip().startswith("# "):
+            return ("the page's `# Title` H1 is missing from the content. Every page opens "
+                    "with one, and heal_pages backfills it from title: — but losing it "
+                    "here means the rewrite did not start at the beginning.")
+    _old_cmp, _new_cmp = _unlinked_len(old_body), _unlinked_len(new_body)
+    if _old_cmp >= 2000 and _new_cmp < _old_cmp * 0.6 and not acknowledged:
+        _pct = 100 - int(_new_cmp / _old_cmp * 100)
+        return (f"this cuts the page by {_pct}% ({_old_cmp:,} chars of prose to "
+                f"{_new_cmp:,}; links discounted). That is legitimate when you are "
+                f"consolidating, so pass acknowledge_shrink=true to say so — but it is "
+                f"also what a rewrite that silently condensed looks like, and the two are "
+                f"indistinguishable from here.")
+    return None
 
 
 #: Longest quoted excerpt in a JSON finding. The CLI clips to 100 for a terminal line;

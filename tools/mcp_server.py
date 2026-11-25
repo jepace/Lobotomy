@@ -195,6 +195,19 @@ class Client:
         self.key = key
         self.budget = budget
 
+    def post(self, route: str, **body) -> dict:
+        """A write. Same error handling as `get` — one `_request` does both, so a proxy's
+        HTML 504 cannot be reported one way on a read and another on a write."""
+        body.setdefault("budget", self.budget)
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.base}{route}", data=data, method="POST",
+            headers={"Authorization": f"Bearer {self.key}",
+                     "Content-Type": "application/json",
+                     "Accept": "application/json",
+                     "X-Requested-With": "XMLHttpRequest"})
+        return self._send(req)
+
     def get(self, route: str, **params) -> dict:
         params.setdefault("budget", self.budget)
         qs = urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "")})
@@ -209,6 +222,11 @@ class Client:
             # CLAUDE.md records being reported three times.
             "X-Requested-With": "XMLHttpRequest",
         })
+        return self._send(req)
+
+    def _send(self, req) -> dict:
+        """The one transport. Shared by `get` and `post` so a proxy's HTML 504 cannot be
+        explained one way on a read and another on a write."""
         try:
             with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
                 raw = r.read().decode("utf-8", errors="replace")
@@ -294,6 +312,61 @@ TOOLS = [
 ]
 
 
+WRITE_TOOLS = [
+    {
+        "name": "replace_passage",
+        "description": (
+            "Change part of a page: quote a passage exactly as it appears and give its "
+            "replacement (empty string deletes it). THE TOOL TO PREFER — it is what a "
+            "person does in an editor, which is not retyping the page to change a "
+            "paragraph. A quote that matches nothing, or matches twice, is refused rather "
+            "than guessed at, so it fails loudly instead of writing the wrong thing. "
+            "Whitespace and wiki link markup are ignored when matching, so quote the prose "
+            "as you read it."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string",
+                         "description": "wiki-relative, e.g. wiki/entities/donald-trump.md"},
+                "old_text": {"type": "string",
+                             "description": "the passage, quoted from the page"},
+                "new_text": {"type": "string",
+                             "description": 'what replaces it; "" deletes it'},
+            },
+            "required": ["path", "old_text", "new_text"],
+        },
+    },
+    {
+        "name": "write_page",
+        "description": (
+            "Replace a WHOLE page, frontmatter and all — one write, like saving in the web "
+            "editor. Use it only for a page you can emit completely: every byte you send "
+            "is a byte you generate, so a large page costs its whole length in output and "
+            "a rewrite cut off at your ceiling is refused. Prefer replace_passage. "
+            "Refused on wiki/sources/ pages (a snapshot of a raw source), on log.md and "
+            "index.md (generated, and not revertable), on a rewrite that ends mid-thought, "
+            "and on one missing its frontmatter. A deliberate large cut needs "
+            "acknowledge_shrink. Every write is revertable from the page's history."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "content": {"type": "string",
+                            "description": "the complete new page, frontmatter first"},
+                "acknowledge_shrink": {
+                    "type": "boolean",
+                    "description": "set when deliberately consolidating and the page gets "
+                                   "much shorter; says the cut is intended"},
+            },
+            "required": ["path", "content"],
+        },
+    },
+]
+
+
+TOOLS = TOOLS + WRITE_TOOLS
+
+
 def call_tool(client: Client, name: str, args: dict) -> str:
     if name == "read_page":
         r = client.get("/api/mcp/read", path=args.get("path", ""),
@@ -309,6 +382,19 @@ def call_tool(client: Client, name: str, args: dict) -> str:
     if name == "page_report":
         r = client.get("/api/mcp/report", path=args.get("path", ""))
         return json.dumps(r, indent=1, default=str)
+    if name == "replace_passage":
+        r = client.post("/api/mcp/replace", path=args.get("path", ""),
+                        old_text=args.get("old_text", ""),
+                        new_text=args.get("new_text", ""))
+        return (f"{r.get('result') or 'done'}\n\nRevert at {r.get('revert','')}"
+                if r.get("ok") else json.dumps(r))
+    if name == "write_page":
+        r = client.post("/api/mcp/write", path=args.get("path", ""),
+                        content=args.get("content", ""),
+                        acknowledge_shrink=bool(args.get("acknowledge_shrink")))
+        return (f"Wrote {r.get('bytes', 0):,} chars to {r.get('path','')}. "
+                f"{r.get('autolink') or 'No links changed.'}\n\n"
+                f"Revert at {r.get('revert','')}" if r.get("ok") else json.dumps(r))
     raise ApiError(f"unknown tool: {name}")
 
 

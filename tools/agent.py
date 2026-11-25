@@ -2381,6 +2381,45 @@ def _find_section(body: str, section: str):
     return hm.group(0), hm.end(), (nm.start() if nm else len(body))
 
 
+def immutable_page_reason(p: "Path") -> "str | None":
+    """Why this page may not be rewritten, or None if it may. **Structural, not stylistic.**
+
+    Hoisted out of `_section_guard` because **the web editor did not consult it and the
+    agent tools did**, so a rule described here as an invariant held on one door and not
+    the other. Asked for as *"Close the holes. If I need to I have vim."* — which is the
+    right call and the reason the gap was tolerable until now: a shell on the box is a
+    deliberate, visible way round, where an unguarded HTTP route is an accident waiting for
+    whoever next writes a client.
+
+    The two rules are not ingest-accretion guards — those police a summary growing a
+    sentence per article, and a person deliberately reorganizing a page is not doing that.
+    These are about what the wiki IS:
+
+    - **A source page is a snapshot of a raw source.** Editing one rewrites the evidence a
+      synthesis was drawn from, so the page stops being a record of what the article said.
+    - **`log.md` and `index.md` are generated**, and `_snapshot_version` skips both — so an
+      edit to either is **not revertable**, which disqualifies it on its own. Every other
+      write in this system can be undone from `/wiki/<path>/history`; these cannot.
+
+    Containment and existence stay with the caller: the agent tools take a repo-relative
+    string and the routes take a wiki-relative one, and each has its own answer for a path
+    that is not there.
+    """
+    rp = p.resolve()
+    for _reserved in _GENERATED_PAGES:
+        if rp == (WIKI_DIR / _reserved).resolve():
+            return (f"wiki/{_reserved} is generated and is not revertable — "
+                    f"_snapshot_version skips it, so an edit here could not be undone.")
+    try:
+        rp.relative_to((WIKI_DIR / "sources").resolve())
+        return ("wiki/sources/ pages are immutable — a source page is a snapshot of what a "
+                "raw source said. Put the information on the relevant entity or concept "
+                "page instead.")
+    except ValueError:
+        pass
+    return None
+
+
 def _section_guard(path: str):
     """Shared validation for the section tools. Returns (Path, error_string_or_None)."""
     p = REPO_ROOT / path
@@ -2391,15 +2430,9 @@ def _section_guard(path: str):
     if not p.exists():
         return p, (f"Error: refused — {path} does not exist."
                    f"{_elsewhere_hint(p) or ' Use create_file for new pages.'}")
-    for _reserved in ("log.md", "index.md"):
-        if p.resolve() == (WIKI_DIR / _reserved).resolve():
-            return p, f"Error: refused on wiki/{_reserved} — it is managed automatically."
-    try:
-        p.resolve().relative_to((WIKI_DIR / "sources").resolve())
-        return p, ("Error: refused — wiki/sources/ pages are immutable. Add the information "
-                   "to the relevant entity or concept page instead.")
-    except ValueError:
-        pass
+    _why = immutable_page_reason(p)
+    if _why:
+        return p, f"Error: refused — {_why}"
     return p, None
 
 

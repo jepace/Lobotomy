@@ -35,6 +35,44 @@ RUNNER = REPO / "tests" / "run_all.py"
 # the mutation is reported as STALE rather than silently skipped: an anchor that stopped
 # matching means the code moved and the mutation is no longer testing what it claims.
 MUTATIONS = [
+    # The editor refused only a bad path and a missing page while the agent tools refused
+    # source pages and the generated ones -- one rule, two answers.
+    ("mcpwrite: the editor consults the immutability rule",
+     '    _why = immutable_page_reason(p)\n    if _why:\n        return {"error": _why, "code": "IMMUTABLE"}, 400',
+     "    pass",
+     "tools/serve.py"),
+    # NOTE the first version of this mutation was `return None or ("wiki/sources/...")`,
+    # which evaluates to the string -- a NO-OP, reported as MISSED and indistinguishable
+    # from an untested guard. A MISSED verdict has three causes, not two: the guard is
+    # untested, the test cannot reach it, or the mutation does nothing.
+    ("mcpwrite: a source page stays immutable",
+     '        rp.relative_to((WIKI_DIR / "sources").resolve())\n        return ("wiki/sources/ pages are immutable',
+     '        rp.relative_to((WIKI_DIR / "sources").resolve())\n        return None\n        return ("wiki/sources/ pages are immutable'),
+    ("mcpwrite: the generated pages stay un-writable",
+     "    for _reserved in _GENERATED_PAGES:\n        if rp == (WIKI_DIR / _reserved).resolve():",
+     "    for _reserved in _GENERATED_PAGES:\n        if False:"),
+    # A human does not stop typing at a token ceiling; a model does. This is the one guard
+    # the editor legitimately lacks and an MCP write legitimately needs.
+    ("mcpwrite: a rewrite ending mid-thought is refused",
+     "    if not new_stripped.endswith(_SENTENCE_END):",
+     "    if False:",
+     "tools/serve.py"),
+    ("mcpwrite: a rewrite filling the declared budget is refused",
+     "    if budget_chars and len(new_body) >= budget_chars * 0.95:",
+     "    if False:",
+     "tools/serve.py"),
+    ("mcpwrite: lost frontmatter is refused",
+     '    if not new_body.lstrip().startswith("---"):',
+     "    if False:",
+     "tools/serve.py"),
+    ("mcpwrite: the write route runs the truncation check at all",
+     "        why = _truncation_refusal(old, content, budget_chars,\n                                  bool(data.get(\"acknowledge_shrink\")))",
+     "        why = None",
+     "tools/serve.py"),
+    ("mcpwrite: the write route checks immutability",
+     "    why = immutable_page_reason(p)\n    if why:\n        return None, ({\"error\": why, \"code\": \"IMMUTABLE\"}, 400)",
+     "    why = None",
+     "tools/serve.py"),
     # The default shipped at 200,000 tokens, which claims ~800,000 chars in one response.
     # Four guards scale off it, so the claim approves a rewrite that runs out of room, and
     # a truncation to 63% of a page slips under update_file's 40% shrink refusal.

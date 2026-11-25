@@ -35,7 +35,7 @@ import serve
 import mcp_server
 
 
-HUGE = "\n\n".join(f"Paragraph {i} opens the discussion. " + "word " * 900
+HUGE = "\n\n".join(f"Paragraph {i} opens the discussion. " + "word " * 900 + "end."
                    for i in range(9))
 
 PAGE = ("---\ntitle: Donald Trump\ntype: entity\ncreated: 2026-01-01\n---\n\n"
@@ -214,8 +214,12 @@ class McpRouteTest(unittest.TestCase):
         self.assertTrue(paths, "no /api/mcp routes registered")
         for rule in paths:
             with self.subTest(rule=rule):
+                # Send the method the route accepts: a GET to a POST-only route answers
+                # 405 before auth runs, which would pass this test while proving nothing.
                 r = self.c.get(rule, query_string={"path": "wiki/entities/donald-trump.md",
                                                    "q": "x"})
+                if r.status_code == 405:
+                    r = self.c.post(rule, json={"path": "wiki/entities/donald-trump.md"})
                 self.assertIn(r.status_code, (401, 501),
                               f"{rule} answered {r.status_code} with no key")
 
@@ -357,6 +361,12 @@ class StubClient:
             raise self.raises
         return self.reply
 
+    def post(self, route, **body):
+        self.calls.append((route, body))
+        if self.raises:
+            raise self.raises
+        return self.reply
+
 
 def _drive(client, messages):
     """Run the real stdio loop over a scripted conversation; return parsed replies."""
@@ -386,7 +396,8 @@ class ProtocolTest(unittest.TestCase):
                          "a notification must get no reply")
         self.assertEqual(replies[0]["result"]["serverInfo"]["name"], "lobotomy")
         self.assertEqual({t["name"] for t in replies[1]["result"]["tools"]},
-                         {"read_page", "search_wiki", "page_report"})
+                         {"read_page", "search_wiki", "page_report",
+                          "replace_passage", "write_page"})
         self.assertIn("He is a politician.",
                       replies[2]["result"]["content"][0]["text"])
 
@@ -789,7 +800,10 @@ class NoSecondWriterTest(unittest.TestCase):
         """
         args = {"read_page": {"path": "wiki/entities/x.md"},
                 "search_wiki": {"query": "tariffs"},
-                "page_report": {"path": "wiki/entities/x.md"}}
+                "page_report": {"path": "wiki/entities/x.md"},
+                "replace_passage": {"path": "wiki/entities/x.md",
+                                    "old_text": "a", "new_text": "b"},
+                "write_page": {"path": "wiki/entities/x.md", "content": "x"}}
         self.assertEqual(set(args), {t["name"] for t in mcp_server.TOOLS},
                          "a tool was added or renamed without being covered here")
         for name, a in args.items():
@@ -801,13 +815,343 @@ class NoSecondWriterTest(unittest.TestCase):
                 self.assertTrue(c.calls[0][0].startswith("/api/mcp/"),
                                 f"{name} called {c.calls[0][0]}")
 
-    def test_the_read_only_half_exposes_no_write_tool(self):
-        """Stated as a test so the writes are a deliberate, reviewable change rather than
-        something that arrives by accident."""
+    def test_it_exposes_the_write_tier_and_none_of_the_INGEST_tools(self):
+        """**This test used to assert the opposite and had to be rewritten, not deleted.**
+
+        In phase 1 it read "the read-only half exposes no write tool", which was true then
+        and is a lie once writes exist — a suite that still claims read-only while a write
+        route is live is worse than no assertion. The writes arrived as a deliberate,
+        reviewable change, which is what that wording was protecting.
+
+        The property that holds NOW is the tier: this client gets the editor's shape, and
+        none of the agent's ingest machinery. `create_file` would let it mint pages outside
+        any source-page discipline; `done()` writes `log.md` and marks reading-list
+        articles wikified; `add_timeline_entry` belongs to an ingest folding in a source.
+        None of that is what a person asking for a page to be reorganized wants done.
+        """
         names = {t["name"] for t in mcp_server.TOOLS}
-        for w in ("update_section", "append_section", "create_file", "update_file",
-                  "add_timeline_entry", "merge_page", "rename_page"):
-            self.assertNotIn(w, names)
+        self.assertEqual(names, {"read_page", "search_wiki", "page_report",
+                                 "replace_passage", "write_page"})
+        for ingest_only in ("create_file", "update_file", "update_section",
+                            "append_section", "add_timeline_entry", "done",
+                            "merge_page", "rename_page", "lookup_titles"):
+            self.assertNotIn(ingest_only, names)
+
+
+class ImmutablePageTest(unittest.TestCase):
+    """`immutable_page_reason` — one rule, consulted by every door that writes a page.
+
+    Asked for as *"Close the holes. If I need to I have vim."* The web editor refused only
+    a path outside `wiki/` and a page that was not there, while the agent tools refused
+    source pages and the generated ones — **the same rule described here as an invariant,
+    holding on one door and not the other.** A shell on the box is a deliberate, visible
+    way round; an unguarded HTTP route is an accident waiting for the next client.
+    """
+
+    def setUp(self):
+        self.w = harness.TempWiki()
+        self.w.__enter__()
+        self.addCleanup(self.w.__exit__, None, None, None)
+
+    def test_an_ordinary_page_is_editable(self):
+        """The not-crying-wolf half: this must refuse exactly two kinds of page."""
+        p = self.w.wiki / "entities" / "x.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(PAGE, encoding="utf-8")
+        self.assertIsNone(agent.immutable_page_reason(p))
+
+    def test_a_source_page_is_refused(self):
+        p = self.w.wiki / "sources" / "s.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(PAGE, encoding="utf-8")
+        why = agent.immutable_page_reason(p)
+        self.assertIn("snapshot", why or "")
+
+    def test_the_generated_pages_are_refused_because_they_cannot_be_REVERTED(self):
+        """The disqualifier is not tidiness: `_snapshot_version` skips both, so an edit
+        here could not be undone, while every other write in this system can."""
+        for name in agent._GENERATED_PAGES:
+            with self.subTest(name=name):
+                p = self.w.wiki / name
+                p.write_text("x\n", encoding="utf-8")
+                why = agent.immutable_page_reason(p)
+                self.assertIn("revertable", why or "")
+
+    def test_both_doors_consult_the_SAME_function(self):
+        """Two copies of this rule is how the gap happened in the first place."""
+        self.assertIs(serve.immutable_page_reason, agent.immutable_page_reason)
+
+    def test_the_section_tools_still_refuse_them(self):
+        """Hoisting the rule out must not have dropped it from the agent path."""
+        for rel in ("wiki/sources/s.md", "wiki/log.md"):
+            p = self.w.root / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(PAGE, encoding="utf-8")
+            with self.subTest(rel=rel):
+                _p, err = agent._section_guard(rel)
+                self.assertIn("refused", err or "")
+
+    def test_the_web_EDITOR_refuses_them_now(self):
+        """The hole itself. Driven through the real route."""
+        saved = (serve.WIKI_DIR, serve.REPO_ROOT)
+        serve.WIKI_DIR, serve.REPO_ROOT = self.w.wiki, self.w.root
+        self.addCleanup(lambda: (setattr(serve, "WIKI_DIR", saved[0]),
+                                 setattr(serve, "REPO_ROOT", saved[1])))
+        for rel in ("sources/s.md", "log.md"):
+            p = self.w.wiki / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(PAGE, encoding="utf-8")
+        c = serve.app.test_client()
+        with c.session_transaction() as s:
+            s["logged_in"] = True
+        for rel in ("sources/s.md", "log.md"):
+            with self.subTest(rel=rel):
+                r = c.post(f"/api/wiki/{rel}/save", json={"content": "wiped"})
+                self.assertEqual(r.status_code, 400, f"{rel} was still writable")
+                self.assertEqual((self.w.wiki / rel).read_text(encoding="utf-8"), PAGE)
+
+    def test_an_ordinary_page_still_saves_from_the_editor(self):
+        """Closing a hole must not close the feature."""
+        saved = (serve.WIKI_DIR, serve.REPO_ROOT)
+        serve.WIKI_DIR, serve.REPO_ROOT = self.w.wiki, self.w.root
+        self.addCleanup(lambda: (setattr(serve, "WIKI_DIR", saved[0]),
+                                 setattr(serve, "REPO_ROOT", saved[1])))
+        p = self.w.wiki / "entities" / "x.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(PAGE, encoding="utf-8")
+        c = serve.app.test_client()
+        with c.session_transaction() as s:
+            s["logged_in"] = True
+        body = PAGE.replace("He is a politician", "He is a politician and a broadcaster")
+        r = c.post("/api/wiki/entities/x.md/save", json={"content": body})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:200])
+        self.assertIn("broadcaster", p.read_text(encoding="utf-8"))
+
+
+class TruncationGuardTest(unittest.TestCase):
+    """`_truncation_refusal` — the one guard the editor lacks and MCP needs.
+
+    Not about trust: a human editing a textarea does not stop typing at a token ceiling,
+    and a model does. `update_file`'s 40% shrink refusal is the agent-path answer and is
+    the wrong one here, because consolidating a page IS shrinking it — so the test is for
+    the SHAPE of a truncation rather than its size.
+    """
+
+    def _old(self, n=4000):
+        return "---\ntitle: X\n---\n\n# X\n\n## Overview\n" + ("word " * n) + "end."
+
+    def test_a_complete_rewrite_passes(self):
+        old = self._old()
+        new = "---\ntitle: X\n---\n\n# X\n\n## Overview\nA complete, shorter rewrite."
+        self.assertIsNone(serve._truncation_refusal(old, new, 256_000, acknowledged=True))
+
+    def test_content_ending_mid_thought_is_refused(self):
+        """The direct signature: a response cut at the ceiling stops on a bare word."""
+        old = self._old()
+        new = "---\ntitle: X\n---\n\n# X\n\n## Overview\nHe went to the shop and then"
+        why = serve._truncation_refusal(old, new, 256_000, acknowledged=True)
+        self.assertIn("mid-thought", why or "")
+
+    def test_content_filling_the_declared_budget_is_refused(self):
+        """And note the DIRECTION: a bigger declared budget makes this fire sooner relative
+        to the text, so the budget cannot buy latitude here."""
+        old = self._old()
+        new = "---\ntitle: X\n---\n\n# X\n\n## Overview\n" + ("word " * 2000) + "end."
+        why = serve._truncation_refusal(old, new, len(new) + 10, acknowledged=True)
+        self.assertIn("stated ceiling", why or "")
+
+    def test_missing_frontmatter_is_refused(self):
+        why = serve._truncation_refusal(self._old(), "# X\n\nJust a body.",
+                                        256_000, acknowledged=True)
+        self.assertIn("frontmatter", why or "")
+
+    def test_a_lost_h1_is_refused(self):
+        why = serve._truncation_refusal(
+            self._old(), "---\ntitle: X\n---\n\n## Overview\nBody only.",
+            256_000, acknowledged=True)
+        self.assertIn("H1", why or "")
+
+    def test_an_empty_rewrite_is_refused(self):
+        self.assertIn("empty", serve._truncation_refusal(self._old(), "   ", 256_000) or "")
+
+    def test_a_big_cut_needs_acknowledging_but_is_then_allowed(self):
+        """Consolidation is the point of the tool, so this is a flag and not a wall —
+        `allow_shrink`'s bargain. Revertable either way."""
+        old = self._old()
+        new = "---\ntitle: X\n---\n\n# X\n\n## Overview\nConsolidated to one line."
+        self.assertIn("acknowledge_shrink",
+                      serve._truncation_refusal(old, new, 256_000) or "")
+        self.assertIsNone(serve._truncation_refusal(old, new, 256_000, acknowledged=True))
+
+
+class McpWriteTierTest(unittest.TestCase):
+    """The write tier: `mcp_key` gets the editor's shape, the ingest agent gets nothing new.
+
+    Asked for as *"I don't want the script and dumb Gemini to have access to this, but the
+    mcp is higher access for higher quality, more human interactions."*
+    """
+
+    def setUp(self):
+        self.w = harness.TempWiki()
+        self.w.__enter__()
+        self.addCleanup(self.w.__exit__, None, None, None)
+        self._saved = (serve.RAW_DIR, serve.WIKI_DIR, serve.REPO_ROOT, agent.REPO_ROOT)
+        serve.RAW_DIR, serve.WIKI_DIR = self.w.raw, self.w.wiki
+        serve.REPO_ROOT = agent.REPO_ROOT = self.w.root
+
+        def _restore():
+            (serve.RAW_DIR, serve.WIKI_DIR, serve.REPO_ROOT,
+             agent.REPO_ROOT) = self._saved
+        self.addCleanup(_restore)
+        self.page = self.w.wiki / "entities" / "x.md"
+        self.page.parent.mkdir(parents=True, exist_ok=True)
+        self.page.write_text(PAGE, encoding="utf-8")
+        self._cfg = serve.cfg_get
+        serve.cfg_get = lambda s, k, d=None: (
+            "secret-mcp" if (s, k) == ("api", "mcp_key") else self._cfg(s, k, d))
+        self.addCleanup(lambda: setattr(serve, "cfg_get", self._cfg))
+        self.c = serve.app.test_client()
+
+    def _post(self, route, key="secret-mcp", **body):
+        return self.c.post(route, json=body,
+                           headers={"Authorization": f"Bearer {key}"})
+
+    # -- the tier ------------------------------------------------------------
+
+    def test_the_ingest_agents_tool_table_gains_nothing(self):
+        """The whole point of the tier. The unguarded whole-page write must not become an
+        agent tool, or the script and a weak model inherit it."""
+        for forbidden in ("write_page", "mcp_write", "save_page"):
+            self.assertNotIn(forbidden, agent.TOOL_FNS)
+        self.assertNotIn("write_page", {d.get("function", {}).get("name")
+                                        for d in agent.TOOL_DEFS})
+
+    def test_the_agents_own_guards_are_untouched(self):
+        """update_section still refuses an unread section — the ingest path is unchanged."""
+        agent.init_session()
+        out = agent._update_section({"path": "wiki/entities/x.md",
+                                     "section": "Overview", "content": "Rewritten."})
+        self.assertIn("refused", out)
+
+    def test_a_write_needs_the_mcp_key(self):
+        self.assertEqual(self._post("/api/mcp/write", key="nope",
+                                    path="wiki/entities/x.md", content=PAGE).status_code,
+                         403)
+
+    def test_both_write_routes_are_behind_the_key(self):
+        for route in ("/api/mcp/write", "/api/mcp/replace"):
+            with self.subTest(route=route):
+                r = self.c.post(route, json={"path": "wiki/entities/x.md"})
+                self.assertIn(r.status_code, (401, 501))
+
+    # -- whole-page write ----------------------------------------------------
+
+    def test_it_writes_the_whole_page_in_one_call(self):
+        """The thing asked for: *"just get the page and write the page"*."""
+        body = PAGE.replace("He is a politician", "Reorganised entirely")
+        r = self._post("/api/mcp/write", path="wiki/entities/x.md", content=body,
+                       acknowledge_shrink=True)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:300])
+        self.assertIn("Reorganised entirely", self.page.read_text(encoding="utf-8"))
+
+    def test_the_write_is_revertable(self):
+        """What makes a flag an acceptable answer rather than a wall."""
+        before = self.page.read_text(encoding="utf-8")
+        self._post("/api/mcp/write", path="wiki/entities/x.md",
+                   content=PAGE.replace("politician", "broadcaster"),
+                   acknowledge_shrink=True)
+        rows = agent.page_history(self.page)
+        self.assertTrue(rows, "the rewrite left no history row to revert to")
+        self.assertIn("broadcaster", self.page.read_text(encoding="utf-8"))
+        self.assertNotEqual(before, self.page.read_text(encoding="utf-8"))
+
+    def test_a_truncated_write_is_refused_and_the_page_is_untouched(self):
+        before = self.page.read_text(encoding="utf-8")
+        r = self._post("/api/mcp/write", path="wiki/entities/x.md",
+                       content="---\ntitle: X\n---\n\n# X\n\n## Overview\nHe went and then")
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(self.page.read_text(encoding="utf-8"), before)
+
+    def test_a_source_page_is_refused(self):
+        p = self.w.wiki / "sources" / "s.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(PAGE, encoding="utf-8")
+        r = self._post("/api/mcp/write", path="wiki/sources/s.md", content=PAGE,
+                       acknowledge_shrink=True)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(p.read_text(encoding="utf-8"), PAGE)
+
+    def test_the_generated_pages_are_refused(self):
+        for name in agent._GENERATED_PAGES:
+            p = self.w.wiki / name
+            p.write_text("generated\n", encoding="utf-8")
+            with self.subTest(name=name):
+                r = self._post("/api/mcp/write", path=f"wiki/{name}",
+                               content="wiped", acknowledge_shrink=True)
+                self.assertEqual(r.status_code, 400)
+                self.assertEqual(p.read_text(encoding="utf-8"), "generated\n")
+
+    def test_a_non_string_content_is_refused_rather_than_crashing(self):
+        self.assertEqual(self._post("/api/mcp/write", path="wiki/entities/x.md",
+                                    content={"not": "a string"}).status_code, 400)
+
+    # -- replace -------------------------------------------------------------
+
+    def test_a_passage_is_replaced_in_place(self):
+        r = self._post("/api/mcp/replace", path="wiki/entities/x.md",
+                       old_text="He is a politician who favours tariffs.",
+                       new_text="He is a broadcaster.")
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:300])
+        text = self.page.read_text(encoding="utf-8")
+        self.assertIn("He is a broadcaster.", text)
+        self.assertIn("Key Policies", text, "the rest of the page was disturbed")
+
+    def test_a_quote_matching_nothing_is_refused_rather_than_guessed(self):
+        before = self.page.read_text(encoding="utf-8")
+        r = self._post("/api/mcp/replace", path="wiki/entities/x.md",
+                       old_text="a sentence that is not on this page at all",
+                       new_text="x")
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(self.page.read_text(encoding="utf-8"), before)
+
+    def test_replace_shares_the_agents_implementation(self):
+        """Not reimplemented: the uniqueness contract has to hold identically on both
+        doors, and two copies would be two answers about what a unique quote is."""
+        self.assertIs(serve._replace_text, agent._replace_text)
+
+    def test_replace_refuses_a_source_page_too(self):
+        p = self.w.wiki / "sources" / "s.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(PAGE, encoding="utf-8")
+        self.assertEqual(
+            self._post("/api/mcp/replace", path="wiki/sources/s.md",
+                       old_text="He is a politician who favours tariffs.",
+                       new_text="x").status_code, 400)
+
+    def test_replace_needs_a_non_empty_quote(self):
+        self.assertEqual(self._post("/api/mcp/replace", path="wiki/entities/x.md",
+                                    old_text="", new_text="x").status_code, 400)
+
+    # -- the budget is not an authorization parameter ------------------------
+
+    def test_a_bigger_declared_budget_buys_no_write_latitude(self):
+        """The trap this design exists to avoid. The budget is self-declared and the server
+        cannot verify it, so if latitude scaled with it any client would escalate by
+        claiming a bigger number. A truncated write stays refused at any budget."""
+        cut = "---\ntitle: X\n---\n\n# X\n\n## Overview\nHe went and then"
+        for budget in (16_384, 64_000, 400_000):
+            with self.subTest(budget=budget):
+                r = self._post("/api/mcp/write", path="wiki/entities/x.md",
+                               content=cut, budget=budget)
+                self.assertEqual(r.status_code, 409)
+
+    def test_a_bigger_budget_does_not_unlock_an_immutable_page(self):
+        p = self.w.wiki / "sources" / "s.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(PAGE, encoding="utf-8")
+        self.assertEqual(
+            self._post("/api/mcp/write", path="wiki/sources/s.md", content=PAGE,
+                       budget=400_000, acknowledge_shrink=True).status_code, 400)
 
 
 SETTINGS_TEMPLATE = (Path(__file__).resolve().parent.parent

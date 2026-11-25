@@ -2536,9 +2536,81 @@ know its own limit and not to switch a guard off by claiming an infinite one.
   that reaches the data: the wiki is on the jail and the client is not, so a filesystem
   server would read an empty tree. `NoSecondWriterTest` parses the module with **AST** to
   assert it imports nothing server-side and opens no files.
-- **The write guards stay ON.** An MCP client is an LLM editing the wiki, which is the
-  condition those guards exist for. `allow_shrink=true` is already the designed opt-out for
-  consolidation, which is what "rewrite pages" mostly means.
+- **The write tier is by CREDENTIAL, and that superseded "the write guards stay ON".**
+  That line was reasoning about the agent tools and the *ingest* failure mode — a summary
+  growing a sentence per article, a section per headline, a model composing blind over a
+  40-minute unattended run. Asked to separate the two: *"I don't want the script and dumb
+  Gemini to have access to this, but the mcp is higher access for higher quality, more
+  human interactions."* So the ingest agent keeps **every** guard and its tool table gains
+  nothing, while a caller presenting `mcp_key` gets the web editor's shape:
+  `/api/mcp/write` (whole page, one call) and `/api/mcp/replace` (`agent._replace_text`
+  shared, not reimplemented).
+
+  **The budget must never become an authorization parameter**, and that is the trap this
+  design exists to avoid: it is self-declared and unverifiable, so if latitude scaled with
+  it any client would escalate by claiming a bigger number. It sizes a READ, and on the
+  write path a larger declared budget makes the truncation check fire *sooner* relative to
+  the text — stricter, never looser. Two tests drive a truncated write and an immutable
+  page at 16k, 64k and 400k and require the same refusal at each.
+
+  What the tier drops is the accretion machinery a directed reorganize is not doing:
+  read-before-write coverage (stateless, and a rewrite has the text by construction), the
+  40% shrink refusal (**consolidating IS shrinking** — that guard catches a model running
+  out of room, which `_truncation_refusal` replaces), the heading rules and the
+  summary-accretion check. What it keeps is structural: containment,
+  `immutable_page_reason`, and truncation.
+
+**`immutable_page_reason` closed a hole the editor had and the agent tools did not**
+(`wiki_save`, `_section_guard`, `_mcp_write_target`). Asked for as *"Close the holes. If I
+need to I have vim."* — the right call, and the reason the gap was tolerable until now: a
+shell on the box is a deliberate, visible way round, where an unguarded HTTP route is an
+accident waiting for whoever next writes a client. The editor refused only a path outside
+`wiki/` and a page that was not there; the agent tools also refused source pages and the
+generated ones. **One rule described here as an invariant, holding on one door and not the
+other** — so it is one function now and a test asserts `serve.x is agent.x`.
+
+Neither refusal is stylistic. A **source page is a snapshot of what a raw source said**, so
+editing one rewrites the evidence a synthesis was drawn from. And `log.md`/`index.md` are
+**not revertable** — `_snapshot_version` skips both — which disqualifies them on its own,
+since every other write in this system can be undone from `/wiki/<path>/history`.
+
+**`_truncation_refusal` is the one guard the editor legitimately lacks and an MCP write
+legitimately needs, and the asymmetry is not about trust:** a human editing a textarea does
+not silently stop typing at a token ceiling, and a model does. `update_file`'s 40% shrink
+rule is the wrong answer here because consolidating a page *is* cutting it, so the test is
+for the SHAPE of a truncation rather than its size — it ends mid-thought (the direct
+signature: a cut response stops on a bare word), it fills the caller's own declared budget
+to within 5%, or it lost the frontmatter or H1, which sit at the TOP and so indicate a write
+that did not start at the beginning. A big *deliberate* cut gets a flag
+(`acknowledge_shrink`) rather than a wall — `allow_shrink`'s bargain — which is acceptable
+precisely because every one of these writes is revertable.
+
+**And the editor's own one-get-one-write is not reproducible for a large page, for a reason
+that is physics rather than policy.** Asked *"Like I do when I use the editor"* — and the
+browser holds those 223,659 bytes: you change a paragraph and it posts all of them back
+without retyping them. **A client has to emit every byte it writes.** So a whole-page write
+is honest under ~128KB and `replace_text` is the real editor-equivalent above it, since
+quoting a passage costs a few hundred characters against fifty-six thousand tokens of
+regeneration. That is why `replace_passage` is described to the client as the tool to
+prefer.
+
+**Five fixture faults in one run, and the first is the best of them.** `PAGE` ended with
+`"word " * 900`, so the truncation guard **correctly refused the test's own fixture** for
+ending mid-thought. The others: the write routes are POST-only, so the "every route is
+behind the key" loop was getting 405 before auth ran and passing while proving nothing; the
+stub client had no `post`; and two assertions pinned the tool set at three names.
+
+**A test that asserted the opposite had to be rewritten rather than deleted.**
+`test_the_read_only_half_exposes_no_write_tool` was true in phase 1 and became a lie the
+moment writes existed — a suite still claiming read-only over a live write route is worse
+than no assertion. It pins the tier now: the five tools exposed, and none of
+`create_file`/`done`/`add_timeline_entry`, which belong to an ingest folding in a source.
+
+**And `mutate.py` reported MISSED for a mutation that was a NO-OP.** It was
+`return None or ("wiki/sources/…")`, which evaluates to the string, so nothing changed and
+nothing failed. **A MISSED verdict has three causes, not two:** the guard is untested, the
+test cannot reach it, or *the mutation does nothing* — and the runner cannot tell them
+apart. Read the mutation before believing the verdict.
 
 **The key lives in a FILE and is managed from `/settings`** (`_api_key`,
 `/settings/mcp-key`, `load_client_config`, `load_server_config`). Asked as *"Key should be

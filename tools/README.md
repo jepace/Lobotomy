@@ -465,8 +465,19 @@ Three things about it that are decisions rather than details:
   can emit approves a rewrite that runs out of room, and a truncation to 63% of a page
   slips under `update_file`'s 40% shrink refusal. The server clamps an absurd value but
   cannot verify a plausible one.
-- **Read-only, deliberately.** The write tools are a separate, louder change; a test
-  asserts none is exposed, so they cannot arrive by accident.
+- **Five tools: `read_page`, `search_wiki`, `page_report`, `replace_passage`,
+  `write_page`.** The write half is the web editor's shape — one get, one write, through
+  `_atomic_write` so it lands in page history and is revertable from
+  `/wiki/<path>/history`. **Prefer `replace_passage`:** a browser posts back bytes it is
+  already holding, while a client emits every byte it writes, so on a 223KB page a quoted
+  splice costs a few hundred characters against ~56,000 tokens of regeneration.
+- **Higher access than the ingest agent, by credential.** The agent calls `agent.py`
+  in-process with no key and keeps every write guard; `mcp_key` reaches this tier, which
+  drops the ingest-accretion guards (read coverage, the 40% shrink refusal, the heading and
+  summary rules) and keeps the structural ones: containment, `immutable_page_reason`
+  (source pages, `log.md`, `index.md`) and a truncation check. The budget sizes reads and
+  **never** grants write latitude — it is self-declared, so on the write path a bigger
+  claim only makes the truncation check stricter.
 
 ### `page_report.py` — everything mechanically wrong with one page
 Written for `donald-trump.md`: 223,659 bytes, fourteen sections, 53.8s to autolink against
