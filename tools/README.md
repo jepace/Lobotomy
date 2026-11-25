@@ -425,6 +425,39 @@ job that was RUNNING when the server stopped is deliberately not resumed — it 
 the reading list to re-run, so an article that crashes the server cannot become a crash
 loop.
 
+### `mcp_server.py` — an MCP client's judgement, where the reports stop
+Every mechanical report here ends with no `--apply`, because *"every repair is a judgement
+about what the page is for"*. This is the pipe that puts judgement on the other end:
+`read_page`, `search_wiki` and `page_report` over MCP, so a capable client can be asked
+what is wrong with a page and then fix it.
+
+```sh
+export LOBOTOMY_MCP_KEY=...          # api.mcp_key from the server's config.json
+python3 tools/mcp_server.py --base-url https://lobotomy.example
+python3 tools/mcp_server.py --base-url https://lobotomy.example --budget 60000
+```
+
+Needs `api.mcp_key` in `config.json` — **a different key from `push_key`**, which rides on
+a phone and can only add a reading-list item. The key is read from the environment and
+never taken as an argument: an argument is visible in `ps` and lands in shell history.
+
+Three things about it that are decisions rather than details:
+
+- **It talks HTTP to the running server and never touches `wiki/`.** CLAUDE.md records
+  that the ingest split was deferred because a second writer is *"exactly what the
+  autolinker's cache invalidation assumes is not true"*. A filesystem MCP server is that
+  writer by another door. Going through `/api/mcp/*` keeps serve.py the only writer and
+  inherits `_atomic_write`, history, the autolink and the write guards for free — and it
+  is the only design that reaches the data, since the wiki is on the jail and the client
+  is not.
+- **`--budget` is load-bearing, not tuning.** Four guards scale with what the caller can
+  emit in one response, and all four used to read `llm.max_tokens` — right for the
+  configured provider, wrong for this client, which was refused rewrites it can actually
+  perform on precisely the `RATCHET` sections nothing else can repair. The server clamps
+  an absurd value rather than trusting it.
+- **Read-only, deliberately.** The write tools are a separate, louder change; a test
+  asserts none is exposed, so they cannot arrive by accident.
+
 ### `page_report.py` — everything mechanically wrong with one page
 Written for `donald-trump.md`: 223,659 bytes, fourteen sections, 53.8s to autolink against
 13,195 titles, and "pretty much a complete mess". The mess was **nine separate defects**,

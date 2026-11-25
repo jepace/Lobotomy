@@ -35,6 +35,54 @@ RUNNER = REPO / "tests" / "run_all.py"
 # the mutation is reported as STALE rather than silently skipped: an anchor that stopped
 # matching means the code moved and the mutation is no longer testing what it claims.
 MUTATIONS = [
+    # Four guards derive a threshold from the caller's output budget. Reading config
+    # instead refuses an MCP client a rewrite it can actually perform, on exactly the
+    # RATCHET sections nothing else can repair.
+    ("mcp: the budget is the caller's, not config's",
+     "    return cmp_len <= output_budget_chars() // 2",
+     '    return cmp_len <= (cfg_int("llm", "max_tokens", default=16384) * 4) // 2'),
+    # serve.py's threads are reused, so a budget left set applies to whatever that thread
+    # serves next — an ingest silently running with an MCP client's limits.
+    ("mcp: the scoped budget is restored",
+     "    finally:\n        _tl._output_budget_tokens = prev",
+     "    finally:\n        pass"),
+    ("mcp: an absurd declared budget is clamped",
+     "    _tl._output_budget_tokens = min(n, _MAX_OUTPUT_BUDGET_TOKENS)",
+     "    _tl._output_budget_tokens = n"),
+    # push_key is on a phone and can only add a reading-list item; mcp_key reads the whole
+    # wiki. Sharing the secret means revoking one breaks the other.
+    # Anchored on the SEARCH route, whose next line is unique: read and report open with
+    # the identical two lines, so an anchor there matches twice and mutate.py reports
+    # STALE — which tests nothing at all.
+    ("mcp: it has its own key, not the push key",
+     '    ok, err = _api_auth("mcp_key")\n    if not ok:\n        return err\n    q = (request.args.get("q") or "").strip()',
+     '    ok, err = _api_auth()\n    if not ok:\n        return err\n    q = (request.args.get("q") or "").strip()',
+     "tools/serve.py"),
+    ("mcp: a path is contained by RESOLVING, not by a prefix test",
+     '        rel = resolved.relative_to(WIKI_DIR.resolve())\n    except (ValueError, OSError):\n        return "", {"error": "path escapes the wiki", "code": "BAD_PATH"}',
+     '        rel = Path(path)\n    except (ValueError, OSError):\n        return "", {"error": "path escapes the wiki", "code": "BAD_PATH"}',
+     "tools/serve.py"),
+    ("mcp: the history store is not a page",
+     '    if ".history" in rel.parts:',
+     "    if False:",
+     "tools/serve.py"),
+    # Dropping the section bodies was not enough: a REPEAT quotes both copies of a
+    # paragraph, so nine similar ones made a 331KB reply about a 40KB page.
+    ("mcp: quoted excerpts in findings are clipped",
+     "        return obj if len(obj) <= limit else obj[:limit - 1] + \"…\"",
+     "        return obj",
+     "tools/serve.py"),
+    ("mcp: the number of findings per check is capped",
+     "        if isinstance(v, list) and len(v) > _MCP_MAX_FINDINGS:",
+     "        if False:",
+     "tools/serve.py"),
+    # Flask threads are reused, so without this a read inherits the previous request's
+    # read coverage and read-before-write passes on a page this caller has never seen.
+    ("mcp: each request starts a clean session",
+     '    init_session()\n    with output_budget(_mcp_budget()):',
+     "    with output_budget(_mcp_budget()):",
+     "tools/serve.py"),
+
     # An ingest was handed 93,637 chars of one section and asked to rewrite it against a
     # 65,536-char output budget. It had no legal move. Both doors that hand a section back
     # must cap it — capping one routes the model into the other.

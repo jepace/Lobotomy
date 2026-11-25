@@ -332,6 +332,70 @@ def _page_section_names(body: str, title: str = "") -> "list[tuple]":
     return out
 
 
+def output_budget_tokens() -> int:
+    """How many tokens the CALLER of this session can emit in one response.
+
+    **The budget is a property of who is driving, not of `config.json`.** Four guards
+    derive a threshold from it — `_section_rewritable`, `_read_file`'s `_rewritable` and
+    whole-page steer, and `update_section`'s shrink refusal — and every one of them read
+    `cfg_int("llm", "max_tokens")` directly. That is right for the configured provider
+    and wrong for any other caller, which is the whole point of `mcp_server.py`: a client
+    with a far larger budget was being refused a rewrite **it can actually perform**, and
+    the sections where that bites are exactly the RATCHET ones nothing else can repair.
+
+    So a guard whose own docstring says the limit is "what the model can emit in one
+    response" has to ask which model. Config is the default, never the answer.
+
+    Note it is deliberately NOT cleared by `init_session()`, which is the opposite of
+    `write_reason`'s rule and for the opposite reason: a write reason belongs to one JOB
+    and leaking it mislabels the next one's history, while a budget belongs to the
+    CONNECTION — the thread serving an MCP request keeps it for that request however many
+    sessions the request starts.
+    """
+    v = getattr(_tl, "_output_budget_tokens", None)
+    return int(v) if v else cfg_int("llm", "max_tokens", default=16384)
+
+
+def output_budget_chars() -> int:
+    """The caller's output budget in characters. ~4 chars per token, as the guards assume."""
+    return output_budget_tokens() * 4
+
+
+#: Hard ceiling on a caller-declared budget. A client is trusted to know its own limit,
+#: but not to disable a guard by claiming an absurd one: every threshold here scales with
+#: this, so an unbounded value turns the shrink refusal and the read caps off entirely.
+#: 400k tokens is past any current model's single-response output and still finite.
+_MAX_OUTPUT_BUDGET_TOKENS = 400_000
+
+
+def set_output_budget_tokens(n) -> None:
+    """Declare the caller's output budget for this thread. Clamped, never trusted raw."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return
+    if n <= 0:
+        _tl._output_budget_tokens = None
+        return
+    _tl._output_budget_tokens = min(n, _MAX_OUTPUT_BUDGET_TOKENS)
+
+
+@contextlib.contextmanager
+def output_budget(n):
+    """Scope a caller's budget to one block, restoring whatever was set before.
+
+    `write_reason`'s shape, for `write_reason`'s reason: serve.py's threads are reused
+    between requests, so a budget set and not restored would apply to whatever that
+    thread served next — an ingest silently running with an MCP client's limits.
+    """
+    prev = getattr(_tl, "_output_budget_tokens", None)
+    set_output_budget_tokens(n)
+    try:
+        yield
+    finally:
+        _tl._output_budget_tokens = prev
+
+
 def _section_rewritable(cmp_len: int) -> bool:
     """Can the model re-emit a section of this size, with its additions, in one response?
 
@@ -339,8 +403,10 @@ def _section_rewritable(cmp_len: int) -> bool:
     section: at most half the output budget, so there is room for what is being added.
     Deliberately that existing rule rather than a new constant — three places now ask
     "can this be rewritten whole", and a fourth threshold is a fourth thing to drift.
+
+    The budget is the CALLER's — see `output_budget_tokens`.
     """
-    return cmp_len <= (cfg_int("llm", "max_tokens", default=16384) * 4) // 2
+    return cmp_len <= output_budget_chars() // 2
 
 
 def _section_outline(text: str, preview: int = 200, max_blocks: int = 60) -> str:
@@ -588,7 +654,7 @@ def _read_file(path: str, offset: int = -1) -> "str | list":
             # regenerate would have worked — got silence. Same shape as the template
             # lesson: the informative branch fired on the failure case, so the quiet
             # failure was the common one. Both branches now state the route affirmatively.
-            _rewritable = total <= (cfg_int("llm", "max_tokens", default=16384) * 4) // 2
+            _rewritable = total <= output_budget_chars() // 2
             if _rewritable:
                 _whole_page = (
                     "This page is small enough to rewrite in one call, so page through it "
@@ -674,7 +740,7 @@ def _read_file(path: str, offset: int = -1) -> "str | list":
         # The outline branch above already states this as one of its two routes, and
         # saying it twice in one reply — once as "use update_section for each section you
         # are changing" — is how the consolidation route got drowned out to begin with.
-        _budget_chars = cfg_int("llm", "max_tokens", default=16384) * 4
+        _budget_chars = output_budget_chars()
         if total > _budget_chars // 2 and "[OUTLINE" not in text:
             text += (
                 f"\n\n[This page is {total} chars — too large to rewrite safely in one "
@@ -3270,7 +3336,7 @@ def _update_section(args: dict) -> str:
         # supposed to become. The line between the two is drawn from the model's own
         # output budget: a section that is a small fraction of what it can emit in one
         # response is one it can be expected to reproduce.
-        _budget_chars = cfg_int("llm", "max_tokens", default=16384) * 4
+        _budget_chars = output_budget_chars()
         if _old_cmp <= _budget_chars // 8:
             return (
                 f"Error: update_section refused — this would cut '{section}' by {_pct}% "

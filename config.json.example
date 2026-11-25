@@ -39,6 +39,7 @@
     "from_address": "wiki@yourdomain.com"
   },
   "api": {
-    "push_key": "generate with: python3 -c \"import secrets; print(secrets.token_hex(32))\""
+    "push_key": "generate with: python3 -c \"import secrets; print(secrets.token_hex(32))\"",
+    "mcp_key": "a DIFFERENT key for /api/mcp/* — push_key rides on a phone and in a browser bookmark and can only add a reading-list item; this one reads every page in the wiki, so revoking one must not depend on the other"
   }
 }

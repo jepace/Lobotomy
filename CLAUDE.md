@@ -2497,6 +2497,110 @@ tests SKIP and no runner counts a skip as failure, so **the defect and its own s
 indistinguishable** and the only fix is to make the empty case loud. A zero-match pattern
 now exits 2 and says the argument takes one pattern at a time.
 
+### The MCP server, and whose output budget the guards mean
+
+**`tools/mcp_server.py` puts an LLM's judgement where the report-only tools stop.** Asked
+for as *"I made a mcp for another app. How about mcp for lobotomy? Then I can get you to
+rewrite pages..."*, and it lands on a gap written down here six times: `overview_drift.py`,
+`page_report.py`, `bleeding_titles.py` and `RATCHET` all refuse an `--apply` because the
+repair is a judgement about what the page is for. A machine can FIND those; only judgement
+fixes them.
+
+**The budget four guards derive their thresholds from is the CALLER's, not `config.json`'s**
+(`output_budget_tokens`, `output_budget_chars`, `output_budget`,
+`_MAX_OUTPUT_BUDGET_TOKENS`). `_section_rewritable`, `_read_file`'s `_rewritable` and its
+whole-page steer, and `update_section`'s shrink refusal all read
+`cfg_int("llm", "max_tokens")` directly — correct for the configured provider and wrong
+for anything else. **So the guard shipped the week before would have locked this server
+out of its best job**: at 16,384 tokens the 93,637-char section comes back as an outline,
+and the sections where that bites are exactly the RATCHET ones no agent tool can repair.
+A guard whose own docstring says the limit is *"what the model can emit in one response"*
+has to ask which model; config is the default, never the answer.
+
+`output_budget(n)` is `write_reason`'s shape for `write_reason`'s reason — serve.py's
+threads are reused, so a budget left set would apply to whatever that thread served next,
+an ingest silently running with an MCP client's limits. It is deliberately **not** cleared
+by `init_session()`, which is the opposite rule for the opposite reason: a write reason
+belongs to one JOB and leaking it mislabels the next one's history, while a budget belongs
+to the CONNECTION. And a declared budget is **clamped**, because a client is trusted to
+know its own limit and not to switch a guard off by claiming an infinite one.
+
+**Two design decisions, both load-bearing:**
+
+- **It is an HTTP client of the running server, never a second process editing `wiki/`.**
+  The ingest split was deferred because it *"turns a single-writer wiki into a two-writer
+  one, which is exactly what the autolinker's cache invalidation assumes is not true"* — and
+  a filesystem MCP server is that same writer arriving through a different door. Through
+  `/api/mcp/*`, serve.py stays the only writer and every edit inherits `_atomic_write`, the
+  history snapshot, the autolink and the ownership inheritance. It is also the only design
+  that reaches the data: the wiki is on the jail and the client is not, so a filesystem
+  server would read an empty tree. `NoSecondWriterTest` parses the module with **AST** to
+  assert it imports nothing server-side and opens no files.
+- **The write guards stay ON.** An MCP client is an LLM editing the wiki, which is the
+  condition those guards exist for. `allow_shrink=true` is already the designed opt-out for
+  consolidation, which is what "rewrite pages" mostly means.
+
+**`api.mcp_key` is a separate secret and `_api_auth(key_name=…)` is one implementation.**
+`push_key` rides on a phone and in a browser bookmark and can only add a reading-list item;
+`mcp_key` reads every page in the wiki, so revoking one must not depend on the other. What
+makes it safe lives in that one function: it fails closed when no key is set rather than
+letting `"" == ""` authenticate everyone, and compares with `hmac.compare_digest`.
+
+**Read-before-write needs no new machinery, which is worth knowing before the writes
+land.** These calls are stateless, so coverage from one does not survive into the next and
+`update_section` will refuse a blind write — and that is fine, because the refusal **hands
+the section back and credits coverage**. A blind write costs one extra round trip and then
+succeeds. Over MCP that round is milliseconds; the reason those handbacks exist at all is
+that it costs ~60s at `max_rpm: 1`. Nothing has to be invented and no guard weakened.
+
+**Three bugs in the first cut, each found by a test rather than by reasoning:**
+
+- **`search` returned a `PosixPath`**, which is not JSON and would have 500'd the route.
+  It returns `rel` now — the wiki-relative string every other tool speaks, and the one a
+  caller feeds back to `read_page`; the absolute path is the server's filesystem layout
+  and nothing a client needs.
+- **`_mcp_path` leaned on `serve.HISTORY_DIR`.** `serve.py` does `from agent import
+  HISTORY_DIR`, which binds the **value** at import, so the containment check silently
+  passed everything under a rebound wiki — the captured-path trap this file documents,
+  committed immediately after reading about it. It tests `".history" in rel.parts` now.
+- **The report shipped 331KB to describe a 40KB page.** Dropping the parsed section bodies
+  was not enough: a `REPEAT` finding quotes **both** copies of a paragraph, so nine similar
+  ones make thirty-six pairs, and the page this tool was written for is 223KB. Excerpts are
+  clipped to `_MCP_EXCERPT` and each check is capped at `_MCP_MAX_FINDINGS` (15, the CLI's
+  own default), with `<check>_total` kept so a capped list says what it stands in for
+  rather than looking complete. **`_section_outline`'s `max_blocks` lesson one level
+  down: bounding the obvious container bounds nothing while the items inside it are
+  unbounded.**
+
+**And the suite was not running any `serve.py` test at all, while reporting OK.** `flask`
+is absent from a fresh container, `serve.py` calls `sys.exit(1)` on a missing dependency,
+and unittest discovery dropped all **24** `serve`-importing modules without a word — so
+every "green" run in that state measured a suite with the whole web layer missing,
+including the runs that followed changes to `serve.py` itself. **The chromium-launcher
+shape a third time: a module that cannot import is dropped, and a drop is not a failure.**
+Two traps in fixing it: `pip` here targets a different interpreter from the `python3` that
+runs the suite (`python3 -m pip` is the only reliable form), and with flask present the
+run goes to **109 failures + 7 errors** purely from the gitignored `wiki/.user.json` — the
+fresh-container fragility already recorded above, confirmed and still unfixed. Creating a
+local account turns those into 0.
+
+**`test_probe_logging`'s constant-time check was grepping for a variable name.** It
+asserted the literal `hmac.compare_digest(auth[7:].strip(), push_key)`, so renaming that
+variable — in order to have ONE auth implementation serve two keys — reddened a test whose
+property was never in danger. It spies on the call now, which is the only version that
+tracks the behaviour instead of the spelling, and a plain `!=` still fails it.
+
+**Two of the new tests were worthless as first written, and both are shapes to watch.**
+`test_the_budget_travels_with_every_request` asserted against the test's own `StubClient`,
+whose `get` is three lines the test wrote — so it checked that a stub does not do something
+the stub was never written to do, while `Client.get`, the method that actually adds the
+parameter, went untested; it drives the real client through a patched `urlopen` now.
+`EventContractTest`'s lesson exactly. And `NoSecondWriterTest` **grepped for
+`_atomic_write` and found it in the module's own docstring**, which explains that edits
+inherit it — so the test failed on correct code for mentioning the thing it forbids. That
+is this file's recurring trap committed inside the test written to prevent a different one;
+reading the parse tree is what tells prose from a call.
+
 ### Reorganizing a page
 
 `update_section` refuses a rewrite that cuts a section by more than 40% (`_old_cmp >= 800

@@ -233,10 +233,33 @@ class ApiKeyTest(unittest.TestCase):
 
     def test_the_comparison_is_constant_time(self):
         """A plain != leaks the key one character at a time to anyone who can measure the
-        reply, and this route needs no login."""
-        src = Path(serve.__file__).read_text(encoding="utf-8")
-        self.assertIn("hmac.compare_digest(auth[7:].strip(), push_key)", src)
-        self.assertNotIn("if auth[7:].strip() != push_key:", src)
+        reply, and this route needs no login.
+
+        **Asserted by CALLING, not by grepping.** The first version of this pinned the
+        literal expression `hmac.compare_digest(auth[7:].strip(), push_key)`, so adding a
+        second API key — renaming that variable to `key` so one implementation could serve
+        both `push_key` and `mcp_key` — turned a refactor into a red test while the
+        property it cares about was never in danger. The project's recurring trap: an
+        assertion pinned to an exact string tracks the spelling and not the behaviour. A
+        spy proves the call happens whatever it is spelled.
+        """
+        import hmac as _hmac
+        calls = []
+        orig = _hmac.compare_digest
+
+        def spy(a, b):
+            calls.append((a, b))
+            return orig(a, b)
+
+        serve.hmac.compare_digest = spy
+        try:
+            self.c.get("/api/inbox", headers={"Authorization": "Bearer wrong-key"})
+        finally:
+            serve.hmac.compare_digest = orig
+        self.assertTrue(calls, "_api_auth compared the key without hmac.compare_digest")
+        # And the key really is what was compared, so a spy on an unrelated call cannot
+        # satisfy this.
+        self.assertIn("wrong-key", [a for a, _ in calls])
 
 
 class StaticPostureTest(unittest.TestCase):

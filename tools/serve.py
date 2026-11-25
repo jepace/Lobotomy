@@ -184,7 +184,9 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title, _H1_RE,
                    heal_index_if_stale, heal_pages, _atomic_write, search_wiki_core,
                    HISTORY_DIR, wiki_pages, _autolink, relink_all, begin_write_scope,
                    session_touched_pages as agent_session_touched_pages,
-                   _normalize_capture_url)
+                   _normalize_capture_url,
+                   _read_file, _read_section, init_session,
+                   output_budget, output_budget_tokens)
 
 from job_queue import JobQueue
 from auth  import (user_exists, create_user, authenticate, get_user, update_password,
@@ -3092,22 +3094,30 @@ def inbox_search():
 # External API — /api/*
 # ---------------------------------------------------------------------------
 
-def _api_auth():
+def _api_auth(key_name: str = "push_key"):
     """
     Validate Bearer token for external API routes.
     Returns (True, None) on success, or (False, (body, status)) on failure.
+
+    **`key_name` exists so the two APIs do not share a secret, not so there are two
+    implementations.** `push_key` is carried by the iOS Shortcut and the bookmarklet, so
+    it lives on a phone and in a browser bookmark and can only add a reading-list item.
+    `mcp_key` reaches `/api/mcp/*`, which reads any page in the wiki and will write to
+    them — a different blast radius, so a different key, and revoking one must not break
+    the other. Everything that makes this safe is here once: it FAILS CLOSED when no key
+    is set rather than letting `"" == ""` authenticate everyone, and it compares with
+    `hmac.compare_digest`, because a plain `!=` leaks the key one character at a time to
+    anyone who can measure the reply and these routes need no login.
     """
-    push_key = cfg_get("api", "push_key", "").strip()
-    if not push_key:
-        return False, ({"error": "API not configured — set api.push_key in config.json",
+    key = cfg_get("api", key_name, "").strip()
+    if not key:
+        return False, ({"error": f"API not configured — set api.{key_name} in config.json",
                         "code": "NOT_CONFIGURED"}, 501)
     auth = request.headers.get("Authorization", "").strip()
     if not auth.startswith("Bearer "):
         return False, ({"error": "Authorization header required: Bearer <token>",
                         "code": "UNAUTHORIZED"}, 401)
-    # Constant-time: a plain != leaks the key one character at a time to anyone
-    # who can measure the reply, and this route needs no login.
-    if not hmac.compare_digest(auth[7:].strip(), push_key):
+    if not hmac.compare_digest(auth[7:].strip(), key):
         return False, ({"error": "Invalid API key", "code": "FORBIDDEN"}, 403)
     return True, None
 
@@ -3122,7 +3132,208 @@ def api_status():
         "ok": True,
         "version": "1",
         "push_configured": bool(cfg_get("api", "push_key", "").strip()),
+        "mcp_configured": bool(cfg_get("api", "mcp_key", "").strip()),
     }
+
+
+# ---------------------------------------------------------------------------
+# /api/mcp/* — the surface tools/mcp_server.py exposes to an MCP client
+# ---------------------------------------------------------------------------
+#
+# **This is an HTTP client of the running server, deliberately, and not a second process
+# editing the tree.** CLAUDE.md records that separating the ingest was deferred for one
+# specific reason: it "turns a single-writer wiki into a two-writer one, which is exactly
+# what the autolinker's cache invalidation assumes is not true — the mtime backstop would
+# become load-bearing rather than a backstop". An MCP server touching `wiki/` directly is
+# that same second writer. Going through these routes keeps serve.py the only writer, and
+# every edit inherits `_atomic_write`, the history snapshot, the autolink and the
+# ownership inheritance for nothing.
+#
+# It also happens to be the only design that WORKS: the wiki lives on the jail and the
+# client does not, so a filesystem MCP server would reach an empty tree.
+
+def _mcp_budget():
+    """The caller's declared output budget, from the request.
+
+    An MCP client's limits are its own and nothing here can infer them, so it says. The
+    value is clamped in `set_output_budget_tokens` — a client is trusted to know its own
+    budget, not to switch a guard off by claiming an absurd one.
+    """
+    raw = request.args.get("budget") or (request.get_json(silent=True) or {}).get("budget")
+    return raw
+
+
+def _mcp_path(path: str) -> "tuple[str, dict | None]":
+    """Validate a wiki-relative path from an API caller.
+
+    Containment is checked by RESOLVING, not by string inspection: `wiki/../etc/passwd`
+    normalises away and a prefix test on the raw string passes it.
+    """
+    path = (path or "").strip().lstrip("/")
+    if not path:
+        return "", {"error": "path is required", "code": "BAD_PATH"}
+    if not path.startswith("wiki/") or not path.endswith(".md"):
+        return "", {"error": "path must be a wiki-relative .md file, e.g. "
+                             "wiki/entities/donald-trump.md", "code": "BAD_PATH"}
+    try:
+        resolved = (REPO_ROOT / path).resolve()
+        rel = resolved.relative_to(WIKI_DIR.resolve())
+    except (ValueError, OSError):
+        return "", {"error": "path escapes the wiki", "code": "BAD_PATH"}
+    # A revision is a record, never a page. Tested against the path's own PARTS rather
+    # than against HISTORY_DIR, because serve.py does `from agent import HISTORY_DIR`,
+    # which binds the VALUE at import — the captured-path trap CLAUDE.md documents, and
+    # the reason this check silently passed everything under a rebound wiki.
+    if ".history" in rel.parts:
+        return "", {"error": "the history store is a record, not a page", "code": "BAD_PATH"}
+    return path, None
+
+
+@app.route("/api/mcp/read")
+def api_mcp_read():
+    """Read a page, or one section of it, exactly as the agent tools do.
+
+    Same guards, same outline-above-the-limit behaviour, same read-coverage bookkeeping —
+    this is `_read_file`/`_read_section` and not a reimplementation, because a second
+    reader is a second answer about what a page contains.
+
+    `init_session()` per request is deliberate. These threads are reused, so without it a
+    read would inherit whatever read coverage and refusal counters the previous request
+    left on the thread, and `update_section`'s read-before-write guard would pass on a
+    page this caller has never seen.
+    """
+    ok, err = _api_auth("mcp_key")
+    if not ok:
+        return err
+    path, perr = _mcp_path(request.args.get("path", ""))
+    if perr:
+        return perr, 400
+    section = (request.args.get("section") or "").strip()
+    try:
+        offset = int(request.args.get("offset", -1))
+    except (TypeError, ValueError):
+        offset = -1
+    init_session()
+    with output_budget(_mcp_budget()):
+        if section:
+            body = _read_section({"path": path, "section": section})
+        else:
+            body = _read_file(path, offset)
+        if not isinstance(body, str):
+            return {"error": "that page is an image or a PDF, not markdown",
+                    "code": "NOT_TEXT"}, 415
+        return {"ok": True, "path": path, "section": section,
+                "budget_tokens": output_budget_tokens(), "content": body}
+
+
+@app.route("/api/mcp/search")
+def api_mcp_search():
+    """Search the wiki. `search_wiki_core` is shared with the agent's own search tool."""
+    ok, err = _api_auth("mcp_key")
+    if not ok:
+        return err
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return {"error": "q is required", "code": "BAD_QUERY"}, 400
+    try:
+        limit = max(1, min(int(request.args.get("limit", 20)), 100))
+    except (TypeError, ValueError):
+        limit = 20
+    res = search_wiki_core(q, WIKI_DIR)
+    if res.get("error"):
+        return {"error": res["error"], "code": "SEARCH_ERROR"}, 400
+    # Each hit carries an absolute `path` as a Path object, which is not JSON and would
+    # 500 the route; `rel` is the wiki-relative string every other tool here speaks, and
+    # it is what a caller feeds back to read_page. The absolute path is also the server's
+    # filesystem layout, which is nothing a client needs.
+    hits = []
+    for h in (res.get("results") or [])[:limit]:
+        hits.append({"path": h.get("rel") or str(h.get("path", "")),
+                     "title": h.get("title", ""), "score": h.get("score", 0)})
+    return {"ok": True, "query": q, "count": len(hits),
+            "keywords": res.get("keywords") or [], "results": hits}
+
+
+@app.route("/api/mcp/report")
+def api_mcp_report():
+    """Everything `page_report.py` finds mechanically wrong with one page.
+
+    The point of exposing this rather than only the text: every check in that tool is
+    report-only *because* the repair is a judgement about what the page is for — which is
+    the job an MCP client is for. RATCHET in particular names sections no agent tool can
+    consolidate at the ingest's budget.
+
+    Imported lazily so a missing or broken report tool cannot stop the server booting;
+    the rest of `/api/mcp/*` is useful without it.
+    """
+    ok, err = _api_auth("mcp_key")
+    if not ok:
+        return err
+    path, perr = _mcp_path(request.args.get("path", ""))
+    if perr:
+        return perr, 400
+    p = REPO_ROOT / path
+    if not p.is_file():
+        return {"error": f"no page at {path}", "code": "NOT_FOUND"}, 404
+    try:
+        import page_report
+    except Exception as e:
+        return {"error": f"page_report unavailable: {e}", "code": "UNAVAILABLE"}, 503
+    with output_budget(_mcp_budget()):
+        r = page_report.analyze(p)
+    # The Path and the parsed section bodies are for the CLI's printer; a JSON caller
+    # wants the findings, and shipping whole section texts here would re-send the page.
+    out = {k: v for k, v in r.items() if k not in ("page", "sections")}
+    out["sections"] = [{"name": s["name"], "chars": s["chars"],
+                        "generated": s["generated"], "is_title": s["is_title"]}
+                       for s in r.get("sections", [])]
+    out = _mcp_clip(out)
+    # And cap the NUMBER of findings per check, not only each one's length. REPEATS is
+    # combinatorial — every similar pair of paragraphs is an entry, so nine of them are
+    # thirty-six — which is why clipping the excerpts still left a 26KB reply for a 40KB
+    # page. `page_report.py`'s own CLI caps this at 15 for exactly this reason and this
+    # route is a display like any other; the full count is kept so a capped list says how
+    # much it is standing in for rather than quietly looking complete.
+    for k, v in list(out.items()):
+        if isinstance(v, list) and len(v) > _MCP_MAX_FINDINGS:
+            out[k] = v[:_MCP_MAX_FINDINGS]
+            out[f"{k}_total"] = len(v)
+    out["ok"] = True
+    out["budget_tokens"] = output_budget_tokens()
+    return out
+
+
+#: Findings reported per check. `page_report.py`'s CLI defaults to 15 for the same reason.
+_MCP_MAX_FINDINGS = 15
+
+
+#: Longest quoted excerpt in a JSON finding. The CLI clips to 100 for a terminal line;
+#: this is roomier because a caller is deciding what to DO about the finding, and still
+#: bounded because it is not the page.
+_MCP_EXCERPT = 300
+
+
+def _mcp_clip(obj, limit: int = _MCP_EXCERPT):
+    """Bound every quoted excerpt in a findings tree.
+
+    **Dropping the section bodies was not enough and the gap was 8×.** A REPEAT finding
+    quotes BOTH copies of a paragraph in full, so a page with nine similar paragraphs
+    produced thirty-six pairs and a **331KB reply describing a 40KB page** — and the page
+    this tool was written for is 223KB, where the same shape is megabytes. The lesson is
+    `_section_outline`'s `max_blocks` one, a level down: bounding the obvious container
+    bounds nothing while the items inside it are unbounded.
+
+    Clipped rather than dropped, because a finding whose text you cannot see is one you
+    cannot act on — the excerpt locates it, and `read_page` on that section gives the
+    rest.
+    """
+    if isinstance(obj, str):
+        return obj if len(obj) <= limit else obj[:limit - 1] + "…"
+    if isinstance(obj, dict):
+        return {k: _mcp_clip(v, limit) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_mcp_clip(v, limit) for v in obj]
+    return obj
 
 
 @app.route("/api/search")
