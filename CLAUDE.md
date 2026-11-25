@@ -2540,6 +2540,41 @@ know its own limit and not to switch a guard off by claiming an infinite one.
   condition those guards exist for. `allow_shrink=true` is already the designed opt-out for
   consolidation, which is what "rewrite pages" mostly means.
 
+**The key lives in a FILE and is managed from `/settings`** (`_api_key`,
+`/settings/mcp-key`, `load_client_config`, `load_server_config`). Asked as *"Key should be
+in a file, not environment. User settings page has all the mcp stuff settable there?"*
+The first version read `$LOBOTOMY_MCP_KEY`, on the argument that a command-line argument is
+visible in `ps`. That argument is true and **does not reach the conclusion**: an env var is
+readable from `/proc/<pid>/environ` by the same user, is inherited by every child, and —
+the part that actually decides it — **an MCP client sets one by writing it into the
+client's own JSON config**, so the secret lands in a file either way. The only real
+question was whether it lands in a file something can check the permissions of. So a
+world- or group-readable key file is **refused, not warned about**: a warning goes to
+wherever the client sends stderr, which is frequently nowhere, and a loose file is strictly
+worse than the variable it replaced.
+
+**Only the KEY half is settable on the page, and saying otherwise would be a promise it
+cannot keep.** The base URL and the output budget belong to the machine running
+`mcp_server.py`, which the server cannot reach — so the page hands those over as a
+`~/.lobotomy/mcp.json` to save, and says in as many words that it cannot set them. The
+page shows the file; the file is the client's own configuration.
+
+Two stores, one precedence, in `_api_key`: `config.json` is the deploy-time default and
+`wiki/.user.json` is what the settings page writes, and **settings wins** because a click
+that does not take effect is worse than a config file quietly shadowed — the page says
+which store a live key came from, so neither is a mystery. `.user.json` rather than
+`config.json` deliberately: the settings page already owns that file and the server already
+writes it safely, while `config.json` holds the LLM api_key and the admin password, and
+teaching the web app to rewrite THAT file is a bug one typo away from destroying the
+provider credentials. `config.py` reloads on mtime, so a hand edit is still picked up live.
+
+**A key present in settings is authoritative even when EMPTY, and that is what makes
+Revoke work.** `config.json` may hold a key this server should no longer accept, so
+revoking stores `""` rather than deleting the entry — delete it and the old key keeps
+working, which is a revoke that silently did not happen. `None` is absent; `""` is revoked.
+A damaged `.user.json` falls back rather than raising, and `_api_auth` answers 501 on an
+empty key, so the failure direction is closed.
+
 **`api.mcp_key` is a separate secret and `_api_auth(key_name=…)` is one implementation.**
 `push_key` rides on a phone and in a browser bookmark and can only add a reading-list item;
 `mcp_key` reads every page in the wiki, so revoking one must not depend on the other. What
@@ -2600,6 +2635,21 @@ parameter, went untested; it drives the real client through a patched `urlopen` 
 inherit it — so the test failed on correct code for mentioning the thing it forbids. That
 is this file's recurring trap committed inside the test written to prevent a different one;
 reading the parse tree is what tells prose from a call.
+
+**And then the SAME trap twice more in its replacement, which is the real lesson.** Adding
+the key file meant `mcp_server.py` legitimately reads two files, so "opens no files" had to
+go — it was forbidding the feature, not a hazard. The narrower version, "names no `wiki/`
+path", then matched the module's own **docstring**, which promises that very property; with
+docstrings excluded it matched a tool **schema description** whose entire job is to show the
+client what a path looks like (`"wiki-relative, e.g. wiki/entities/donald-trump.md"`).
+Three static attempts, three false positives, every one of them prose.
+
+**The property was never about string literals.** It is that every tool's data arrives over
+HTTP — so the test drives each tool against a stub and requires exactly one `/api/mcp/`
+request, which no amount of prose can satisfy by accident and which keeps holding as the
+module grows file handling. The generalisable form: **when a static check keeps matching
+text that describes the behaviour, the behaviour is what wants asserting.** Reaching for
+grep a fourth time was the mistake, not the fourth pattern.
 
 ### Reorganizing a page
 

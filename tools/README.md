@@ -432,14 +432,20 @@ about what the page is for"*. This is the pipe that puts judgement on the other 
 what is wrong with a page and then fix it.
 
 ```sh
-export LOBOTOMY_MCP_KEY=...          # api.mcp_key from the server's config.json
-python3 tools/mcp_server.py --base-url https://lobotomy.example
-python3 tools/mcp_server.py --base-url https://lobotomy.example --budget 60000
+python3 tools/mcp_server.py                      # reads ~/.lobotomy/mcp.json
+python3 tools/mcp_server.py --budget 60000       # drive it from a smaller model
 ```
 
-Needs `api.mcp_key` in `config.json` — **a different key from `push_key`**, which rides on
-a phone and can only add a reading-list item. The key is read from the environment and
-never taken as an argument: an argument is visible in `ps` and lands in shell history.
+**Open `/settings` on the server, click Generate key, and save the block it gives you to
+`~/.lobotomy/mcp.json`** (then `chmod 600` — the client refuses a key file other users can
+read, which is the whole reason it is a file). That file holds the base URL, the key and
+the budget, so the command line carries no secret and no arguments at all.
+
+The key is **a different secret from `push_key`**, which rides on a phone and in a browser
+bookmark and can only add a reading-list item; this one reaches every page in the wiki, so
+revoking one must not depend on the other. `/settings` generates, rotates and revokes it;
+`api.mcp_key` in `config.json` still works as the deploy-time default, and the settings
+value wins where both exist.
 
 Three things about it that are decisions rather than details:
 

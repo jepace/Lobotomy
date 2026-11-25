@@ -203,6 +203,47 @@
 
   <!-- Bookmarklet -->
   <div class="settings-section">
+    <h2>MCP Server</h2>
+    <div class="settings-card">
+      <div class="settings-row" style="flex-direction:column; align-items:flex-start; gap:10px;">
+        <div>
+          <label>API key</label>
+          <div class="hint">Lets an MCP client read and report on your wiki. This is a
+            different key from the bookmarklet's — it reaches every page, so revoking one
+            must not depend on the other.</div>
+        </div>
+        <div id="mcp-status" class="hint">
+          {% if mcp_key %}
+            Configured{% if mcp_key_source %} (from {{ mcp_key_source }}){% endif %}.
+          {% else %}
+            No key yet.
+          {% endif %}
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="toggle-btn" id="mcp-gen" onclick="mcpKey('generate')">
+            {{ 'Rotate key' if mcp_key else 'Generate key' }}</button>
+          {% if mcp_key %}
+          <button class="toggle-btn" id="mcp-revoke" onclick="mcpKey('revoke')">Revoke</button>
+          {% endif %}
+        </div>
+        <div id="mcp-msg" class="hint"></div>
+
+        <div id="mcp-config" {% if not mcp_key %}style="display:none"{% endif %}>
+          <div class="hint">Save this as <code>~/.lobotomy/mcp.json</code> on the machine
+            running the client, then <code>chmod 600</code> it — the client refuses a key
+            file other users can read:</div>
+          <div class="bm-code" id="mcp-json">{{ '{\n  "base_url": "' ~ base_url ~ '",\n  "mcp_key": "' ~ (mcp_key or 'generate a key above') ~ '",\n  "budget": ' ~ mcp_default_budget ~ '\n}' }}</div>
+          <div class="hint" style="margin-top:8px;">Then point your MCP client at:</div>
+          <div class="bm-code" id="mcp-cmd">python3 tools/mcp_server.py</div>
+          <div class="hint" style="margin-top:8px;">The base URL and budget live in that
+            file rather than here, because they belong to the machine running the client —
+            this page cannot set them.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="settings-section">
     <h2>Browser Bookmarklet</h2>
     <div class="settings-card">
       {% if push_key %}
@@ -258,6 +299,49 @@ function pickSize(s) {
   document.querySelector(`#theme-group [data-theme="${t}"]`)?.classList.add('active');
   document.querySelector(`#fontsize-group [data-size="${s}"]`)?.classList.add('active');
 })();
+
+// ── MCP key ────────────────────────────────────────────────
+// Rendered here AND by the Jinja block above, which is the two-renderers hazard this
+// project keeps paying for — so the JSON body is built by ONE function both the server
+// and this script agree on in shape, and the server's version is the one on first load.
+function mcpConfigJson(baseUrl, key, budget) {
+  return '{\n  "base_url": "' + baseUrl + '",\n  "mcp_key": "' + key +
+         '",\n  "budget": ' + budget + '\n}';
+}
+
+async function mcpKey(action) {
+  const btn = document.getElementById(action === 'revoke' ? 'mcp-revoke' : 'mcp-gen');
+  const msg = document.getElementById('mcp-msg');
+  if (action === 'revoke' &&
+      !confirm('Revoke the MCP key? Any client using it stops working immediately.')) return;
+  const was = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  msg.textContent = '';
+  try {
+    const data = await apiFetch('/settings/mcp-key', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: action})
+    });
+    if (action === 'revoke') {
+      document.getElementById('mcp-status').textContent = 'Revoked — no key set.';
+      document.getElementById('mcp-config').style.display = 'none';
+      msg.textContent = 'Revoked.';
+    } else {
+      document.getElementById('mcp-status').textContent = 'Configured (from settings).';
+      document.getElementById('mcp-json').textContent = mcpConfigJson(
+        {{ base_url | tojson }}, data.key, {{ mcp_default_budget | tojson }});
+      document.getElementById('mcp-config').style.display = '';
+      msg.textContent = 'New key generated. Copy it now — rotating again replaces it.';
+    }
+  } catch (e) {
+    // Reported, never swallowed: a rotate that silently did nothing leaves you believing
+    // the old key is dead when it is not.
+    msg.textContent = 'Failed: ' + (e && e.message ? e.message : 'unknown');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = was; }
+  }
+}
 
 // ── Change password ────────────────────────────────────────
 async function changePassword() {

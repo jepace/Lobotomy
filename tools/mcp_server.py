@@ -50,19 +50,31 @@ to be invented, and no guard has to be weakened, to make this work.
 
 USAGE
 -----
-    python3 tools/mcp_server.py --base-url https://lobotomy.example --key-env LOBOTOMY_MCP_KEY
+    python3 tools/mcp_server.py                      # reads ~/.lobotomy/mcp.json
 
-The key is read from the environment, never from the command line: an argument is visible
-in `ps` to every user on the box and lands in shell history. `config.json` is NOT read
-here — this process may run on a different machine from the server entirely.
+`/settings` on the server generates that file's contents for you to save. It holds the
+base URL, the key and the budget, so the command line carries no secret and no arguments
+at all — which is what an MCP client needs, since a client launches this process and
+anything it must pass would have to live in the client's own config file instead.
+
+**A file rather than an environment variable, and the reason is not the obvious one.** An
+argument is visible in `ps`; an env var is not, but it is readable from
+`/proc/<pid>/environ` by the same user, it is inherited by every child process, and — the
+part that actually decides it — an MCP client sets it by writing it into the client's
+JSON config. So "use the environment" does not avoid putting the secret in a file; it just
+moves it to a file nothing here can check the permissions of. This one is checked.
+
+`config.json` is read only as a fallback, for the case where this runs ON the server: it
+is the same key, and `api.mcp_key` is already there.
 """
 import argparse
 import json
-import os
+import stat
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 #: What this client can emit in one response, in tokens. The default is deliberately far
 #: above `max_tokens`' 16,384: that is the whole reason the budget is a request parameter
@@ -74,6 +86,82 @@ DEFAULT_BUDGET_TOKENS = 200_000
 HTTP_TIMEOUT = 120
 
 PROTOCOL_VERSION = "2024-11-05"
+
+#: Where the client's settings live by default. `/settings` prints exactly this file.
+DEFAULT_KEY_FILE = "~/.lobotomy/mcp.json"
+
+
+class ConfigError(Exception):
+    """The key file is missing, unreadable, malformed, or readable by other users."""
+
+
+def load_client_config(path: str) -> dict:
+    """Read `{base_url, mcp_key, budget}` from a JSON file, refusing a loose one.
+
+    **The permission check is the whole reason a file beats an env var here**, so it is a
+    refusal and not a warning: a key file that any other account on the box can read is
+    strictly worse than the environment variable it replaced, and a warning on stderr goes
+    to wherever the MCP client sends stderr, which is frequently nowhere. Owner-only or it
+    does not load.
+
+    Group and other are checked separately from the owner bits so the message can say
+    which, and the fix it names is the one command that works.
+    """
+    p = Path(path).expanduser()
+    if not p.is_file():
+        raise ConfigError(
+            f"no key file at {p}. Open /settings on your Lobotomy server, generate an MCP "
+            f"key, and save the block it gives you to that path:\n"
+            f"  mkdir -p {p.parent} && chmod 700 {p.parent}\n"
+            f"  <paste into {p}>\n"
+            f"  chmod 600 {p}")
+    try:
+        mode = p.stat().st_mode
+    except OSError as e:
+        raise ConfigError(f"could not stat {p}: {e}") from None
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise ConfigError(
+            f"{p} is readable by other users (mode {stat.S_IMODE(mode):04o}) and holds an "
+            f"API key for your whole wiki. Fix it with:\n  chmod 600 {p}")
+    try:
+        cfg = json.loads(p.read_text(encoding="utf-8"))
+    except OSError as e:
+        raise ConfigError(f"could not read {p}: {e}") from None
+    except ValueError as e:
+        raise ConfigError(f"{p} is not valid JSON: {e}") from None
+    if not isinstance(cfg, dict):
+        raise ConfigError(f"{p} should contain a JSON object, got {type(cfg).__name__}")
+    return cfg
+
+
+def load_server_config() -> dict:
+    """`api.mcp_key` and `server.base_url` from the server's own `config.json`.
+
+    Only useful when this runs ON the server, which is a real case and the one where
+    asking the user to copy a key from one file on the box into another file on the same
+    box would be ceremony. Absent or unreadable is not an error here — it is simply not
+    this deployment, and `main` reports what it could not find rather than guessing.
+
+    Note it reads the FILE and does not import `config.py`: that module calls `sys.exit()`
+    at import when config.json is missing, which would turn "you are not on the server"
+    into a dead process, and importing it would also make this module depend on the
+    server side that `NoSecondWriterTest` asserts it does not.
+    """
+    p = Path(__file__).resolve().parent.parent / "config.json"
+    try:
+        cfg = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(cfg, dict):
+        return {}
+    api = cfg.get("api") or {}
+    server = cfg.get("server") or {}
+    out = {}
+    if isinstance(api, dict) and api.get("mcp_key"):
+        out["mcp_key"] = str(api["mcp_key"]).strip()
+    if isinstance(server, dict) and server.get("base_url"):
+        out["base_url"] = str(server["base_url"]).strip()
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -303,25 +391,41 @@ def serve_stdio(client: Client, stdin=None, stdout=None) -> int:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--base-url", default=os.environ.get("LOBOTOMY_BASE_URL", ""),
-                    help="e.g. https://lobotomy.example (or $LOBOTOMY_BASE_URL)")
-    ap.add_argument("--key-env", default="LOBOTOMY_MCP_KEY",
-                    help="environment variable holding api.mcp_key (default "
-                         "LOBOTOMY_MCP_KEY). The key is never taken as an argument: an "
-                         "argument is visible in ps and lands in shell history.")
-    ap.add_argument("--budget", type=int, default=DEFAULT_BUDGET_TOKENS,
+    ap.add_argument("--key-file", default=DEFAULT_KEY_FILE,
+                    help=f"JSON file holding base_url, mcp_key and budget (default "
+                         f"{DEFAULT_KEY_FILE}). Generated for you by /settings. Must be "
+                         f"owner-readable only. The key is never a command-line argument: "
+                         f"an argument is visible in ps and lands in shell history.")
+    ap.add_argument("--base-url", default="",
+                    help="override the base URL from the key file")
+    ap.add_argument("--budget", type=int, default=0,
                     help=f"this client's output budget in tokens (default "
                          f"{DEFAULT_BUDGET_TOKENS}). Four server-side guards scale with "
                          f"it; the server clamps an absurd value rather than trusting it.")
     args = ap.parse_args(argv)
 
-    if not args.base_url:
-        ap.error("--base-url is required (or set $LOBOTOMY_BASE_URL)")
-    key = os.environ.get(args.key_env, "").strip()
+    # The key file is the source. When it is absent, fall back to the server's own
+    # config.json — that is the "running on the jail" case, where the same key is already
+    # on disk and copying it into a second file would be ceremony. Only ONE of the two is
+    # consulted, so there is never a question of which half came from where.
+    try:
+        cfg = load_client_config(args.key_file)
+        source = str(Path(args.key_file).expanduser())
+    except ConfigError as e:
+        cfg = load_server_config()
+        source = "the server's config.json"
+        if not cfg:
+            ap.error(str(e))
+
+    key = str(cfg.get("mcp_key") or "").strip()
+    base_url = (args.base_url or cfg.get("base_url") or "").strip()
+    budget = args.budget or int(cfg.get("budget") or DEFAULT_BUDGET_TOKENS)
+
     if not key:
-        ap.error(f"${args.key_env} is empty — set it to api.mcp_key from the server's "
-                 f"config.json")
-    return serve_stdio(Client(args.base_url, key, args.budget))
+        ap.error(f"no mcp_key in {source}. Generate one on /settings.")
+    if not base_url:
+        ap.error(f"no base_url in {source} — add it, or pass --base-url.")
+    return serve_stdio(Client(base_url, key, budget))
 
 
 if __name__ == "__main__":

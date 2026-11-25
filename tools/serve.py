@@ -703,7 +703,13 @@ def auth_reset(token):
 def settings_page():
     user = get_user() or {}
     settings = get_settings()
-    push_key = cfg_get("api", "push_key", "")
+    push_key = _api_key("push_key")
+    mcp_key  = _api_key("mcp_key")
+    # Where a live key came from, so the page can say so. A key shadowing config.json
+    # without a word is how someone edits the file and cannot work out why nothing
+    # changed — the same class of confusion as a settings click that does not take.
+    mcp_key_source = ("settings" if (settings or {}).get("api_mcp_key") is not None
+                      else ("config.json" if mcp_key else ""))
     base_url = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
     active_provider = cfg_active_provider()
     all_providers   = cfg_all_providers()
@@ -713,11 +719,63 @@ def settings_page():
                            user=user,
                            settings=settings,
                            push_key=push_key,
+                           mcp_key=mcp_key,
+                           mcp_key_source=mcp_key_source,
+                           mcp_default_budget=mcp_server_default_budget(),
                            base_url=base_url,
                            active_provider=active_provider,
                            all_providers=all_providers,
                            active_model=active_model,
                            provider_models=provider_models)
+
+
+def mcp_server_default_budget() -> int:
+    """`mcp_server.DEFAULT_BUDGET_TOKENS`, so the settings page quotes the real number.
+
+    Imported lazily and with a fallback: the MCP client script is not needed to run the
+    server, and a settings page that 500s because an unrelated module moved would be a
+    poor trade for one default in a code block.
+    """
+    try:
+        import mcp_server
+        return int(mcp_server.DEFAULT_BUDGET_TOKENS)
+    except Exception:
+        return 200_000
+
+
+@app.route("/settings/mcp-key", methods=["POST"])
+@require_login
+def settings_mcp_key():
+    """Generate, rotate or revoke the MCP API key.
+
+    Asked for as *"Key should be in a file, not environment. User settings page has all
+    the mcp stuff settable there?"* — the key half belongs here, because rotating a secret
+    is a settings action and the alternative is hand-editing `config.json` on the jail.
+    The CLIENT half (which machine runs the server, its base URL, its output budget) is
+    not settable from here and cannot be: it lives on whatever machine runs
+    `mcp_server.py`. The page gives that half as a file to save instead.
+
+    Generating ALWAYS replaces. There is no "add a second key": one secret with one
+    lifecycle is what makes revoke mean something, and a rotate that left the old key
+    working would be a revoke that silently did not.
+    """
+    data = request.get_json(silent=True) or {}
+    action = (data.get("action") or "generate").strip()
+    if action == "revoke":
+        # Stored as an explicit empty string rather than deleted, because deleting it
+        # would fall back to config.json — revoking a key and having the old one keep
+        # working is the one outcome this must not produce. See `_api_key`.
+        update_settings({"api_mcp_key": ""})
+        log.info("MCP key revoked from /settings")
+        return {"ok": True, "revoked": True, "key": ""}
+    if action != "generate":
+        return {"error": f"unknown action {action!r}", "code": "BAD_ACTION"}, 400
+    key = secrets.token_hex(32)
+    update_settings({"api_mcp_key": key})
+    # The key itself is NEVER logged: this file's own rule for config and auth state, and
+    # the log is the one place a secret would outlive its rotation.
+    log.info("MCP key generated from /settings (%d chars)", len(key))
+    return {"ok": True, "key": key, "source": "settings"}
 
 
 @app.route("/settings/password", methods=["POST"])
@@ -3094,6 +3152,36 @@ def inbox_search():
 # External API — /api/*
 # ---------------------------------------------------------------------------
 
+def _api_key(key_name: str) -> str:
+    """The configured value of one API key — the single place that decides where it lives.
+
+    Two stores, one precedence, because they answer different questions. `config.json` is
+    the deploy-time default, edited by hand on the server; `wiki/.user.json` is what the
+    settings page writes when somebody clicks Generate. **The settings page wins**, since
+    a click that does not take effect is worse than a config file that is quietly shadowed,
+    and `/settings` shows which store a live key came from.
+
+    `.user.json` rather than `config.json` deliberately: the settings page already owns
+    that file and the server already writes it safely, while `config.json` holds the LLM
+    api_key and the admin password. Teaching the web app to rewrite THAT file to store a
+    key is a bug one typo away from destroying the provider credentials, and the feature
+    does not need it.
+
+    **A key PRESENT in settings is authoritative even when empty**, which is what makes
+    Revoke work: `config.json` may hold a key this server is no longer meant to accept, so
+    an empty settings entry has to mean "revoked" and not "fall through to the default".
+    `None` is absent; `""` is revoked.
+    """
+    try:
+        settings = get_settings() or {}
+    except Exception:                      # a damaged .user.json must not open the door
+        settings = {}
+    val = settings.get(f"api_{key_name}")
+    if val is not None:
+        return str(val).strip()
+    return cfg_get("api", key_name, "").strip()
+
+
 def _api_auth(key_name: str = "push_key"):
     """
     Validate Bearer token for external API routes.
@@ -3109,9 +3197,10 @@ def _api_auth(key_name: str = "push_key"):
     `hmac.compare_digest`, because a plain `!=` leaks the key one character at a time to
     anyone who can measure the reply and these routes need no login.
     """
-    key = cfg_get("api", key_name, "").strip()
+    key = _api_key(key_name)
     if not key:
-        return False, ({"error": f"API not configured — set api.{key_name} in config.json",
+        return False, ({"error": f"API not configured — generate a key on /settings, or "
+                                 f"set api.{key_name} in config.json",
                         "code": "NOT_CONFIGURED"}, 501)
     auth = request.headers.get("Authorization", "").strip()
     if not auth.startswith("Bearer "):

@@ -470,23 +470,217 @@ class ClientTest(unittest.TestCase):
         self.assertIn("could not reach", str(cm.exception))
 
 
-class KeyHandlingTest(unittest.TestCase):
-    def test_the_key_is_never_a_command_line_argument(self):
-        """An argument is visible in `ps` to every user on the box and lands in shell
-        history. config.json is not read either: this process may run on a different
-        machine from the server."""
-        with mock.patch.dict(os.environ, {"LOBOTOMY_MCP_KEY": ""}, clear=False):
-            with self.assertRaises(SystemExit):
-                mcp_server.main(["--base-url", "https://x.example"])
-        opts = mcp_server.main.__doc__ or ""
-        src = Path(mcp_server.__file__).read_text(encoding="utf-8")
-        self.assertNotIn('"--key"', src)
-        self.assertNotIn("'--key'", src)
+class KeyFileTest(unittest.TestCase):
+    """The key lives in a file, and the file's MODE is the reason that is an improvement.
 
-    def test_a_base_url_is_required(self):
-        with mock.patch.dict(os.environ, {"LOBOTOMY_BASE_URL": ""}, clear=False):
+    Asked for as *"Key should be in a file, not environment."* The first version read
+    `$LOBOTOMY_MCP_KEY`, on the argument that an argument is visible in `ps`. True, and it
+    did not follow that the environment was the answer: an env var is readable from
+    `/proc/<pid>/environ` by the same user, is inherited by every child, and — the part
+    that decides it — **an MCP client sets one by writing it into the client's own JSON
+    config**, so the secret ends up in a file either way. The only question was whether it
+    lands in a file something can check the permissions of.
+    """
+
+    def setUp(self):
+        import tempfile
+        self.d = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.d, ignore_errors=True))
+        self.f = self.d / "mcp.json"
+
+    def _write(self, obj, mode=0o600):
+        self.f.write_text(json.dumps(obj), encoding="utf-8")
+        self.f.chmod(mode)
+
+    def test_it_reads_base_url_key_and_budget(self):
+        self._write({"base_url": "https://x.example", "mcp_key": "k", "budget": 123})
+        cfg = mcp_server.load_client_config(str(self.f))
+        self.assertEqual(cfg["base_url"], "https://x.example")
+        self.assertEqual(cfg["mcp_key"], "k")
+        self.assertEqual(cfg["budget"], 123)
+
+    def test_a_world_readable_key_file_is_REFUSED_not_warned(self):
+        """A warning goes to wherever the MCP client sends stderr, which is frequently
+        nowhere — and a key file other accounts can read is strictly worse than the env
+        var it replaced, so this is the one check that justifies the whole change."""
+        self._write({"base_url": "https://x.example", "mcp_key": "k"}, mode=0o644)
+        with self.assertRaises(mcp_server.ConfigError) as cm:
+            mcp_server.load_client_config(str(self.f))
+        self.assertIn("chmod 600", str(cm.exception))
+
+    def test_a_group_readable_key_file_is_refused_too(self):
+        self._write({"base_url": "https://x.example", "mcp_key": "k"}, mode=0o640)
+        with self.assertRaises(mcp_server.ConfigError):
+            mcp_server.load_client_config(str(self.f))
+
+    def test_a_missing_file_names_the_commands_that_fix_it(self):
+        """Principle 4 in a CLI: the message has to name a move that works."""
+        with self.assertRaises(mcp_server.ConfigError) as cm:
+            mcp_server.load_client_config(str(self.d / "absent.json"))
+        msg = str(cm.exception)
+        self.assertIn("/settings", msg)
+        self.assertIn("chmod 600", msg)
+
+    def test_malformed_json_says_so_rather_than_crashing(self):
+        self.f.write_text("{not json", encoding="utf-8")
+        self.f.chmod(0o600)
+        with self.assertRaises(mcp_server.ConfigError) as cm:
+            mcp_server.load_client_config(str(self.f))
+        self.assertIn("not valid JSON", str(cm.exception))
+
+    def test_the_key_is_never_a_command_line_argument(self):
+        src = Path(mcp_server.__file__).read_text(encoding="utf-8")
+        for flag in ('"--key"', "'--key'", '"--mcp-key"', '"--token"'):
+            self.assertNotIn(flag, src)
+
+    def test_main_refuses_when_there_is_no_key_anywhere(self):
+        self._write({"base_url": "https://x.example"})
+        with mock.patch.object(mcp_server, "load_server_config", return_value={}):
             with self.assertRaises(SystemExit):
-                mcp_server.main([])
+                mcp_server.main(["--key-file", str(self.f)])
+
+    def test_main_refuses_when_there_is_no_base_url(self):
+        self._write({"mcp_key": "k"})
+        with mock.patch.object(mcp_server, "load_server_config", return_value={}):
+            with self.assertRaises(SystemExit):
+                mcp_server.main(["--key-file", str(self.f)])
+
+    def test_it_falls_back_to_the_servers_own_config_when_run_beside_it(self):
+        """Running on the jail is a real case, and copying a key from one file on the box
+        into another file on the same box would be ceremony."""
+        captured = {}
+        with mock.patch.object(mcp_server, "load_server_config",
+                               return_value={"mcp_key": "from-config",
+                                             "base_url": "https://jail.example"}):
+            with mock.patch.object(mcp_server, "serve_stdio",
+                                   lambda c, **kw: captured.update(
+                                       key=c.key, base=c.base) or 0):
+                mcp_server.main(["--key-file", str(self.d / "absent.json")])
+        self.assertEqual(captured["key"], "from-config")
+        self.assertEqual(captured["base"], "https://jail.example")
+
+    def test_the_server_config_reader_never_imports_config_py(self):
+        """`config.py` calls sys.exit() at import when config.json is missing, which would
+        turn "you are not on the server" into a dead process — and importing it would
+        break the no-server-side-imports rule this module is held to."""
+        self.assertEqual(mcp_server.load_server_config.__module__, "mcp_server")
+        import ast
+        tree = ast.parse(Path(mcp_server.__file__).read_text(encoding="utf-8"))
+        names = set()
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Import):
+                names.update(a.name for a in n.names)
+            elif isinstance(n, ast.ImportFrom) and n.module:
+                names.add(n.module)
+        self.assertNotIn("config", names)
+
+
+class SettingsMcpKeyTest(unittest.TestCase):
+    """`/settings/mcp-key` — generate, rotate, revoke.
+
+    Asked as *"User settings page has all the mcp stuff settable there?"* The KEY half
+    belongs here; the client half (which machine, which base URL, which budget) lives on
+    whatever machine runs the client and cannot be set from a web page, so the page hands
+    that over as a file to save instead.
+    """
+
+    def setUp(self):
+        self.w = harness.TempWiki()
+        self.w.__enter__()
+        self.addCleanup(self.w.__exit__, None, None, None)
+        self._store = {}
+        self._gs, self._us = serve.get_settings, serve.update_settings
+        serve.get_settings = lambda: dict(self._store)
+        serve.update_settings = lambda patch: self._store.update(patch)
+
+        def _restore():
+            serve.get_settings, serve.update_settings = self._gs, self._us
+        self.addCleanup(_restore)
+        self.c = serve.app.test_client()
+        with self.c.session_transaction() as s:
+            s["logged_in"] = True
+
+    def test_generate_returns_a_key_and_stores_it(self):
+        r = self.c.post("/settings/mcp-key", json={"action": "generate"})
+        self.assertEqual(r.status_code, 200)
+        key = r.get_json()["key"]
+        self.assertEqual(len(key), 64)
+        self.assertEqual(self._store["api_mcp_key"], key)
+
+    def test_generating_twice_replaces_rather_than_adding(self):
+        """One secret with one lifecycle is what makes revoke mean something."""
+        first = self.c.post("/settings/mcp-key", json={}).get_json()["key"]
+        second = self.c.post("/settings/mcp-key", json={}).get_json()["key"]
+        self.assertNotEqual(first, second)
+        self.assertEqual(self._store["api_mcp_key"], second)
+
+    def test_settings_wins_over_config_json(self):
+        self._store["api_mcp_key"] = "from-settings"
+        cfg = serve.cfg_get
+        serve.cfg_get = lambda s, k, d=None: ("from-config" if (s, k) == ("api", "mcp_key")
+                                              else cfg(s, k, d))
+        try:
+            self.assertEqual(serve._api_key("mcp_key"), "from-settings")
+        finally:
+            serve.cfg_get = cfg
+
+    def test_revoke_beats_a_key_still_sitting_in_config_json(self):
+        """The one outcome this must not produce: revoking and having the old key keep
+        working. An empty settings entry means REVOKED, not "fall through to the
+        default" — which is why it is stored rather than deleted."""
+        cfg = serve.cfg_get
+        serve.cfg_get = lambda s, k, d=None: ("from-config" if (s, k) == ("api", "mcp_key")
+                                              else cfg(s, k, d))
+        try:
+            self.c.post("/settings/mcp-key", json={"action": "revoke"})
+            self.assertEqual(serve._api_key("mcp_key"), "")
+        finally:
+            serve.cfg_get = cfg
+
+    def test_config_json_is_used_when_settings_has_never_been_touched(self):
+        cfg = serve.cfg_get
+        serve.cfg_get = lambda s, k, d=None: ("from-config" if (s, k) == ("api", "mcp_key")
+                                              else cfg(s, k, d))
+        try:
+            self.assertEqual(serve._api_key("mcp_key"), "from-config")
+        finally:
+            serve.cfg_get = cfg
+
+    def test_a_damaged_user_file_does_not_open_the_door(self):
+        """Fail closed: a settings store that raises must not be read as "no key set, so
+        allow everything" — `_api_auth` answers 501 on an empty key, never 200."""
+        def boom():
+            raise RuntimeError("damaged")
+        serve.get_settings = boom
+        self.assertEqual(serve._api_key("mcp_key"), serve.cfg_get("api", "mcp_key", ""))
+
+    def test_an_unknown_action_is_refused(self):
+        r = self.c.post("/settings/mcp-key", json={"action": "sideways"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_it_needs_a_login(self):
+        c = serve.app.test_client()
+        r = c.post("/settings/mcp-key", json={},
+                   headers={"X-Requested-With": "XMLHttpRequest"})
+        self.assertEqual(r.status_code, 401)
+
+    def test_the_key_is_never_written_to_the_log(self):
+        """The log outlives a rotation, which is exactly how a revoked secret survives."""
+        import logging
+        seen = []
+
+        class _Grab(logging.Handler):
+            def emit(self, rec):
+                seen.append(rec.getMessage())
+
+        h = _Grab()
+        serve.log.addHandler(h)
+        try:
+            key = self.c.post("/settings/mcp-key", json={}).get_json()["key"]
+        finally:
+            serve.log.removeHandler(h)
+        for line in seen:
+            self.assertNotIn(key, line)
 
 
 class NoSecondWriterTest(unittest.TestCase):
@@ -522,19 +716,54 @@ class NoSecondWriterTest(unittest.TestCase):
                              f"mcp_server imports {forbidden} — it would become a second "
                              f"writer, or need the server's own dependencies")
 
-    def test_it_opens_no_files(self):
-        """A second process writing `wiki/` is the hazard; a second process READING it is
-        the same hazard's quieter half, since it would answer from a tree the client is
-        not actually talking to."""
+    def test_it_never_writes_anything(self):
+        """A second process WRITING `wiki/` is the hazard, and the cheapest way to be sure
+        is that this module writes nothing at all — it has no reason to."""
         import ast
         tree = ast.parse(Path(mcp_server.__file__).read_text(encoding="utf-8"))
-        called = {n.func.id for n in ast.walk(tree)
-                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
-        self.assertNotIn("open", called)
         attrs = {n.func.attr for n in ast.walk(tree)
                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
-        for forbidden in ("write_text", "read_text", "mkdir", "replace", "unlink"):
-            self.assertNotIn(forbidden, attrs, f"mcp_server calls {forbidden} on a path")
+        for forbidden in ("write_text", "write_bytes", "mkdir", "replace", "unlink",
+                          "rmtree", "rename"):
+            self.assertNotIn(forbidden, attrs, f"mcp_server calls {forbidden}")
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                    and node.func.id == "open":
+                mode = node.args[1] if len(node.args) > 1 else None
+                if isinstance(mode, ast.Constant):
+                    self.assertNotIn("w", str(mode.value))
+                    self.assertNotIn("a", str(mode.value))
+
+    def test_every_tool_reaches_the_wiki_over_HTTP(self):
+        """Reading the wiki directly is the hazard's quieter half — it would answer from a
+        tree the client is not actually talking to, which looks like working and is not.
+
+        **Asserted behaviourally, after two static attempts failed for the same reason.**
+        A blanket "opens no files" was wrong rather than strict: the key file has to be
+        read, and so does the server's `config.json` where this runs beside it. Narrowing
+        it to "names no `wiki/` path" then matched the module's own DOCSTRING, which
+        promises the property, and after excluding prose it matched a tool SCHEMA
+        description whose job is to show the client what a path looks like
+        (`"wiki-relative, e.g. wiki/entities/donald-trump.md"`). Both were the
+        grep-matches-the-prose trap wearing different hats.
+
+        The property was never about string literals. It is that **every tool's data comes
+        from an HTTP call**, so driving each one and requiring a request on the wire proves
+        it, and no amount of prose can satisfy it by accident.
+        """
+        args = {"read_page": {"path": "wiki/entities/x.md"},
+                "search_wiki": {"query": "tariffs"},
+                "page_report": {"path": "wiki/entities/x.md"}}
+        self.assertEqual(set(args), {t["name"] for t in mcp_server.TOOLS},
+                         "a tool was added or renamed without being covered here")
+        for name, a in args.items():
+            with self.subTest(tool=name):
+                c = StubClient({"content": "x", "results": [{"path": "p"}]})
+                mcp_server.call_tool(c, name, a)
+                self.assertEqual(len(c.calls), 1,
+                                 f"{name} did not make exactly one HTTP call")
+                self.assertTrue(c.calls[0][0].startswith("/api/mcp/"),
+                                f"{name} called {c.calls[0][0]}")
 
     def test_the_read_only_half_exposes_no_write_tool(self):
         """Stated as a test so the writes are a deliberate, reviewable change rather than
@@ -543,6 +772,91 @@ class NoSecondWriterTest(unittest.TestCase):
         for w in ("update_section", "append_section", "create_file", "update_file",
                   "add_timeline_entry", "merge_page", "rename_page"):
             self.assertNotIn(w, names)
+
+
+SETTINGS_TEMPLATE = (Path(__file__).resolve().parent.parent
+                     / "tools" / "templates" / "settings.html")
+
+
+class SettingsPageTest(unittest.TestCase):
+    """The page itself, rendered — and its one lifted function, RUN."""
+
+    def setUp(self):
+        self.w = harness.TempWiki()
+        self.w.__enter__()
+        self.addCleanup(self.w.__exit__, None, None, None)
+        self.c = serve.app.test_client()
+        with self.c.session_transaction() as s:
+            s["logged_in"] = True
+
+    def _page(self):
+        r = self.c.get("/settings")
+        self.assertEqual(r.status_code, 200)
+        return r.get_data(as_text=True)
+
+    def test_the_page_offers_the_key_and_the_client_file(self):
+        h = self._page()
+        self.assertIn("MCP Server", h)
+        self.assertIn("mcp.json", h)
+        self.assertIn("chmod 600", h)
+
+    def test_it_says_the_client_half_cannot_be_set_here(self):
+        """The honest half of the answer to "is all the mcp stuff settable there?" — the
+        base URL and budget belong to the machine running the client, so claiming the page
+        owns them would be a promise it cannot keep."""
+        self.assertIn("cannot set them", self._page())
+
+    def test_the_two_keys_are_described_as_separate(self):
+        self.assertIn("different key", self._page())
+
+
+class McpConfigJsonTest(unittest.TestCase):
+    """RUN under node, not grepped.
+
+    The JSON block is rendered twice — once by Jinja on load, once by this script after a
+    rotate — which is the two-renderers hazard recorded here repeatedly. Lifting the
+    function and executing it is the only check that the browser's copy produces what the
+    client can actually parse.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        if not shutil.which("node"):
+            raise unittest.SkipTest("node is not installed")
+        import re
+        src = SETTINGS_TEMPLATE.read_text(encoding="utf-8")
+        m = re.search(r"function mcpConfigJson\(baseUrl, key, budget\)[\s\S]*?\n\}", src)
+        if not m:
+            raise AssertionError("mcpConfigJson is gone; every assertion here is vacuous")
+        cls.fn = m.group(0)
+
+    def test_it_produces_json_the_client_loader_accepts(self):
+        import subprocess
+        js = (self.fn + "\nprocess.stdout.write(mcpConfigJson("
+              "'https://lobotomy.example', 'abc123', 200000));")
+        out = subprocess.run(["node", "-e", js], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        cfg = json.loads(out.stdout)        # the real parse the client will do
+        self.assertEqual(cfg, {"base_url": "https://lobotomy.example",
+                               "mcp_key": "abc123", "budget": 200000})
+
+    def test_the_file_it_writes_loads_through_the_real_client_loader(self):
+        """End to end across the two halves: what the browser shows you to paste is what
+        `load_client_config` reads back."""
+        import subprocess, tempfile
+        js = (self.fn + "\nprocess.stdout.write(mcpConfigJson("
+              "'https://x.example', 'k', 123));")
+        out = subprocess.run(["node", "-e", js], capture_output=True, text=True)
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(d, ignore_errors=True))
+        f = d / "mcp.json"
+        f.write_text(out.stdout, encoding="utf-8")
+        f.chmod(0o600)
+        cfg = mcp_server.load_client_config(str(f))
+        self.assertEqual(cfg["mcp_key"], "k")
+        self.assertEqual(cfg["base_url"], "https://x.example")
+        self.assertEqual(cfg["budget"], 123)
 
 
 if __name__ == "__main__":

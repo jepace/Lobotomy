@@ -35,6 +35,32 @@ RUNNER = REPO / "tests" / "run_all.py"
 # the mutation is reported as STALE rather than silently skipped: an anchor that stopped
 # matching means the code moved and the mutation is no longer testing what it claims.
 MUTATIONS = [
+    # A key file other accounts can read is strictly worse than the env var it replaced,
+    # and the permission check is the whole argument for the change.
+    ("mcpkey: a loose key file is refused",
+     "    if mode & (stat.S_IRWXG | stat.S_IRWXO):",
+     "    if False:",
+     "tools/mcp_server.py"),
+    # Revoking and having the old key keep working is the one outcome this must not
+    # produce: config.json may still hold one, so an empty settings entry means REVOKED.
+    ("mcpkey: an empty settings entry means revoked, not fall-through",
+     '    val = settings.get(f"api_{key_name}")\n    if val is not None:\n        return str(val).strip()',
+     '    val = settings.get(f"api_{key_name}")\n    if val:\n        return str(val).strip()',
+     "tools/serve.py"),
+    # A damaged .user.json must not be read as "no key set, so allow everything".
+    ("mcpkey: a damaged settings store fails closed",
+     "    try:\n        settings = get_settings() or {}\n    except Exception:                      # a damaged .user.json must not open the door\n        settings = {}",
+     "    settings = get_settings() or {}",
+     "tools/serve.py"),
+    ("mcpkey: revoke stores an empty value rather than deleting it",
+     '        update_settings({"api_mcp_key": ""})',
+     "        pass",
+     "tools/serve.py"),
+    ("mcpkey: the key is never logged",
+     '    log.info("MCP key generated from /settings (%d chars)", len(key))',
+     '    log.info("MCP key generated from /settings: %s", key)',
+     "tools/serve.py"),
+
     # Four guards derive a threshold from the caller's output budget. Reading config
     # instead refuses an MCP client a rewrite it can actually perform, on exactly the
     # RATCHET sections nothing else can repair.
