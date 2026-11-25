@@ -2750,6 +2750,86 @@ The designed path for that page is section by section (`LOBOTOMY.md` §6b, `allo
 destination first), and the real repair is splitting the RATCHET section into its own page
 — which is several calls by nature, because it is several decisions.
 
+### The curate tier: merge, rename, and the one operation that could not be undone
+
+Asked for as *"There are a couple command line tools like merge pages and rename. Can
+those be added as a higher level mcp options? Like new priv level. My store is kind of a
+mess, and I'd like you to help clean it."*
+
+**A merge could not be undone, and that had to be fixed before exposing it to anything.**
+`merge_page` writes the SURVIVOR and never writes the loser, so `loser.unlink()` walked
+straight past `_atomic_write` and therefore past `_snapshot_version` — whose own docstring
+calls itself *"the backstop that makes [data loss] recoverable regardless of whether the
+guard that should have caught them works."* What `wiki/.history/<loser>/` held was the
+content from before the loser's LAST write, not its final state, so **a merge that carried
+the wrong lines lost the difference permanently** — and `_claims` and `--carry` have each
+already been repaired for exactly that. One call closes it: the final content is
+snapshotted under `write_reason("merge")`, so `/wiki/<loser>/history` still answers for a
+page that no longer exists. The page is still gone; what changes is that what it SAID is
+not. **Merges run before this kept no final state and nothing can recover them.**
+
+**Two tools had to be extracted before a route could reach them, and CLAUDE.md had already
+said so.** `rename_page.py` was 205 lines of top-level script with NO functions and
+`find_duplicate_pages.py` 54 — the shape this file already recorded as the cause of a real
+bug: *"the one maintenance tool whose logic is not in `agent.py`, so nothing in-process can
+reach it — which is exactly how its copy of the generated-pages bug went uncovered while
+`merge_page`'s was caught. Worth moving into `agent.py` like the others."* Exposing them
+over HTTP was the forcing function. `agent.rename_page` and `agent.duplicate_page_groups`
+now hold the logic, the scripts are thin CLIs, and a route, a test and the CLI share one
+answer — rename's behaviour is unit-testable in-process for the first time.
+
+**The library returns the CORRECTION; the caller composes the command.** Moving the logic
+nearly lost principle 4: the script printed a copy-pasteable
+`python3 tools/rename_page.py … --title "…"` on a bad slug, and `agent.py` cannot know its
+caller's flag names. So `rename_page` returns `suggested_path` and `title_unchanged`, and
+the CLI spells the command. A library that emitted CLI prose would be guessing at its
+caller's interface; one that emitted only the rule would be the constraint-not-the-call
+failure this file keeps recording.
+
+**`api.curate_key` is a third tier, justified by blast radius rather than by taste.**
+Everything in the write tier touches ONE page and is revertable from that page's history.
+`rename_page` rewrites every inbound link across the whole wiki — hundreds of pages, plus
+a file move and a history move — and `merge_page` DELETES a page, the only destructive
+operation in the system. **Revoking the ability to delete pages without revoking the
+ability to fix a paragraph is a distinction worth a key**, and `_api_key` already serves
+any number of them. The budget is still not an authorization parameter: these routes do
+not read it at all.
+
+Three decisions inside it:
+
+- **`merge` defaults to `dry_run: true`**, alone among every route here. A merge refuses
+  while the loser still says anything the survivor does not, and that refusal — listing
+  the lines — IS the useful output, so the default call is the one that reports rather than
+  the one that destroys. Both halves mirror it and each has its own mutation: **a
+  destructive call whose default differs between client and server is how you delete a page
+  you meant to preview.**
+- **The duplicate scan sits behind the WRITE key, not curate.** It is read-only: knowing
+  which pages collide changes nothing, and it is the report you need before deciding
+  whether a merge is even right.
+- **The curation tools are advertised only when the key exists**, and the key is picked
+  from the ROUTE rather than the call site. A tool that always answers 501 is worse than
+  one that is not offered — the model spends a call discovering it and the refusal names no
+  move it can make — and choosing by route means a curation route added later cannot be
+  accidentally authenticated with the lesser key by whoever writes its `call_tool` branch.
+
+**Three test faults, and the middle one is the one to remember.** A fixture used `PG&E`
+beside the full name and found no duplicate group, which is correct — `_norm_title_key`
+gives `pg and e` against `pacific gas and electric`, and the initialism is
+`_initialism_match`'s job; the three spellings that DO collide are the Company/Co./bare
+forms. A rename assertion pinned the written path `united-airlines.md` while the repoint
+emits `../entities/united-airlines.md` — valid, the original script's own formula, and this
+file's stated convention — so it resolves the target now instead of matching a spelling.
+
+And **a spy replaced a grep and was VACUOUS.** `test_rename_page_cli` runs the real script
+against a `tools/` COPIED into a temp directory, because `REPO_ROOT` comes from the
+script's own location — so `import agent` in that test reaches the repository's module, not
+the copy the subprocess runs, and patching it observes nothing. The spy reported zero calls
+and **would have passed on any code at all**. Behaviour cannot be observed in-process from
+a subprocess fixture; the structural claim, pointed at the file that now holds the code, is
+what is checkable there, with the behavioural half going through the real CLI. The general
+form: **moving code moves every assertion that names its location**, and swapping grep for
+a spy only helps when the spy can reach the code that runs.
+
 ### Reorganizing a page
 
 `update_section` refuses a rewrite that cuts a section by more than 40% (`_old_cmp >= 800

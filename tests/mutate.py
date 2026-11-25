@@ -35,6 +35,59 @@ RUNNER = REPO / "tests" / "run_all.py"
 # the mutation is reported as STALE rather than silently skipped: an anchor that stopped
 # matching means the code moved and the mutation is no longer testing what it claims.
 MUTATIONS = [
+    # A merge was the one operation here that could not be undone: merge_page writes the
+    # SURVIVOR and never the loser, so the unlink walked past _snapshot_version entirely.
+    ("curate: the merged-away page is snapshotted before deletion",
+     '        with write_reason("merge"):\n            _snapshot_version(loser, "")\n        loser.unlink()',
+     "        loser.unlink()"),
+    # Everything in the write tier touches ONE page; these rewrite the whole wiki or
+    # delete. Revoking deletion must not require revoking paragraph edits.
+    ("curate: merge and rename need the curate key, not the write key",
+     '    ok, err = _api_auth("curate_key")\n    if ok:\n        return True, None',
+     '    ok, err = _api_auth("mcp_key")\n    if ok:\n        return True, None',
+     "tools/serve.py"),
+    # A destructive default is the wrong way round for the one call that deletes.
+    ("curate: merge defaults to a dry run",
+     "    dry = data.get(\"dry_run\")\n    dry = True if dry is None else bool(dry)",
+     "    dry = bool(data.get(\"dry_run\"))",
+     "tools/serve.py"),
+    ("curate: the client mirrors that default",
+     "                        dry_run=True if args.get(\"dry_run\") is None\n                        else bool(args.get(\"dry_run\")))",
+     "                        dry_run=bool(args.get(\"dry_run\")))",
+     "tools/mcp_server.py"),
+    # A link whose display text WAS the old title is what the rename declares wrong:
+    # repointing it relabels "United Nations" as an airline.
+    ("curate: a link bearing the old title is stripped, not repointed",
+     "            if new_title and label.strip().lower() == old_title.lower():\n                out[\"stripped\"] += 1\n                return label",
+     "            if False:\n                out[\"stripped\"] += 1\n                return label"),
+    # The half-move is worse than the misfile: _OPENER, section_inventory and
+    # bleeding_titles all read the FIELD, not the directory.
+    ("curate: a move between directories carries type: along",
+     "    if want_type and old_dir != new_dir:",
+     "    if False:"),
+    ("curate: rename refuses an immutable page",
+     "    why = immutable_page_reason(src)\n    if why:\n        out[\"error\"] = why\n        return out",
+     "    why = None"),
+    # index.md links by the old path and is deliberately not repointed, so it must be
+    # REBUILT or the rename leaves the dead link the repoint used to fix.
+    ("curate: rename rebuilds the index it refuses to patch",
+     "    _rebuild_index({})\n    _title_map_cache_reset()",
+     "    _title_map_cache_reset()"),
+    # A report that lists every page says nothing; source pages are one-per-ingest.
+    ("curate: the duplicate scan excludes source and generated pages",
+     '        if (rel.parts and rel.parts[0] == "sources") or is_generated_page(p):\n            continue',
+     "        if False:\n            continue"),
+    # A tool that always answers 501 is worse than one that is not offered.
+    ("curate: tools are advertised only when the key exists",
+     '    return TOOLS + (CURATE_TOOLS if getattr(client, "curate_key", "") else [])',
+     "    return TOOLS + CURATE_TOOLS",
+     "tools/mcp_server.py"),
+    # Picked from the ROUTE so a new curation route cannot be authenticated with the
+    # lesser key by whoever writes its call_tool branch.
+    ("curate: the key is chosen by route",
+     '        if "/curate/" in route and self.curate_key:\n            return self.curate_key',
+     "        if False:\n            return self.curate_key",
+     "tools/mcp_server.py"),
     # The editor refused only a bad path and a missing page while the agent tools refused
     # source pages and the generated ones -- one rule, two answers.
     ("mcpwrite: the editor consults the immutability rule",

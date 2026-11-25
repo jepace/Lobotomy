@@ -18,8 +18,9 @@ split was deferred because a second writer is what the autolinker's cache invali
 assumes is not true. A filesystem MCP server is that writer by another door, so
 `NoSecondWriterTest` asserts the module cannot become one.
 """
-import json
 import io
+import json
+import re
 import os
 import sys
 import unittest
@@ -1152,6 +1153,360 @@ class McpWriteTierTest(unittest.TestCase):
         self.assertEqual(
             self._post("/api/mcp/write", path="wiki/sources/s.md", content=PAGE,
                        budget=400_000, acknowledge_shrink=True).status_code, 400)
+
+
+class MergeIsRevertableTest(unittest.TestCase):
+    """**A merge was the one operation here that could not be undone**, and that had to be
+    fixed before exposing it to anything.
+
+    `merge_page` writes the SURVIVOR and never writes the loser, so `loser.unlink()` walked
+    straight past `_atomic_write` and therefore past `_snapshot_version` — whose own
+    docstring calls itself *"the backstop that makes [data loss] recoverable regardless of
+    whether the guard that should have caught them works"*. What `wiki/.history/<loser>/`
+    held was the content from before the loser's LAST write, not its final state, so a
+    merge that carried the wrong lines lost the difference permanently.
+    """
+
+    def setUp(self):
+        self.w = harness.TempWiki()
+        self.w.__enter__()
+        self.addCleanup(self.w.__exit__, None, None, None)
+        self._root = agent.REPO_ROOT
+        agent.REPO_ROOT = self.w.root
+        self.addCleanup(lambda: setattr(agent, "REPO_ROOT", self._root))
+        for rel, title in (("entities/a.md", "Alpha Corp"),
+                           ("entities/b.md", "Alpha Corporation")):
+            p = self.w.wiki / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(f"---\ntitle: {title}\ntype: entity\ncreated: 2026-01-01\n---\n\n"
+                         f"# {title}\n\n## Overview\nA company that makes things.\n",
+                         encoding="utf-8")
+        agent.init_session()
+
+    def test_the_deleted_page_content_survives_in_its_own_history(self):
+        loser_text = (self.w.wiki / "entities" / "b.md").read_text(encoding="utf-8")
+        agent.merge_page("entities/b.md", "entities/a.md", carry=True)
+        self.assertFalse((self.w.wiki / "entities" / "b.md").exists(), "loser not deleted")
+        hist = self.w.wiki / ".history" / "entities" / "b.md"
+        revs = sorted(hist.glob("*.md")) if hist.is_dir() else []
+        self.assertTrue(revs, "the merged-away page left no recoverable content")
+        self.assertEqual(revs[-1].read_text(encoding="utf-8"), loser_text,
+                         "the kept revision is not the loser's FINAL content")
+
+    def test_the_revision_is_stamped_merge_so_the_row_says_what_happened(self):
+        agent.merge_page("entities/b.md", "entities/a.md", carry=True)
+        hist = self.w.wiki / ".history" / "entities" / "b.md"
+        self.assertTrue(any("__merge" in p.name for p in hist.glob("*.md")),
+                        f"not stamped: {[p.name for p in hist.glob('*.md')]}")
+
+    def test_a_dry_run_deletes_nothing(self):
+        agent.merge_page("entities/b.md", "entities/a.md", carry=True, dry_run=True)
+        self.assertTrue((self.w.wiki / "entities" / "b.md").exists())
+
+
+class DuplicateScanTest(unittest.TestCase):
+    """`duplicate_page_groups` — moved out of another 54-line unreachable script."""
+
+    def setUp(self):
+        self.w = harness.TempWiki()
+        self.w.__enter__()
+        self.addCleanup(self.w.__exit__, None, None, None)
+        for rel, t in (("entities/pge-a.md", "Pacific Gas and Electric Company"),
+                       ("entities/pge-b.md", "Pacific Gas & Electric Co."),
+                       ("entities/pge-c.md", "Pacific Gas & Electric"),
+                       ("entities/solo.md", "Solo Subject"),
+                       ("sources/s.md", "Pacific Gas & Electric")):
+            p = self.w.wiki / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(f"---\ntitle: {t}\ntype: entity\n---\n\n# {t}\n\n## Overview\nx\n",
+                         encoding="utf-8")
+
+    def test_it_groups_spellings_of_one_subject(self):
+        g = agent.duplicate_page_groups()
+        self.assertEqual(len(g), 1, g)
+        self.assertEqual(len(g[0]["pages"]), 3)
+
+    def test_a_page_with_no_twin_is_not_reported(self):
+        """The not-crying-wolf half: a report that lists everything says nothing."""
+        paths = {p["path"] for grp in agent.duplicate_page_groups() for p in grp["pages"]}
+        self.assertNotIn("wiki/entities/solo.md", paths)
+
+    def test_source_pages_are_excluded_by_design(self):
+        """They are one-per-ingest and share wording constantly, so every ingest would
+        look like a duplicate."""
+        paths = {p["path"] for grp in agent.duplicate_page_groups() for p in grp["pages"]}
+        self.assertFalse(any(p.startswith("wiki/sources/") for p in paths), paths)
+
+    def test_the_cli_and_the_route_share_one_answer(self):
+        self.assertIs(serve.duplicate_page_groups, agent.duplicate_page_groups)
+
+
+class RenamePageFunctionTest(unittest.TestCase):
+    """`agent.rename_page` — reachable in-process for the first time.
+
+    CLAUDE.md recorded the cost of its old shape: *"the one maintenance tool whose logic is
+    not in `agent.py`, so nothing in-process can reach it — which is exactly how its copy
+    of the generated-pages bug went uncovered while `merge_page`'s was caught."*
+    """
+
+    def setUp(self):
+        self.w = harness.TempWiki()
+        self.w.__enter__()
+        self.addCleanup(self.w.__exit__, None, None, None)
+        self._root = agent.REPO_ROOT
+        agent.REPO_ROOT = self.w.root
+        self.addCleanup(lambda: setattr(agent, "REPO_ROOT", self._root))
+        p = self.w.wiki / "entities" / "united.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("---\ntitle: United\ntype: entity\ncreated: 2026-01-01\n---\n\n"
+                     "# United\n\n## Overview\nAn airline.\n", encoding="utf-8")
+        self.other = self.w.wiki / "entities" / "other.md"
+        self.other.write_text(
+            "---\ntitle: Other\ntype: entity\ncreated: 2026-01-01\n---\n\n# Other\n\n"
+            "## Overview\nThe [United](united.md) Nations met. "
+            "Also [the airline](united.md) flies.\n", encoding="utf-8")
+        agent.init_session()
+
+    def _rename(self, **kw):
+        return agent.rename_page("wiki/entities/united.md",
+                                 "wiki/entities/united-airlines.md", **kw)
+
+    def test_a_link_whose_text_was_the_old_title_is_STRIPPED(self):
+        """That text is what the rename declares wrong: repointing it would relabel a
+        country's name as an airline."""
+        r = self._rename(new_title="United Airlines")
+        self.assertTrue(r["ok"], r)
+        body = self.other.read_text(encoding="utf-8")
+        self.assertIn("The United Nations met.", body)
+        self.assertNotIn("[United](", body)
+
+    def test_a_link_with_other_display_text_is_REPOINTED(self):
+        """The other half, and what proves the strip is selective rather than a blanket.
+
+        Asserted by RESOLVING the target rather than matching the written path. The
+        repoint writes `../entities/united-airlines.md` from a page already in
+        `entities/` — valid, the same formula the original script used, and the convention
+        CLAUDE.md states — but a test pinned to that spelling would fail on a later change
+        that emitted the equivalent sibling path, which is not a defect.
+        """
+        r = self._rename(new_title="United Airlines")
+        self.assertEqual(r["repointed"], 1, r)
+        body = self.other.read_text(encoding="utf-8")
+        m = re.search(r"\[the airline\]\(([^)]+)\)", body)
+        self.assertIsNotNone(m, body)
+        self.assertEqual((self.other.parent / m.group(1)).resolve(),
+                         (self.w.wiki / "entities" / "united-airlines.md").resolve())
+
+    def test_a_dry_run_writes_nothing_but_reports_the_counts(self):
+        r = self._rename(new_title="United Airlines", dry_run=True)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["pages_touched"], 1)
+        self.assertTrue((self.w.wiki / "entities" / "united.md").exists())
+        self.assertIn("[United](united.md)", self.other.read_text(encoding="utf-8"))
+
+    def test_a_bad_slug_is_refused_and_the_correction_is_RETURNED(self):
+        """The library reports the corrected PATH; composing a command line is the CLI's
+        job, because `agent.py` cannot know its caller's flag names."""
+        r = agent.rename_page("wiki/entities/united.md", "wiki/entities/Bad_Name.md")
+        self.assertIn("not a valid slug", r["error"])
+        self.assertEqual(r["suggested_path"], "wiki/entities/bad-name.md")
+
+    def test_a_move_between_directories_carries_type_along(self):
+        """The half-move is worse than the misfile it corrects: the page sits where an
+        entity lives while claiming to be a concept, and `_OPENER`, `section_inventory` and
+        `bleeding_titles` all read the FIELD."""
+        p = self.w.wiki / "concepts" / "ebola.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("---\ntitle: Ebola\ntype: concept\ncreated: 2026-01-01\n---\n\n"
+                     "# Ebola\n\n## Definition\nA virus.\n", encoding="utf-8")
+        r = agent.rename_page("wiki/concepts/ebola.md", "wiki/entities/ebola.md")
+        self.assertEqual(r["type_changed"], ("concept", "entity"))
+        self.assertIn("type: entity",
+                      (self.w.wiki / "entities" / "ebola.md").read_text(encoding="utf-8"))
+
+    def test_a_source_page_cannot_be_renamed(self):
+        p = self.w.wiki / "sources" / "s.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("---\ntitle: S\ntype: source\n---\n\n# S\n", encoding="utf-8")
+        r = agent.rename_page("wiki/sources/s.md", "wiki/sources/s2.md")
+        self.assertIn("immutable", r.get("error", ""))
+
+    def test_an_existing_destination_is_refused(self):
+        r = agent.rename_page("wiki/entities/united.md", "wiki/entities/other.md")
+        self.assertIn("already exists", r["error"])
+
+    def test_the_cli_is_a_thin_wrapper_over_this(self):
+        import rename_page as cli
+        self.assertIs(cli.rename_page, agent.rename_page)
+
+
+class CurateTierTest(unittest.TestCase):
+    """The third privilege level.
+
+    Asked for as *"Can those be added as a higher level mcp options? Like new priv level."*
+    The blast radius is what justifies a separate key: everything in the write tier touches
+    ONE page, while `rename_page` rewrites inbound links across the whole wiki and
+    `merge_page` DELETES a page.
+    """
+
+    def setUp(self):
+        self.w = harness.TempWiki()
+        self.w.__enter__()
+        self.addCleanup(self.w.__exit__, None, None, None)
+        self._saved = (serve.RAW_DIR, serve.WIKI_DIR, serve.REPO_ROOT, agent.REPO_ROOT)
+        serve.RAW_DIR, serve.WIKI_DIR = self.w.raw, self.w.wiki
+        serve.REPO_ROOT = agent.REPO_ROOT = self.w.root
+
+        def _restore():
+            (serve.RAW_DIR, serve.WIKI_DIR, serve.REPO_ROOT,
+             agent.REPO_ROOT) = self._saved
+        self.addCleanup(_restore)
+        for rel, t in (("entities/a.md", "Alpha Corp"),
+                       ("entities/b.md", "Alpha Corporation")):
+            p = self.w.wiki / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(f"---\ntitle: {t}\ntype: entity\ncreated: 2026-01-01\n---\n\n"
+                         f"# {t}\n\n## Overview\nA company that makes things.\n",
+                         encoding="utf-8")
+        self._cfg = serve.cfg_get
+        serve.cfg_get = lambda s, k, d=None: (
+            "secret-mcp" if (s, k) == ("api", "mcp_key") else
+            "secret-curate" if (s, k) == ("api", "curate_key") else self._cfg(s, k, d))
+        self.addCleanup(lambda: setattr(serve, "cfg_get", self._cfg))
+        self._gs = serve.get_settings
+        serve.get_settings = lambda: {}
+        self.addCleanup(lambda: setattr(serve, "get_settings", self._gs))
+        self.c = serve.app.test_client()
+
+    def _post(self, route, key="secret-curate", **body):
+        return self.c.post(route, json=body, headers={"Authorization": f"Bearer {key}"})
+
+    def test_the_WRITE_key_cannot_merge_or_rename(self):
+        """The whole point of the tier: revoking the ability to delete pages must not
+        require revoking the ability to fix a paragraph."""
+        for route, body in (("/api/mcp/curate/merge",
+                             {"loser": "wiki/entities/b.md",
+                              "survivor": "wiki/entities/a.md"}),
+                            ("/api/mcp/curate/rename",
+                             {"path": "wiki/entities/b.md",
+                              "new_path": "wiki/entities/c.md"})):
+            with self.subTest(route=route):
+                r = self._post(route, key="secret-mcp", **body)
+                self.assertEqual(r.status_code, 403, r.get_data(as_text=True)[:200])
+
+    def test_every_curate_route_is_behind_a_key(self):
+        rules = [str(r.rule) for r in serve.app.url_map.iter_rules()
+                 if "/api/mcp/curate/" in str(r.rule)]
+        self.assertTrue(rules)
+        for rule in rules:
+            with self.subTest(rule=rule):
+                r = self.c.get(rule)
+                if r.status_code == 405:
+                    r = self.c.post(rule, json={})
+                self.assertIn(r.status_code, (401, 501),
+                              f"{rule} answered {r.status_code} with no key")
+
+    def test_it_fails_closed_when_no_curate_key_is_configured(self):
+        serve.cfg_get = lambda s, k, d=None: ("" if (s, k) == ("api", "curate_key")
+                                              else self._cfg(s, k, d))
+        r = self._post("/api/mcp/curate/rename", key="",
+                       path="wiki/entities/b.md", new_path="wiki/entities/c.md")
+        self.assertEqual(r.status_code, 501)
+
+    def test_merge_defaults_to_a_DRY_RUN(self):
+        """A destructive default is the wrong way round for the one call that deletes, and
+        the dry run's refusal — listing what the loser still says — is the useful output."""
+        r = self._post("/api/mcp/curate/merge", loser="wiki/entities/b.md",
+                       survivor="wiki/entities/a.md")
+        self.assertIn(r.status_code, (200, 409), r.get_data(as_text=True)[:200])
+        self.assertTrue((self.w.wiki / "entities" / "b.md").exists(),
+                        "a merge with no dry_run argument deleted a page")
+
+    def test_an_explicit_dry_run_false_actually_merges(self):
+        r = self._post("/api/mcp/curate/merge", loser="wiki/entities/b.md",
+                       survivor="wiki/entities/a.md", carry=True, dry_run=False)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:300])
+        self.assertFalse((self.w.wiki / "entities" / "b.md").exists())
+        self.assertIn("/history", r.get_json().get("deleted_content_at", ""))
+
+    def test_merging_a_page_into_itself_is_refused(self):
+        self.assertEqual(self._post("/api/mcp/curate/merge",
+                                    loser="wiki/entities/a.md",
+                                    survivor="wiki/entities/a.md").status_code, 400)
+
+    def test_rename_reports_before_it_writes(self):
+        r = self._post("/api/mcp/curate/rename", path="wiki/entities/b.md",
+                       new_path="wiki/entities/alpha-corporation.md", dry_run=True)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:300])
+        self.assertTrue(r.get_json()["dry_run"])
+        self.assertTrue((self.w.wiki / "entities" / "b.md").exists())
+
+    def test_rename_refuses_a_path_outside_the_wiki(self):
+        self.assertEqual(self._post("/api/mcp/curate/rename", path="wiki/entities/b.md",
+                                    new_path="raw/escape.md").status_code, 400)
+
+    def test_the_duplicate_scan_sits_behind_the_WRITE_key(self):
+        """Read-only: knowing which pages collide changes nothing, and it is the report you
+        need before deciding whether a merge is even right."""
+        r = self.c.get("/api/mcp/curate/duplicates",
+                       headers={"Authorization": "Bearer secret-mcp"})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:200])
+        self.assertIn("groups", r.get_json())
+
+    def test_the_shared_implementations_are_shared(self):
+        self.assertIs(serve.agent_rename_page, agent.rename_page)
+        self.assertIs(serve.agent_merge_page, agent.merge_page)
+
+
+class CurateToolGatingTest(unittest.TestCase):
+    """Curation tools are advertised only when the key exists."""
+
+    def test_without_a_curate_key_they_are_not_offered(self):
+        """A tool that always answers 501 is worse than one that is not offered: the model
+        spends a call discovering it and the refusal names no move it can make."""
+        names = {t["name"] for t in mcp_server.tools_for(
+            mcp_server.Client("https://x.example", "k"))}
+        for curate in ("merge_pages", "rename_page", "find_duplicate_pages"):
+            self.assertNotIn(curate, names)
+
+    def test_with_one_they_are(self):
+        names = {t["name"] for t in mcp_server.tools_for(
+            mcp_server.Client("https://x.example", "k", curate_key="c"))}
+        self.assertEqual(names, {"read_page", "search_wiki", "page_report",
+                                 "replace_passage", "write_page",
+                                 "find_duplicate_pages", "merge_pages", "rename_page"})
+
+    def test_the_key_is_picked_from_the_ROUTE_not_the_call_site(self):
+        """So a curation route added later cannot be accidentally authenticated with the
+        lesser key by whoever writes its `call_tool` branch."""
+        c = mcp_server.Client("https://x.example", "write", curate_key="curate")
+        self.assertEqual(c._key_for("/api/mcp/read"), "write")
+        self.assertEqual(c._key_for("/api/mcp/write"), "write")
+        self.assertEqual(c._key_for("/api/mcp/curate/merge"), "curate")
+        self.assertEqual(c._key_for("/api/mcp/curate/anything-new"), "curate")
+
+    def test_without_a_curate_key_a_curate_route_still_sends_the_write_key(self):
+        """Rather than an empty Authorization header, which would read as a malformed
+        request instead of an honest 403."""
+        c = mcp_server.Client("https://x.example", "write")
+        self.assertEqual(c._key_for("/api/mcp/curate/merge"), "write")
+
+    def test_merge_mirrors_the_servers_dry_run_DEFAULT(self):
+        """A destructive call whose default differs between the two halves is how you
+        delete a page you meant to preview."""
+        sent = {}
+
+        class _C:
+            curate_key = "c"
+            budget = 1
+
+            def post(self_, route, **body):
+                sent.update(body)
+                return {"ok": True}
+
+        mcp_server.call_tool(_C(), "merge_pages",
+                             {"loser": "wiki/a.md", "survivor": "wiki/b.md"})
+        self.assertTrue(sent["dry_run"], "the client defaulted a merge to destructive")
 
 
 SETTINGS_TEMPLATE = (Path(__file__).resolve().parent.parent

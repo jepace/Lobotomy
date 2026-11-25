@@ -190,10 +190,24 @@ class ApiError(Exception):
 
 
 class Client:
-    def __init__(self, base_url: str, key: str, budget: int = DEFAULT_BUDGET_TOKENS):
+    def __init__(self, base_url: str, key: str, budget: int = DEFAULT_BUDGET_TOKENS,
+                 curate_key: str = ""):
         self.base = base_url.rstrip("/")
         self.key = key
+        #: Optional, higher privilege: merge, rename, and the duplicate scan's siblings.
+        #: Absent means those tools are not advertised at all, which is the honest shape —
+        #: a tool that always answers 501 is worse than one that is not offered.
+        self.curate_key = curate_key
         self.budget = budget
+
+    def _key_for(self, route: str) -> str:
+        """`curate_key` for the curation routes, the write key otherwise.
+
+        Picked from the ROUTE rather than passed per call, so a new curation route cannot
+        be added and accidentally authenticated with the lesser key."""
+        if "/curate/" in route and self.curate_key:
+            return self.curate_key
+        return self.key
 
     def post(self, route: str, **body) -> dict:
         """A write. Same error handling as `get` — one `_request` does both, so a proxy's
@@ -202,7 +216,7 @@ class Client:
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
             f"{self.base}{route}", data=data, method="POST",
-            headers={"Authorization": f"Bearer {self.key}",
+            headers={"Authorization": f"Bearer {self._key_for(route)}",
                      "Content-Type": "application/json",
                      "Accept": "application/json",
                      "X-Requested-With": "XMLHttpRequest"})
@@ -213,7 +227,7 @@ class Client:
         qs = urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "")})
         url = f"{self.base}{route}?{qs}"
         req = urllib.request.Request(url, headers={
-            "Authorization": f"Bearer {self.key}",
+            "Authorization": f"Bearer {self._key_for(route)}",
             "Accept": "application/json",
             # Three independent signals say "this is a fetch" to require_login, which
             # answers 401 JSON to one and a redirect to a navigation. Without this a
@@ -364,7 +378,77 @@ WRITE_TOOLS = [
 ]
 
 
+CURATE_TOOLS = [
+    {
+        "name": "find_duplicate_pages",
+        "description": (
+            "Groups of pages whose titles normalise to the same subject — five spellings "
+            "of one utility, a page created twice under different wording. Report only: a "
+            "parent holding company and its operating subsidiary normalise alike and are "
+            "correctly TWO pages, so this says 'these collide', never 'merge these'. "
+            "Biggest groups first. Start a cleanup here."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "merge_pages",
+        "description": (
+            "Fold one page into another and delete the loser. **dry_run defaults to TRUE** "
+            "— a merge refuses while the loser still says anything the survivor does not, "
+            "and that refusal, listing the lines, is the useful output. Pass carry=true to "
+            "append those lines to the survivor's matching sections automatically; a "
+            "carried SUMMARY is marked with a visible TODO and the _todo tag rather than "
+            "folded silently. Destructive: the loser is deleted. Its final content is "
+            "snapshotted to its own page history first, so it can still be read back."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "loser": {"type": "string", "description": "the page to fold in and delete"},
+                "survivor": {"type": "string", "description": "the page that remains"},
+                "carry": {"type": "boolean",
+                          "description": "append the loser's unmatched lines to the "
+                                         "survivor instead of refusing"},
+                "dry_run": {"type": "boolean",
+                            "description": "default TRUE; pass false to actually merge"},
+                "strict_summary": {"type": "boolean",
+                                   "description": "refuse rather than carry a summary delta"},
+            },
+            "required": ["loser", "survivor"],
+        },
+    },
+    {
+        "name": "rename_page",
+        "description": (
+            "Rename a page: the file, its history, its title, and every inbound link "
+            "across the whole wiki. Use it when a page's title is a common word or a "
+            "fragment — a page titled 'United' turned 'United Nations' into a link to an "
+            "airline everywhere. A link whose display text WAS the old title is stripped "
+            "to plain text rather than repointed, because that text is what the rename "
+            "declares wrong; run relink afterwards and the prose that genuinely names the "
+            "subject links again. Moving between entities/ and concepts/ carries type: "
+            "along. Try dry_run first: it reports how many pages would be touched."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "new_path": {"type": "string"},
+                "new_title": {"type": "string",
+                              "description": "set title: too — usually the actual point"},
+                "dry_run": {"type": "boolean"},
+            },
+            "required": ["path", "new_path"],
+        },
+    },
+]
+
 TOOLS = TOOLS + WRITE_TOOLS
+
+
+def tools_for(client) -> list:
+    """What this client can actually do. **Curation tools are advertised only when the
+    curate key is present**, because a tool that always answers 501 NOT_CONFIGURED is
+    worse than one that is not offered: the model spends a call discovering it, and the
+    refusal names no move it can make."""
+    return TOOLS + (CURATE_TOOLS if getattr(client, "curate_key", "") else [])
 
 
 def call_tool(client: Client, name: str, args: dict) -> str:
@@ -395,6 +479,32 @@ def call_tool(client: Client, name: str, args: dict) -> str:
         return (f"Wrote {r.get('bytes', 0):,} chars to {r.get('path','')}. "
                 f"{r.get('autolink') or 'No links changed.'}\n\n"
                 f"Revert at {r.get('revert','')}" if r.get("ok") else json.dumps(r))
+    if name == "find_duplicate_pages":
+        r = client.get("/api/mcp/curate/duplicates")
+        if not r.get("groups"):
+            return "No duplicate-looking page titles found."
+        head = (f"{r.get('groups_total', 0)} group(s), "
+                f"{r.get('pages_total', 0)} pages. Biggest first")
+        if r.get("groups_total", 0) > len(r["groups"]):
+            head += f" (showing {len(r['groups'])})"
+        return head + ":\n" + json.dumps(r["groups"], indent=1)
+    if name == "merge_pages":
+        r = client.post("/api/mcp/curate/merge",
+                        loser=args.get("loser", ""), survivor=args.get("survivor", ""),
+                        carry=bool(args.get("carry")),
+                        strict_summary=bool(args.get("strict_summary")),
+                        # Mirror the server's default rather than inventing one: a
+                        # destructive call whose default differs between the two halves is
+                        # how you delete a page you meant to preview.
+                        dry_run=True if args.get("dry_run") is None
+                        else bool(args.get("dry_run")))
+        return json.dumps(r, indent=1, default=str)
+    if name == "rename_page":
+        r = client.post("/api/mcp/curate/rename",
+                        path=args.get("path", ""), new_path=args.get("new_path", ""),
+                        new_title=args.get("new_title", ""),
+                        dry_run=bool(args.get("dry_run")))
+        return json.dumps(r, indent=1, default=str)
     raise ApiError(f"unknown tool: {name}")
 
 
@@ -439,7 +549,7 @@ def handle(client: Client, msg: dict):
             "serverInfo": {"name": "lobotomy", "version": "1"},
         })
     elif method == "tools/list":
-        _result(req_id, {"tools": TOOLS})
+        _result(req_id, {"tools": tools_for(client)})
     elif method == "tools/call":
         params = msg.get("params") or {}
         name = params.get("name") or ""
@@ -515,6 +625,7 @@ def main(argv=None) -> int:
             ap.error(str(e))
 
     key = str(cfg.get("mcp_key") or "").strip()
+    curate = str(cfg.get("curate_key") or "").strip()
     base_url = (args.base_url or cfg.get("base_url") or "").strip()
     budget = args.budget or int(cfg.get("budget") or DEFAULT_BUDGET_TOKENS)
 
@@ -522,7 +633,9 @@ def main(argv=None) -> int:
         ap.error(f"no mcp_key in {source}. Generate one on /settings.")
     if not base_url:
         ap.error(f"no base_url in {source} — add it, or pass --base-url.")
-    return serve_stdio(Client(base_url, key, budget))
+    client = Client(base_url, key, budget)
+    client.curate_key = curate
+    return serve_stdio(client)
 
 
 if __name__ == "__main__":

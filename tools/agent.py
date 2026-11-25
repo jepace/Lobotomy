@@ -8,13 +8,14 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Generator
 
 log = logging.getLogger("lobotomy.agent")
@@ -5645,6 +5646,22 @@ def _merge_page_impl(loser_rel: str, survivor_rel: str, extra_aliases=(),
 
     result["deleted"] = loser.relative_to(WIKI_DIR).as_posix()
     if not dry_run:
+        # **Snapshot the loser before destroying it — a merge was the one operation here
+        # that could not be undone.** The merge writes the SURVIVOR and never writes the
+        # loser, so this `unlink` walked straight past `_atomic_write` and therefore past
+        # `_snapshot_version`, whose own docstring calls itself "the backstop that makes
+        # [data loss] recoverable regardless of whether the guard that should have caught
+        # them works". What `wiki/.history/<loser>/` held was the content from before the
+        # loser's LAST write, not its final state, so a merge that carried the wrong lines
+        # — the exact failure `_claims` and `--carry` have each been repaired for — lost
+        # the difference permanently.
+        #
+        # One call closes it: the final content lands in the loser's own history, stamped
+        # `merge`, so `/wiki/<loser>/history` still answers for a page that no longer
+        # exists and the text can be read back by hand. The page is still gone; what
+        # changes is that what it SAID is not.
+        with write_reason("merge"):
+            _snapshot_version(loser, "")
         loser.unlink()
         _title_map_cache_reset()
     return result
@@ -5655,6 +5672,220 @@ def _title_map_cache_reset() -> None:
     an unlink is the one mutation it never sees."""
     global _title_map_cache
     _title_map_cache = None
+
+
+def duplicate_page_groups() -> "list[dict]":
+    """Pages that probably describe one subject under different titles.
+
+    The exact-match lookup that decided create-vs-update saw "Pacific Gas and Electric
+    Company", "Pacific Gas & Electric Co." and "Pacific Gas & Electric" as three unrelated
+    names, so each got a page. `lookup_titles` reports these as SIMILAR at ingest time now,
+    which stops new ones and does nothing about the pages already split.
+
+    **Report-only, and the judgement it cannot have is the whole reason.** A parent holding
+    company and its operating subsidiary normalise to the same key ("PG&E Corporation" and
+    "PG&E") and are correctly TWO pages, while five spellings of one utility are correctly
+    one. So this answers "these collide", never "merge these".
+
+    Moved out of `tools/find_duplicate_pages.py` — 54 lines of top-level script, the same
+    unreachable shape `rename_page.py` had — so a route, a test and the CLI share one
+    answer about what a collision is. Source pages are excluded by design: they are
+    one-per-ingest and share wording constantly, so every ingest would look like a
+    duplicate.
+    """
+    groups: dict = {}
+    for p in wiki_pages():
+        rel = p.relative_to(WIKI_DIR)
+        if (rel.parts and rel.parts[0] == "sources") or is_generated_page(p):
+            continue
+        text = p.read_text(encoding="utf-8", errors="replace")
+        title = _fm_title(text)
+        if not title:
+            continue
+        key = _norm_title_key(title)
+        if key:
+            groups.setdefault(key, []).append(
+                {"title": title, "path": f"wiki/{rel.as_posix()}", "chars": len(text)})
+    out = [{"key": k, "pages": v} for k, v in groups.items() if len(v) > 1]
+    # Biggest groups first: the page with five spellings is the one worth starting on, and
+    # a stable sort on the key keeps two runs comparable.
+    out.sort(key=lambda g: (-len(g["pages"]), g["key"]))
+    return out
+
+
+_SLUG_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+#: The directory decides a page's `type:`. See `rename_page`'s note on the half-move.
+_RENAME_DIR_TYPE = {"entities": "entity", "concepts": "concept", "synthesis": "synthesis"}
+
+
+def rename_page(old_rel: str, new_rel: str, new_title: "str | None" = None,
+                dry_run: bool = False) -> dict:
+    """Rename a page — the file, its history, its `title:`, and every link pointing at it.
+
+    **Moved here out of `tools/rename_page.py`, which was 205 lines of top-level script
+    with no functions at all.** CLAUDE.md already recorded why that mattered: *"the one
+    maintenance tool whose logic is not in `agent.py`, so nothing in-process can reach it —
+    which is exactly how its copy of the generated-pages bug went uncovered while
+    `merge_page`'s was caught. Worth moving into `agent.py` like the others."* Exposing it
+    over HTTP is the forcing function; the logic is identical, and the script is now a
+    thin CLI over this, so its behaviour is unit-testable in-process for the first time.
+
+    Errors are RETURNED rather than `sys.exit`ed, because two callers need them: the CLI
+    prints and exits non-zero, a route answers 400. A tool that can only die is a tool only
+    a terminal can use.
+
+    Three behaviours worth keeping in view, each of which cost something to learn:
+
+    - **A link whose display text was the OLD title is stripped to plain text, not
+      repointed.** That text is what the rename declares wrong: the page titled "United"
+      turned "United Nations" into "[United](…) Nations" across the wiki, so repointing it
+      would relabel a country's name as an airline. `relink.py` afterwards re-links the
+      prose that genuinely names the subject and leaves the prose that never meant it.
+    - **A move between directories carries `type:` with it.** The script moved
+      `concepts/ebola.md` to `entities/ebola.md` and left `type: concept` behind, which is
+      worse than the misfile it was correcting — `_OPENER`, `section_inventory.py` and
+      `bleeding_titles.py` all read the FIELD. The directory is the unambiguous signal, so
+      it wins.
+    - **`index.md` is rebuilt, never repointed**, and `log.md` is skipped entirely. Both
+      are `_GENERATED_PAGES`: patching the index is undone by the next rebuild, and
+      repointing a link in the log rewrites what the log says happened.
+    """
+    out = {"ok": False, "old": old_rel, "new": new_rel, "old_title": "", "new_title": "",
+           "type_changed": None, "repointed": 0, "stripped": 0, "pages_touched": 0,
+           "history_moved": False, "notes": [], "dry_run": bool(dry_run)}
+
+    wiki = WIKI_DIR.resolve()
+    try:
+        src = (REPO_ROOT / old_rel).resolve() if not Path(old_rel).is_absolute() \
+            else Path(old_rel).resolve()
+        dst = (REPO_ROOT / new_rel).resolve() if not Path(new_rel).is_absolute() \
+            else Path(new_rel).resolve()
+    except OSError as e:
+        out["error"] = f"bad path: {e}"
+        return out
+    for p, label in ((src, "source"), (dst, "destination")):
+        try:
+            p.relative_to(wiki)
+        except ValueError:
+            out["error"] = f"{label} must be inside wiki/: {p}"
+            return out
+    if not src.is_file():
+        out["error"] = f"not found: {old_rel}"
+        return out
+    if dst.exists():
+        out["error"] = f"destination already exists: {new_rel}"
+        return out
+    if not _SLUG_RE.fullmatch(dst.stem):
+        # Name the call that works, not the rule that was broken (principle 4). The
+        # correction is mechanical, so there is no reason to make the caller guess it.
+        fix = re.sub(r"[^a-z0-9]+", "-", dst.stem.lower()).strip("-")
+        hint = ""
+        if fix and _SLUG_RE.fullmatch(fix):
+            out["suggested_path"] = (
+                f"{PurePosixPath(new_rel).parent.as_posix()}/{fix}.md")
+            hint = f" Did you mean {out['suggested_path']} ?"
+        out["error"] = (f"destination filename is not a valid slug: {dst.name}. Page files "
+                        f"are lowercase-hyphenated — letters, digits and single hyphens "
+                        f"only.{hint}")
+        return out
+    why = immutable_page_reason(src)
+    if why:
+        out["error"] = why
+        return out
+
+    text = src.read_text(encoding="utf-8", errors="replace")
+    old_title = _fm_title(text) or src.stem
+    out["old_title"] = old_title
+    out["new_title"] = new_title or old_title
+    new_text = text
+    if new_title:
+        new_text = re.sub(r"^title:.*$", f"title: {fm_quote(new_title)}", new_text,
+                          count=1, flags=re.MULTILINE)
+        # The H1 normally repeats the title; keep them in step.
+        new_text = re.sub(r"^#\s+" + re.escape(old_title) + r"\s*$", f"# {new_title}",
+                          new_text, count=1, flags=re.MULTILINE)
+
+    old_wrel = src.relative_to(wiki)
+    new_wrel = dst.relative_to(wiki)
+    old_dir = old_wrel.parts[0] if old_wrel.parts[:-1] else ""
+    new_dir = new_wrel.parts[0] if new_wrel.parts[:-1] else ""
+    want_type = _RENAME_DIR_TYPE.get(new_dir)
+    if want_type and old_dir != new_dir:
+        tm = re.search(r"^type:[ \t]*(\S+)[ \t]*$", new_text, re.MULTILINE)
+        if tm and tm.group(1) != want_type:
+            out["type_changed"] = (tm.group(1), want_type)
+            new_text = re.sub(r"^type:[ \t]*\S+[ \t]*$", f"type: {want_type}",
+                              new_text, count=1, flags=re.MULTILINE)
+            opener = _OPENER.get(want_type)
+            wrong = {"entity": "Definition", "concept": "Overview"}.get(want_type)
+            if opener and wrong and re.search(r"^#{2,6}[ \t]*" + wrong + r"[ \t]*$",
+                                              new_text, re.MULTILINE):
+                out["notes"].append(
+                    f"the page still opens with '## {wrong}'; a {want_type} page wants "
+                    f"'## {opener}'. rename_section.py, or fix it in the editor.")
+
+    edits = []
+    for page in wiki_pages():
+        if page.resolve() == src or is_generated_page(page):
+            continue
+        body = page.read_text(encoding="utf-8", errors="replace")
+        prefix = "../" * len(page.parent.relative_to(WIKI_DIR).parts)
+
+        def _fix(m, _page=page, _prefix=prefix):
+            label, target = m.group(1), m.group(2)
+            if target.startswith(("http", "#", "mailto")):
+                return m.group(0)
+            try:
+                if (_page.parent / target).resolve() != src:
+                    return m.group(0)
+            except OSError:
+                return m.group(0)
+            if new_title and label.strip().lower() == old_title.lower():
+                out["stripped"] += 1
+                return label
+            out["repointed"] += 1
+            return f"[{label}]({_prefix}{new_wrel.as_posix()})"
+
+        fixed = _MD_LINK_RE.sub(_fix, body)
+        if fixed != body:
+            out["pages_touched"] += 1
+            edits.append((page, fixed))
+
+    if dry_run:
+        out["ok"] = True
+        return out
+
+    begin_write_scope()
+    with write_reason("rename"):
+        for page, fixed in edits:
+            _atomic_write(page, fixed)
+        _atomic_write(dst, new_text)
+        # The source's final content is already in `dst`, so unlinking it loses nothing —
+        # unlike merge_page's loser, which is why that one needs its own snapshot.
+        src.unlink()
+    hist_src, hist_dst = HISTORY_DIR / old_wrel, HISTORY_DIR / new_wrel
+    if hist_src.is_dir():
+        # NOT mkdir(parents=True): a root-owned level inside wiki/.history/ means the
+        # server can no longer write revisions for that page, and _snapshot_version
+        # deliberately never raises, so history silently stops accumulating.
+        _mkdir_inheriting(hist_dst.parent)
+        shutil.move(str(hist_src), str(hist_dst))
+        out["history_moved"] = True
+    # index.md links by the old path and is deliberately not repointed, so it must be
+    # REBUILT or the rename leaves the dead link the repoint used to fix.
+    _rebuild_index({})
+    _title_map_cache_reset()
+    if not new_title:
+        out["title_unchanged"] = True
+        out["notes"].append(
+            f'title: is unchanged — still "{out["new_title"]}". The autolinker matches the '
+            f"TITLE, not the filename, so relink will link exactly what it linked before, "
+            f"only to the new path. If you renamed this to stop a common word being "
+            f"linked, set a new title as well.")
+    out["notes"].append("run relink.py so prose naming the subject links to it again.")
+    out["ok"] = True
+    return out
 
 
 def rename_section(old_names: "list[str]", new_name: str, dry_run: bool = False) -> dict:

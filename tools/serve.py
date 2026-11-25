@@ -31,7 +31,7 @@ import shutil
 import sys
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # ---------------------------------------------------------------------------
 # Dependency checks
@@ -187,7 +187,10 @@ from agent import (REPO_ROOT, WIKI_DIR, RAW_DIR, page_display_title, _H1_RE,
                    _normalize_capture_url,
                    _read_file, _read_section, init_session,
                    output_budget, output_budget_tokens,
-                   immutable_page_reason, _replace_text, _unlinked_len)
+                   immutable_page_reason, _replace_text, _unlinked_len,
+                   duplicate_page_groups,
+                   rename_page as agent_rename_page,
+                   merge_page as agent_merge_page)
 
 from job_queue import JobQueue
 from auth  import (user_exists, create_user, authenticate, get_user, update_password,
@@ -711,6 +714,7 @@ def settings_page():
     # changed — the same class of confusion as a settings click that does not take.
     mcp_key_source = ("settings" if (settings or {}).get("api_mcp_key") is not None
                       else ("config.json" if mcp_key else ""))
+    curate_key = _api_key("curate_key")
     base_url = cfg_get("server", "base_url", "http://localhost:8080").rstrip("/")
     active_provider = cfg_active_provider()
     all_providers   = cfg_all_providers()
@@ -721,6 +725,7 @@ def settings_page():
                            settings=settings,
                            push_key=push_key,
                            mcp_key=mcp_key,
+                           curate_key=curate_key,
                            mcp_key_source=mcp_key_source,
                            mcp_default_budget=mcp_server_default_budget(),
                            base_url=base_url,
@@ -744,6 +749,11 @@ def mcp_server_default_budget() -> int:
         return 200_000
 
 
+#: Keys the settings page can mint. `push_key` is deliberately NOT here: it rides on a
+#: phone and in a bookmark, and rotating it silently breaks the share sheet.
+_SETTINGS_KEYS = ("mcp_key", "curate_key")
+
+
 @app.route("/settings/mcp-key", methods=["POST"])
 @require_login
 def settings_mcp_key():
@@ -762,21 +772,24 @@ def settings_mcp_key():
     """
     data = request.get_json(silent=True) or {}
     action = (data.get("action") or "generate").strip()
+    which = (data.get("key") or "mcp_key").strip()
+    if which not in _SETTINGS_KEYS:
+        return {"error": f"unknown key {which!r}", "code": "BAD_KEY"}, 400
     if action == "revoke":
         # Stored as an explicit empty string rather than deleted, because deleting it
         # would fall back to config.json — revoking a key and having the old one keep
         # working is the one outcome this must not produce. See `_api_key`.
-        update_settings({"api_mcp_key": ""})
-        log.info("MCP key revoked from /settings")
-        return {"ok": True, "revoked": True, "key": ""}
+        update_settings({f"api_{which}": ""})
+        log.info("%s revoked from /settings", which)
+        return {"ok": True, "revoked": True, "key": "", "which": which}
     if action != "generate":
         return {"error": f"unknown action {action!r}", "code": "BAD_ACTION"}, 400
     key = secrets.token_hex(32)
-    update_settings({"api_mcp_key": key})
+    update_settings({f"api_{which}": key})
     # The key itself is NEVER logged: this file's own rule for config and auth state, and
     # the log is the one place a secret would outlive its rotation.
-    log.info("MCP key generated from /settings (%d chars)", len(key))
-    return {"ok": True, "key": key, "source": "settings"}
+    log.info("%s generated from /settings (%d chars)", which, len(key))
+    return {"ok": True, "key": key, "source": "settings", "which": which}
 
 
 @app.route("/settings/password", methods=["POST"])
@@ -3431,6 +3444,153 @@ def api_mcp_replace():
     log.info("api_mcp_replace %s: %d -> %d chars", rel, len(old_text), len(new_text))
     return {"ok": True, "path": f"wiki/{rel}", "result": res,
             "revert": f"/wiki/{rel}/history"}
+
+
+# ---------------------------------------------------------------------------
+# /api/mcp/curate/* — the third tier: whole-wiki edits and page deletion
+# ---------------------------------------------------------------------------
+#
+# Asked for as *"There are a couple command line tools like merge pages and rename. Can
+# those be added as a higher level mcp options? Like new priv level. My store is kind of a
+# mess, and I'd like you to help clean it."*
+#
+# **A separate key, because the blast radius differs by orders of magnitude.** Everything
+# in the write tier touches ONE page and is revertable from that page's history. These two
+# do not:
+#
+#   rename_page   rewrites every inbound link across the whole wiki — hundreds of pages in
+#                 one call, plus a file move and a history move
+#   merge_page    DELETES a page. It is the only destructive operation in the system
+#
+# Revoking the ability to delete pages without also revoking the ability to fix a
+# paragraph is a distinction worth a key, and `_api_key` already serves any number of them.
+#
+# **The budget is still not an authorization parameter here**, for the reason recorded on
+# the write tier: it is self-declared, so if anything scaled with it a client would
+# escalate by claiming a bigger number. These routes do not read it at all.
+
+def _curate_auth():
+    """`curate_key` OR `mcp_key` — deliberately NOT a fallback to `push_key`.
+
+    A caller holding the curate key can do everything the write tier can, so requiring
+    both keys would be ceremony; a caller holding only the write key cannot reach here.
+    `_api_key` is the one resolver, so Revoke on `/settings` works the same way for both.
+    """
+    ok, err = _api_auth("curate_key")
+    if ok:
+        return True, None
+    # A missing curate key is 501 NOT_CONFIGURED, which is the honest answer — but if the
+    # presented key IS the curate key's, the 403 above is final and must not be softened.
+    return ok, err
+
+
+@app.route("/api/mcp/curate/duplicates")
+def api_mcp_duplicates():
+    """Groups of pages that look like one subject — `find_duplicate_pages.py`'s answer.
+
+    Read-only, so it sits behind the write key rather than the curate one: knowing which
+    pages collide changes nothing, and it is the report you need before deciding whether a
+    merge is right. Imported lazily for `api_mcp_report`'s reason.
+    """
+    ok, err = _api_auth("mcp_key")
+    if not ok:
+        return err
+    try:
+        groups = duplicate_page_groups()
+    except OSError as e:
+        return {"error": f"scan failed: {e}", "code": "SCAN_FAILED"}, 500
+    return {"ok": True, "groups": groups[:_MCP_MAX_FINDINGS],
+            "groups_total": len(groups),
+            "pages_total": sum(len(g["pages"]) for g in groups)}
+
+
+@app.route("/api/mcp/curate/rename", methods=["POST"])
+def api_mcp_rename():
+    """Rename a page, carrying its title, history and every inbound link.
+
+    `agent.rename_page` shared, not reimplemented — it was moved out of
+    `tools/rename_page.py` for this, since 205 lines of top-level script could be reached
+    by nothing in-process. `dry_run` is honoured and is the sane first call: it reports how
+    many pages a rename would touch before touching any of them.
+    """
+    ok, err = _curate_auth()
+    if not ok:
+        return err
+    data = request.get_json(silent=True) or {}
+    old, new = (data.get("path") or "").strip(), (data.get("new_path") or "").strip()
+    for p in (old, new):
+        _, perr = _mcp_path(p)
+        if perr:
+            return perr, 400
+    title = data.get("new_title")
+    if title is not None and not isinstance(title, str):
+        return {"error": "new_title must be a string", "code": "BAD_ARGS"}, 400
+    init_session()
+    r = agent_rename_page(old, new, new_title=(title or None),
+                          dry_run=bool(data.get("dry_run")))
+    if r.get("error"):
+        return {"error": r["error"], "code": "REFUSED",
+                "suggested_path": r.get("suggested_path", "")}, 409
+    log.info("api_mcp_rename %s -> %s: %d repointed, %d stripped across %d page(s)%s",
+             old, new, r["repointed"], r["stripped"], r["pages_touched"],
+             " (dry run)" if r["dry_run"] else "")
+    r["revert"] = f"/wiki/{PurePosixPath(new).relative_to('wiki').as_posix()}/history"
+    return r
+
+
+@app.route("/api/mcp/curate/merge", methods=["POST"])
+def api_mcp_merge():
+    """Fold one page into another and delete the loser.
+
+    **The only destructive call in this system, which is why it is the one that most needed
+    the snapshot it did not have.** `merge_page` writes the SURVIVOR and never writes the
+    loser, so `loser.unlink()` walked past `_atomic_write` and therefore past
+    `_snapshot_version` — what `wiki/.history/<loser>/` held was the content from before
+    the loser's last write, not its final state. It snapshots first now, stamped `merge`,
+    so `/wiki/<loser>/history` still answers for a page that no longer exists.
+
+    `dry_run` defaults to TRUE here, unlike every other route. A merge refuses while the
+    loser still says anything the survivor does not, and that refusal is the useful output
+    — so the default call is the one that reports rather than the one that destroys.
+    """
+    ok, err = _curate_auth()
+    if not ok:
+        return err
+    data = request.get_json(silent=True) or {}
+    loser, survivor = (data.get("loser") or "").strip(), (data.get("survivor") or "").strip()
+    for p in (loser, survivor):
+        _, perr = _mcp_path(p)
+        if perr:
+            return perr, 400
+    if loser == survivor:
+        return {"error": "loser and survivor are the same page", "code": "BAD_ARGS"}, 400
+    # Default TRUE: the dry run is the report, and a destructive default is the wrong way
+    # round for the one call that deletes.
+    dry = data.get("dry_run")
+    dry = True if dry is None else bool(dry)
+    init_session()
+    try:
+        r = agent_merge_page(
+            _wiki_rel(loser), _wiki_rel(survivor),
+            carry=bool(data.get("carry")), dry_run=dry,
+            strict_summary=bool(data.get("strict_summary")))
+    except Exception as e:                                   # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}", "code": "FAILED"}, 500
+    if r.get("refused"):
+        return {"ok": False, "refused": r["refused"], "detail": r}, 409
+    log.info("api_mcp_merge %s -> %s%s", loser, survivor, " (dry run)" if dry else "")
+    r["ok"] = True
+    r["dry_run"] = dry
+    if not dry and r.get("deleted"):
+        r["deleted_content_at"] = f"/wiki/{r['deleted']}/history"
+    return _mcp_clip(r)
+
+
+def _wiki_rel(path: str) -> str:
+    """`wiki/entities/x.md` -> `entities/x.md`. merge_page takes wiki-relative paths while
+    every MCP route speaks repo-relative ones, and mixing the two is how a path argument
+    silently addresses the wrong tree."""
+    return PurePosixPath(path).relative_to("wiki").as_posix()
 
 
 @app.route("/api/mcp/search")

@@ -471,6 +471,13 @@ Three things about it that are decisions rather than details:
   `/wiki/<path>/history`. **Prefer `replace_passage`:** a browser posts back bytes it is
   already holding, while a client emits every byte it writes, so on a 223KB page a quoted
   splice costs a few hundred characters against ~56,000 tokens of regeneration.
+- **A third tier, `api.curate_key`, adds `find_duplicate_pages`, `merge_pages` and
+  `rename_page`** — whole-wiki link rewrites and page deletion, so revoking those is a
+  separate act from revoking paragraph edits. Generate it on `/settings` and add the one
+  line to the same `~/.lobotomy/mcp.json`; leave it unset and those tools are not offered
+  at all. **`merge_pages` defaults to a dry run**, because a merge's refusal — listing what
+  the loser still says that the survivor does not — is the useful output, and the loser's
+  final content is snapshotted to its own page history before deletion.
 - **Higher access than the ingest agent, by credential.** The agent calls `agent.py`
   in-process with no key and keeps every write guard; `mcp_key` reaches this tier, which
   drops the ingest-accretion guards (read coverage, the 40% shrink refusal, the heading and

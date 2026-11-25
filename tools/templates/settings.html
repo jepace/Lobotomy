@@ -228,6 +228,29 @@
         </div>
         <div id="mcp-msg" class="hint"></div>
 
+        <div style="margin-top:14px;">
+          <label>Curation key <span class="hint" style="font-weight:normal;">(optional,
+            higher privilege)</span></label>
+          <div class="hint">Adds merge, rename and duplicate-finding — whole-wiki link
+            rewrites and page deletion. A separate key so you can revoke the ability to
+            delete pages without revoking the ability to fix a paragraph. Leave it unset
+            and those tools simply are not there.</div>
+          <div id="curate-status" class="hint" style="margin-top:6px;">
+            {% if curate_key %}Configured.{% else %}Not set — curation tools disabled.{% endif %}
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;">
+            <button class="toggle-btn" id="curate-gen" onclick="mcpKey('generate','curate_key')">
+              {{ 'Rotate curation key' if curate_key else 'Generate curation key' }}</button>
+            {% if curate_key %}
+            <button class="toggle-btn" id="curate-revoke"
+                    onclick="mcpKey('revoke','curate_key')">Revoke</button>
+            {% endif %}
+          </div>
+          <div id="curate-msg" class="hint"></div>
+          <div class="bm-code" id="curate-json" {% if not curate_key %}style="display:none"{% endif %}>{{ '"curate_key": "' ~ (curate_key or '') ~ '"' }}</div>
+          <div class="hint">Add that line to the same <code>~/.lobotomy/mcp.json</code>.</div>
+        </div>
+
         <div id="mcp-config" {% if not mcp_key %}style="display:none"{% endif %}>
           <div class="hint">Save this as <code>~/.lobotomy/mcp.json</code> on the machine
             running the client, then <code>chmod 600</code> it — the client refuses a key
@@ -309,11 +332,15 @@ function mcpConfigJson(baseUrl, key, budget) {
          '",\n  "budget": ' + budget + '\n}';
 }
 
-async function mcpKey(action) {
-  const btn = document.getElementById(action === 'revoke' ? 'mcp-revoke' : 'mcp-gen');
-  const msg = document.getElementById('mcp-msg');
+async function mcpKey(action, which) {
+  which = which || 'mcp_key';
+  const curate = which === 'curate_key';
+  const pre = curate ? 'curate' : 'mcp';
+  const btn = document.getElementById(pre + (action === 'revoke' ? '-revoke' : '-gen'));
+  const msg = document.getElementById(pre + '-msg');
   if (action === 'revoke' &&
-      !confirm('Revoke the MCP key? Any client using it stops working immediately.')) return;
+      !confirm('Revoke the ' + (curate ? 'curation' : 'MCP') +
+               ' key? Any client using it stops working immediately.')) return;
   const was = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   msg.textContent = '';
@@ -321,12 +348,19 @@ async function mcpKey(action) {
     const data = await apiFetch('/settings/mcp-key', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({action: action})
+      body: JSON.stringify({action: action, key: which})
     });
     if (action === 'revoke') {
-      document.getElementById('mcp-status').textContent = 'Revoked — no key set.';
-      document.getElementById('mcp-config').style.display = 'none';
+      document.getElementById(pre + '-status').textContent =
+        curate ? 'Revoked — curation tools disabled.' : 'Revoked — no key set.';
+      document.getElementById(curate ? 'curate-json' : 'mcp-config').style.display = 'none';
       msg.textContent = 'Revoked.';
+    } else if (curate) {
+      document.getElementById('curate-status').textContent = 'Configured.';
+      const el = document.getElementById('curate-json');
+      el.textContent = '"curate_key": "' + data.key + '"';
+      el.style.display = '';
+      msg.textContent = 'Generated. Add that line to ~/.lobotomy/mcp.json.';
     } else {
       document.getElementById('mcp-status').textContent = 'Configured (from settings).';
       document.getElementById('mcp-json').textContent = mcpConfigJson(

@@ -129,10 +129,25 @@ class RenamePageCliTest(unittest.TestCase):
         `_snapshot_version` deliberately never raises, so the page just stops accumulating
         history with nothing to say so.
 
-        Asserted structurally because ownership cannot be reproduced in a test that is not
-        root: what is checkable is that the call goes through the helper that exists for
-        this, which is also what `mutate.py` can break."""
-        src = (self.root / "tools" / "rename_page.py").read_text()
+        Ownership cannot be reproduced in a test that is not root, so what is checkable is
+        that the call goes through the helper that exists for this.
+
+        **The assertion had to FOLLOW THE CODE**, which is the hazard CLAUDE.md records for
+        every lifted test: it grepped `tools/rename_page.py` for
+        `_mkdir_inheriting(hist_dst.parent)`, and the logic moved into `agent.py` when the
+        script became a thin CLI — so a correct refactor reddened a test whose property was
+        never in danger.
+
+        **A spy was tried first and was VACUOUS**, which is worth recording. This module
+        runs the real script against a `tools/` COPIED into a temp directory, because
+        `REPO_ROOT` comes from the script's own location — so `import agent` here reaches
+        the repository's module, not the copy the subprocess runs, and patching it observes
+        nothing. The spy reported zero calls and would have passed on any code at all.
+        Behaviour cannot be observed in-process from a subprocess fixture; what CAN be is
+        the structural claim, pointed at the file that now holds it. The behavioural half
+        is `test_history_moves_with_the_page` below, through the real CLI.
+        """
+        src = (self.root / "tools" / "agent.py").read_text()
         self.assertIn("_mkdir_inheriting(hist_dst.parent)", src)
         self.assertNotIn("hist_dst.parent.mkdir(parents=True", src)
 
