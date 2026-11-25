@@ -2574,6 +2574,9 @@ def wiki_page(page_path):
         title=page_display_title(raw_text, p.stem),
         sections=wiki_sections(),
         current_path=wiki_rel,
+        # One rule, three doors: the agent tools, `wiki_save`, and now the button that
+        # leads to it. A page the save route refuses must not offer an editor.
+        immutable=immutable_page_reason(p),
         source_url=source_url,
         raw_source_url=raw_source_url,
         share_url=(url_for("share_page", token=share_token, _external=True) if share_token else None),
@@ -2594,6 +2597,12 @@ def wiki_edit(page_path):
         abort(404)
     if not p.exists():
         abort(404)
+    # Refuse here, not only on save. Handing over a textarea for a page that cannot be
+    # written invites the one thing this project keeps repairing — text typed into a box
+    # and then lost — and the reason is the same one `wiki_save` gives.
+    _why = immutable_page_reason(p)
+    if _why:
+        abort(403, description=_why)
     _raw = p.read_text(encoding="utf-8", errors="replace")
     return render_template(
         "wiki-edit.html",
@@ -2658,8 +2667,59 @@ def _resolve_wiki_page_or_404(page_path: str) -> Path:
     return p
 
 
+def _history_root() -> Path:
+    """The history store's root, resolved now — see `_history_dir_for`."""
+    import agent as _agent
+    return _agent.HISTORY_DIR.resolve()
+
+
 def _history_dir_for(p: Path) -> Path:
-    return HISTORY_DIR / p.resolve().relative_to(WIKI_DIR.resolve())
+    """Where a page's revisions live.
+
+    Reads `agent.HISTORY_DIR` at CALL time rather than the name this module imported,
+    because `from agent import HISTORY_DIR` binds the VALUE — the captured-path trap
+    `_mcp_path` is already commented for. It mattered little while this only built a URL;
+    it decides a 404 now, so a stale base would report "no history" for a page that has
+    some.
+    """
+    return _history_root() / p.resolve().relative_to(WIKI_DIR.resolve())
+
+
+def _resolve_wiki_history_or_404(page_path: str) -> Path:
+    """Like `_resolve_wiki_page_or_404`, but for a page that may have been DELETED.
+
+    `merge_page` deletes the loser and snapshots its final content first, and
+    `/api/mcp/curate/merge` hands back `/wiki/<loser>/history` as where that content
+    lives. So the one page whose history is the only copy of anything is exactly the one
+    with no file to resolve — and the resolver's `abort(404)` made the advertised URL a
+    dead link, which turned "a merge is recoverable" into a claim the UI did not honour.
+
+    The containment check is unchanged; what stands in for "the file exists" is "a
+    history directory for it does", so a path with nothing recorded still 404s.
+    """
+    p = WIKI_DIR / page_path
+    if not p.suffix:
+        p = p.with_suffix(".md")
+    try:
+        p.resolve().relative_to(WIKI_DIR.resolve())
+    except ValueError:
+        abort(404)
+    if not p.exists() and not _history_dir_for(p).is_dir():
+        abort(404)
+    return p
+
+
+def _history_page_text(p: Path) -> str:
+    """The page's text, or its last recorded content once the page is gone.
+
+    Only for titling the history view: `page_display_title` needs frontmatter, and a
+    deleted page's is in its newest revision.
+    """
+    if p.is_file():
+        return p.read_text(encoding="utf-8", errors="replace")
+    d = _history_dir_for(p)
+    revs = sorted(d.glob("*.md")) if d.is_dir() else []
+    return revs[-1].read_text(encoding="utf-8", errors="replace") if revs else ""
 
 
 # What the stamped reasons mean in the history view. Anything unrecognised falls back to
@@ -2684,7 +2744,7 @@ _REASON_LABELS = {
 @require_login
 def wiki_history(page_path):
     """List saved revisions of a page, newest first."""
-    p = _resolve_wiki_page_or_404(page_path)
+    p = _resolve_wiki_history_or_404(page_path)
     # The source slug is stored; the human-readable title is not, so look it up. Cached
     # per request because a page's fifty revisions are usually a handful of sources.
     _src_titles: dict = {}
@@ -2717,9 +2777,9 @@ def wiki_history(page_path):
                  source=_source(r.get("source")))
             for r in page_history(p)]
     return render_template("wiki-history.html",
-                           title=page_display_title(
-                               p.read_text(encoding="utf-8", errors="replace"), p.stem),
+                           title=page_display_title(_history_page_text(p), p.stem),
                            current_path=str(p.relative_to(WIKI_DIR)),
+                           deleted=not p.is_file(),
                            revisions=revs)
 
 
@@ -2727,15 +2787,17 @@ def wiki_history(page_path):
 @require_login
 def wiki_history_diff(page_path, rev):
     """Unified diff from one saved revision to the page as it stands now."""
-    p = _resolve_wiki_page_or_404(page_path)
+    p = _resolve_wiki_history_or_404(page_path)
     f = _history_dir_for(p) / f"{rev}.md"
     try:
-        f.resolve().relative_to(HISTORY_DIR.resolve())   # no path traversal via rev
+        f.resolve().relative_to(_history_root())   # no path traversal via rev
     except ValueError:
         abort(404)
     if not f.exists():
         abort(404)
-    old, new = f.read_text(encoding="utf-8", errors="replace"), p.read_text(encoding="utf-8", errors="replace")
+    old = f.read_text(encoding="utf-8", errors="replace")
+    # A deleted page diffs against nothing, which is the honest answer: every line removed.
+    new = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
     diff = list(difflib.unified_diff(old.splitlines(), new.splitlines(),
                                      fromfile=f"{rev} (saved)", tofile="current", lineterm=""))
     # ?view=full renders the saved version as a page instead of as a diff. A diff answers
@@ -2744,9 +2806,9 @@ def wiki_history_diff(page_path, rev):
     # already being passed to the template and nothing rendered it.
     view = "full" if request.args.get("view") == "full" else "diff"
     return render_template("wiki-history.html",
-                           title=page_display_title(
-                               p.read_text(encoding="utf-8", errors="replace"), p.stem),
+                           title=page_display_title(_history_page_text(p), p.stem),
                            current_path=str(p.relative_to(WIKI_DIR)),
+                           deleted=not p.is_file(),
                            revisions=None, rev=rev, diff=diff, old_text=old,
                            view=view, old_html=render_md_text(old, p),
                            identical=(old == new))
@@ -2779,11 +2841,17 @@ def wiki_preview(page_path):
 @require_login
 def wiki_revert(page_path, rev):
     """Restore a saved revision. The current content is snapshotted first by
-    _atomic_write, so a revert is itself revertible."""
-    p = _resolve_wiki_page_or_404(page_path)
+    _atomic_write, so a revert is itself revertible.
+
+    It restores a DELETED page too, which is the point of letting the history view
+    resolve one: undoing a merge that carried the wrong lines is exactly the recovery
+    `_snapshot_version` exists for, and `_atomic_write` recreates the file through the
+    same chokepoint — inheriting the directory's ownership — as any other write.
+    """
+    p = _resolve_wiki_history_or_404(page_path)
     f = _history_dir_for(p) / f"{rev}.md"
     try:
-        f.resolve().relative_to(HISTORY_DIR.resolve())
+        f.resolve().relative_to(_history_root())
     except ValueError:
         return {"error": "Invalid revision"}, 400
     if not f.exists():
@@ -3242,8 +3310,12 @@ def api_status():
     return {
         "ok": True,
         "version": "1",
-        "push_configured": bool(cfg_get("api", "push_key", "").strip()),
-        "mcp_configured": bool(cfg_get("api", "mcp_key", "").strip()),
+        # Through `_api_key`, not `cfg_get`: settings wins over config.json, so reading
+        # config directly made status report the OPPOSITE of what `_api_auth` accepts
+        # after a Generate or a Revoke on /settings.
+        "push_configured": bool(_api_key("push_key")),
+        "mcp_configured": bool(_api_key("mcp_key")),
+        "curate_configured": bool(_api_key("curate_key")),
     }
 
 
@@ -3297,7 +3369,12 @@ def _mcp_path(path: str) -> "tuple[str, dict | None]":
     # the reason this check silently passed everything under a rebound wiki.
     if ".history" in rel.parts:
         return "", {"error": "the history store is a record, not a page", "code": "BAD_PATH"}
-    return path, None
+    # Hand back the NORMALISED path, not the string that was validated. They differ for
+    # anything carrying `.` or `..` — `wiki/entities/../entities/x.md` is contained and so
+    # passes, and every caller then resolves it again for itself. One of them resolving it
+    # differently is how a check that passed and a write that landed stop describing the
+    # same file; returning the resolved form means the check and the write cannot disagree.
+    return f"wiki/{rel.as_posix()}", None
 
 
 @app.route("/api/mcp/read")
@@ -3484,13 +3561,27 @@ def _curate_auth():
     return ok, err
 
 
-@app.route("/api/mcp/curate/duplicates")
+@app.route("/api/mcp/duplicates")
 def api_mcp_duplicates():
     """Groups of pages that look like one subject — `find_duplicate_pages.py`'s answer.
 
     Read-only, so it sits behind the write key rather than the curate one: knowing which
     pages collide changes nothing, and it is the report you need before deciding whether a
-    merge is right. Imported lazily for `api_mcp_report`'s reason.
+    merge is right.
+
+    **It lived at `/api/mcp/curate/duplicates` and was therefore DEAD**, which is worth
+    keeping. `Client._key_for` picks the credential from the route PREFIX — deliberately,
+    so a curation route added later cannot be authenticated with the lesser key — so a
+    read-only report sitting under `/curate/` was sent `curate_key` and checked against
+    `mcp_key`: a guaranteed 403 on every call, and it was only advertised when the curate
+    key existed, so there was no configuration in which it worked. **A route's address IS
+    its tier**; reasoning about a route's key separately from where I had put it is what
+    produced a tool that could never succeed. Moving the URL makes the two agree rather
+    than teaching the client an exception.
+
+    The test missed it because it called the route with a hand-built `Authorization`
+    header instead of going through `Client` — the same "testing the stub rather than the
+    code" shape recorded twice already in this file.
     """
     ok, err = _api_auth("mcp_key")
     if not ok:
@@ -3648,6 +3739,11 @@ def api_mcp_report():
         return {"error": f"page_report unavailable: {e}", "code": "UNAVAILABLE"}, 503
     with output_budget(_mcp_budget()):
         r = page_report.analyze(p)
+        # Read INSIDE the scope. It was read after the block closed, so the reply reported
+        # the ingest provider's 16,384 while the findings beside it had been computed
+        # against the caller's budget -- a payload disagreeing with itself about which
+        # sections are rewritable.
+        budget_tokens = output_budget_tokens()
     # The Path and the parsed section bodies are for the CLI's printer; a JSON caller
     # wants the findings, and shipping whole section texts here would re-send the page.
     out = {k: v for k, v in r.items() if k not in ("page", "sections")}
@@ -3662,11 +3758,16 @@ def api_mcp_report():
     # route is a display like any other; the full count is kept so a capped list says how
     # much it is standing in for rather than quietly looking complete.
     for k, v in list(out.items()):
+        # `sections` is the page's structural map, not a findings list: truncating it hands
+        # back an outline that denies the page's own content, which is the failure the H1
+        # rule is recorded for. Capping it was a blanket applied one key too wide.
+        if k == "sections":
+            continue
         if isinstance(v, list) and len(v) > _MCP_MAX_FINDINGS:
             out[k] = v[:_MCP_MAX_FINDINGS]
             out[f"{k}_total"] = len(v)
     out["ok"] = True
-    out["budget_tokens"] = output_budget_tokens()
+    out["budget_tokens"] = budget_tokens
     return out
 
 
@@ -3734,11 +3835,25 @@ def _truncation_refusal(old_body: str, new_body: str, budget_chars: int,
     (`acknowledged`), which is `allow_shrink`'s bargain: the caller states the intent and
     the write proceeds. Every one of these is revertable from `/wiki/<path>/history`
     regardless — that is what makes a flag an acceptable answer instead of a wall.
+
+    **The mid-thought test deliberately has NO flag, and that is not an oversight.** A
+    flag saying "I meant to stop there" is exactly the flag a response that stopped
+    involuntarily would set, since it cannot tell: `acknowledge_shrink` works because the
+    caller knows something the server does not (it intends a cut), and nothing is known
+    here that the shape does not already say. So the escape is a different CALL rather
+    than a louder claim — `replace_text`, which the refusal names and which succeeds,
+    satisfying principle 4 without a switch that turns the check off.
     """
     new_stripped = new_body.rstrip()
     if not new_stripped:
         return "the new content is empty — nothing is written by an empty rewrite."
-    if not new_stripped.endswith(_SENTENCE_END):
+    # A page whose last line is a HEADING is not a truncation shape — an empty trailing
+    # section ("## Sources" with the list injected by the server, a section left for the
+    # next ingest) ends on a bare word by construction, and refusing it would refuse a
+    # legitimate page for looking like a cut one.
+    _last = new_stripped.rsplit("\n", 1)[-1].strip()
+    _is_heading_tail = bool(re.match(r"^#{1,6}[ \t]+\S", _last))
+    if not _is_heading_tail and not new_stripped.endswith(_SENTENCE_END):
         tail = new_stripped[-60:].replace("\n", " ")
         return (f"the content ends mid-thought, which is what a response cut off at its "
                 f"output ceiling looks like: …{tail!r}. Send the rewrite complete, or use "

@@ -85,8 +85,12 @@ def main(argv=None) -> int:
     for note in r.get("notes", []):
         print(f"\nNOTE: {note}")
     if r.get("title_unchanged"):
-        print(f'          python3 {sys.argv[0]} {args[1]} {args[1]} '
-              f'--title "{r["new_title"]} (…)"')
+        # NOT a rename command. `<new> <new>` is refused — "destination already exists" —
+        # so printing it named a move that cannot be made, principle 4's own failure in
+        # the tool whose error messages this CLI exists to compose. The rename is already
+        # done; what is left is one frontmatter field.
+        print(f'          the page is at /wiki/{r["new"].removeprefix("wiki/")} — set '
+              f'title: there, or pass --title next time')
     return 0
 
 

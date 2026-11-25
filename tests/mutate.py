@@ -107,7 +107,7 @@ MUTATIONS = [
     # A human does not stop typing at a token ceiling; a model does. This is the one guard
     # the editor legitimately lacks and an MCP write legitimately needs.
     ("mcpwrite: a rewrite ending mid-thought is refused",
-     "    if not new_stripped.endswith(_SENTENCE_END):",
+     "    if not _is_heading_tail and not new_stripped.endswith(_SENTENCE_END):",
      "    if False:",
      "tools/serve.py"),
     ("mcpwrite: a rewrite filling the declared budget is refused",
@@ -121,6 +121,42 @@ MUTATIONS = [
     ("mcpwrite: the write route runs the truncation check at all",
      "        why = _truncation_refusal(old, content, budget_chars,\n                                  bool(data.get(\"acknowledge_shrink\")))",
      "        why = None",
+     "tools/serve.py"),
+    # The save route refused a source page and the Edit button on every wiki page still
+    # led to the editor, so the refusal arrived after the typing.
+    ("editor: an immutable page offers no Edit button",
+     "        immutable=immutable_page_reason(p),",
+     "        immutable=None,",
+     "tools/serve.py"),
+    ("editor: /edit refuses an immutable page outright",
+     '    _why = immutable_page_reason(p)\n    if _why:\n        abort(403, description=_why)',
+     "    _why = None",
+     "tools/serve.py"),
+    # A merge deletes the loser and snapshots its final content first, and the merge route
+    # hands back /wiki/<loser>/history as where that content lives. The resolver aborted on
+    # a missing file, so the one history that is the only copy of anything was the one that
+    # 404'd — a backstop nobody can reach is not a backstop.
+    ("history: a deleted page's history still resolves",
+     "    if not p.exists() and not _history_dir_for(p).is_dir():",
+     "    if not p.exists():",
+     "tools/serve.py"),
+    ("history: a path with no history at all still 404s",
+     "    if not p.exists() and not _history_dir_for(p).is_dir():\n        abort(404)",
+     "    if False:\n        abort(404)",
+     "tools/serve.py"),
+    ("history: a deleted page is not read as though it were live",
+     "    _live = p.is_file()",
+     "    _live = True"),
+    # from agent import HISTORY_DIR binds the VALUE, and this decides a 404 now.
+    ("history: the store's root is resolved at call time",
+     "    import agent as _agent\n    return _agent.HISTORY_DIR.resolve()",
+     "    return HISTORY_DIR.resolve()",
+     "tools/serve.py"),
+    # Validated one string and handed on another: they differ for anything carrying `..`,
+    # and every caller resolves it again for itself.
+    ("mcp: the normalised path is the one handed on",
+     '    return f"wiki/{rel.as_posix()}", None',
+     "    return path, None",
      "tools/serve.py"),
     ("mcpwrite: the write route checks immutability",
      "    why = immutable_page_reason(p)\n    if why:\n        return None, ({\"error\": why, \"code\": \"IMMUTABLE\"}, 400)",
@@ -151,12 +187,12 @@ MUTATIONS = [
      "    settings = get_settings() or {}",
      "tools/serve.py"),
     ("mcpkey: revoke stores an empty value rather than deleting it",
-     '        update_settings({"api_mcp_key": ""})',
+     '        update_settings({f"api_{which}": ""})',
      "        pass",
      "tools/serve.py"),
     ("mcpkey: the key is never logged",
-     '    log.info("MCP key generated from /settings (%d chars)", len(key))',
-     '    log.info("MCP key generated from /settings: %s", key)',
+     '    log.info("%s generated from /settings (%d chars)", which, len(key))',
+     '    log.info("%s generated from /settings: %s", which, key)',
      "tools/serve.py"),
 
     # Four guards derive a threshold from the caller's output budget. Reading config
@@ -203,8 +239,8 @@ MUTATIONS = [
     # Flask threads are reused, so without this a read inherits the previous request's
     # read coverage and read-before-write passes on a page this caller has never seen.
     ("mcp: each request starts a clean session",
-     '    init_session()\n    with output_budget(_mcp_budget()):',
-     "    with output_budget(_mcp_budget()):",
+     '    init_session()\n    with output_budget(_mcp_budget()):\n        if section:',
+     '    with output_budget(_mcp_budget()):\n        if section:',
      "tools/serve.py"),
 
     # An ingest was handed 93,637 chars of one section and asked to rewrite it against a
@@ -357,13 +393,13 @@ MUTATIONS = [
      '                _new_credits.add((_page_key, _cur_i[0]))',
      '                _created_at.add((_page_key, _cur_i[0]))'),
     ("escapes: a double-escaped \\uXXXX is decoded at the parse site",
-     '    return _decode_args(args) if isinstance(args, dict) else args',
-     '    return args'),
+     '    args = _decode_args(args) if isinstance(args, dict) else args',
+     '    args = dict(args) if isinstance(args, dict) else args'),
     # The reading list is raw/, which heal_pages does not walk and must not rewrite — so
     # the listing decodes for DISPLAY, and the fetch decodes on the way in.
     ("escapes: the reading list decodes a captured title and excerpt",
-     '        title   = _decode_stray_escapes(title)[0]\n        excerpt = _decode_stray_escapes(excerpt)[0]',
-     '        pass',
+     '    title   = _decode_stray_escapes(title)[0]\n    excerpt = _decode_stray_escapes(excerpt)[0]',
+     '    pass',
      "tools/serve.py"),
     ("escapes: a fetched capture is decoded on the way to disk",
      '        text = _decode_stray_escapes(text)[0]\n        if not text:',
@@ -520,8 +556,10 @@ MUTATIONS = [
      '        if f.resolve() == loser.resolve() or is_generated_page(f):',
      '        if f.resolve() == loser.resolve():'),
     ("rename: generated pages are not repointed",
-     '    if page.resolve() == src or is_generated_page(page):',
-     '    if page.resolve() == src:', "tools/rename_page.py"),
+     # The logic moved into agent.rename_page, which is the whole reason a route and a
+     # unit test can reach it — so the anchor moved with it.
+     "        if page.resolve() == src or is_generated_page(page):",
+     "        if page.resolve() == src:"),
     ("merge: the subject's names are folded before comparing",
      # Without it, merging two pages for one hospital is refused because each
      # sentence uses that page's own name for it — blocking the cleanup that the
@@ -531,8 +569,8 @@ MUTATIONS = [
     ("resolver: a spelled-out name finds its initialised page",
      # Without it, done() demands a page that exists under an initialised title,
      # lookup_titles confirms the demand, and the model makes a duplicate.
-     '    _first = next((c for c in name.lower() if c.isalnum()), "")\n    for title, rel in by_key.items():\n        if _first and title[:1].isalnum() and title[:1] != _first:\n            continue\n        if _initialism_match(name, title):\n            return rel\n    return ""',
-     '    return ""'),
+     '        if _initialism_match(name, title):\n            return rel',
+     '        if False:\n            return rel'),
     ("source list: a lowercased entity list is refused",
      # Each row becomes a page title in Step 5, and a source page cannot be edited
      # afterwards, so the form is permanent.
@@ -556,7 +594,9 @@ MUTATIONS = [
     ("autolink: the per-line probe is punctuation-free",
      # A word carrying the other spelling is never found by a plain substring test,
      # so the probe would reject the line before the flexible pattern ran.
-     '        _probe = max(re.findall(r"\\w+", title.lower()), key=len, default="")',
+     # It is DERIVED from the cached folded token set now, so the mutation puts back the
+     # whitespace-word form rather than the old findall.
+     '        _probe = max(needed, key=len, default="")',
      '        _probe = max(title.lower().split(), key=len, default="")'),
     ("autolink: group 1 consumes a malformed [[a](b)](c) whole",
      # The growth engine. The plain pattern eats "[[a](b)" and leaves "](c)", so
@@ -575,8 +615,12 @@ MUTATIONS = [
      # MISSES already gets the full list; a guess that HITS got the section and
      # nothing else, so material was merged into Overview with nothing to notice a
      # better home existed — and the hit is the common case.
-     '        _others = [n for _lvl, n in _page_section_names(body, _fm_title(frontmatter))\n                   if _norm_heading(n) != _norm_heading(section)]',
-     '        _others = []'),
+     # Three sites build this list, so the anchor carries the next line: the one that
+     # matters here is the unread-section refusal's, and an ambiguous anchor is STALE.
+     '        _others = [n for _lvl, n in _page_section_names(body, _fm_title(frontmatter))\n'
+     '                   if _norm_heading(n) != _norm_heading(section)]\n'
+     '        _elsewhere = (',
+     '        _others = []\n        _elsewhere = ('),
     ("template assumption: append_section reports what it created beside",
      # Asked for the template's "Positions" on a page calling it "Political
      # Stances", it made a second section for one subject. _heading_dupes cannot
@@ -587,17 +631,18 @@ MUTATIONS = [
      # Handing the content back is half the job. Without this clause an observed
      # ingest called read_section for the text it had just been given — a whole
      # round and a pacing window, to fetch what it was already holding.
-     'f"into it and call update_section again — do NOT call read_section first.\\n\\n"',
-     'f"into it and call update_section again.\\n\\n"'),
+     '"into it and call update_section again — do NOT call read_section first.\\n\\n"',
+     '"into it and call update_section again.\\n\\n"'),
     ("handback: the payload is delimited",
      # A bare body blends into the prose of the refusal.
-     'f\'<section path="{path}" name="{section}">\\n{heading}\\n{old_text}\\n</section>\'',
-     'f"{heading}\\n{old_text}"'),
+     'f\'<section path="{path}" name="{section}">\\n\'\n'
+     '            f\'{_section_handback(path, section, heading, old_text)}\\n</section>\'',
+     'f"{_section_handback(path, section, heading, old_text)}"'),
     ("paths: group 1 consumes bare relative paths",
      # The one that actually bit: "../sources/backgammon-wikipedia.md" in prose had
      # its titles linked inside it, and group 1 then protected the damage forever.
-     '                r"(" + _LINK_G1 + r"|" + _BARE_URL + r"|" + _BARE_PATH + r")"',
-     '                r"(" + _LINK_G1 + r"|" + _BARE_URL + r")"'),
+     '                r"(" + _LINK_G1 + r"|" + _BARE_URL + r"|" + _BARE_PATH',
+     '                r"(" + _LINK_G1 + r"|" + _BARE_URL'),
     ("nested repair: never invent a directory target",
      # The old fallback truncated at the first '[' and produced "[X](../sources)",
      # which resolves — so lint went quiet while the real target was gone.
@@ -606,8 +651,8 @@ MUTATIONS = [
     ("urls: group 1 consumes bare URLs",
      # Without this a title appearing in a URL path gets linked inside the URL,
      # breaking the URL and linking a page the sentence was not about.
-     '                r"(" + _LINK_G1 + r"|" + _BARE_URL + r"|" + _BARE_PATH + r")"',
-     '                r"(" + _LINK_G1 + r"|" + _BARE_PATH + r")"'),
+     '                r"(" + _LINK_G1 + r"|" + _BARE_URL + r"|" + _BARE_PATH',
+     '                r"(" + _LINK_G1 + r"|" + _BARE_PATH'),
     ("urls: mangled ones are healed",
      # Prevention alone leaves every page that already carries one broken forever,
      # since group 1 protects the damage.
@@ -630,7 +675,8 @@ MUTATIONS = [
     ("repeat links: only unlink what the autolinker wrote",
      # Drop the display-text check and a hand-written alias link,
      # "[the disease](../concepts/measles.md)", gets stripped to plain text.
-     '                if frozenset(_WORD_RE.findall(inner.group(1).lower())) != _title_toks:\n'
+     '                if frozenset(_WORD_RE.findall(\n'
+     '                        _fold_diacritics(inner.group(1)).lower())) != _title_toks:\n'
      '                    return m.group(1)',
      '                if False:\n'
      '                    return m.group(1)'),
@@ -752,7 +798,7 @@ MUTATIONS = [
     # when a page was too large to rewrite, and say nothing when it wasn't — so a
     # reorganize was steered into per-section rewrites the 40% guard refuses.
     ('outline: names the whole-page route when it is available',
-     '            _rewritable = total <= (cfg_int("llm", "max_tokens", default=16384) * 4) // 2',
+     "            _rewritable = total <= output_budget_chars() // 2",
      '            _rewritable = False'),
     ('outline: says why a reorganize is not per-section',
      '                f"page: this moves material BETWEEN sections, so it cannot be done as a "',
@@ -798,23 +844,25 @@ MUTATIONS = [
      'tools/bleeding_titles.py'),
     # A cross-directory move. Both halves were found while answering "are entities and
     # concepts the same thing?" — the tool recommended for the fix had two defects.
+    # These four moved into agent.rename_page along with everything else in that script,
+    # so they are agent.py mutations now. The reporting ones are no longer `print` calls:
+    # the library returns the finding and the CLI spells it, which is the split that
+    # stopped the logic being unreachable in-process.
     ('rename: a cross-directory move carries the type: field',
-     '        new_text = re.sub(r"^type:[ \\t]*\\S+[ \\t]*$", f"type: {_new_type}",\n'
-     '                          new_text, count=1, flags=re.MULTILINE)',
-     '        pass',
-     'tools/rename_page.py'),
+     '            new_text = re.sub(r"^type:[ \\t]*\\S+[ \\t]*$", f"type: {want_type}",\n'
+     '                              new_text, count=1, flags=re.MULTILINE)',
+     '            pass'),
     ('rename: the type change is reported, not silent',
-     '    print(f"type: {_type_changed[0]}  ->  {_type_changed[1]}   "',
-     '    print(f"" ',
-     'tools/rename_page.py'),
+     '            out["type_changed"] = (tm.group(1), want_type)',
+     '            pass'),
     ('rename: a stale opener after a type change is reported',
-     '        print(f"  NOTE: the page still opens with \'## {_wrong}\'; a {_new_type} page wants "',
-     '        print(f"" ',
-     'tools/rename_page.py'),
+     '                out["notes"].append(\n'
+     '                    f"the page still opens with \'## {wrong}\'; a {want_type} page wants "',
+     '                _unused = (\n'
+     '                    f"the page still opens with \'## {wrong}\'; a {want_type} page wants "'),
     ('rename: history dirs inherit ownership instead of mkdir(parents=True)',
-     '    _mkdir_inheriting(hist_dst.parent)',
-     '    hist_dst.parent.mkdir(parents=True, exist_ok=True)',
-     'tools/rename_page.py'),
+     '        _mkdir_inheriting(hist_dst.parent)',
+     '        hist_dst.parent.mkdir(parents=True, exist_ok=True)'),
     # The type: field is no longer trusted, so three places stopped depending on it.
     ('heal: a type that disagrees with its directory is healed',
      '                        new = _set_fm_field(new, "type", f"type: {_want}")\n'
@@ -848,13 +896,11 @@ MUTATIONS = [
      'tools/bleeding_titles.py'),
     # rename_page's messages, which are the only guidance its callers get.
     ('rename: a bad slug is refused with the corrected one',
-     '    _fix = re.sub(r"[^a-z0-9]+", "-", dst.stem.lower()).strip("-")',
-     '    _fix = ""',
-     'tools/rename_page.py'),
+     '        fix = re.sub(r"[^a-z0-9]+", "-", dst.stem.lower()).strip("-")',
+     '        fix = ""'),
     ('rename: says when the title is left unchanged',
-     'if not NEW_TITLE and not DRY:',
-     'if False:',
-     'tools/rename_page.py'),
+     '    if not new_title:\n        out["title_unchanged"] = True',
+     '    if False:\n        out["title_unchanged"] = True'),
     # A short page is handed back whole, which also stops the same page being
     # refused once per section.
     ('handback: a short page comes back whole',
@@ -1034,8 +1080,8 @@ MUTATIONS = [
      '        name = f"{slug}.txt"',
      'tools/serve.py'),
     ('inbox_add: a pasted note goes through _atomic_write',
-     '    _atomic_write(dest, content)\n    return {"ok": True, "filename": dest.name}',
-     '    dest.write_text(content, encoding="utf-8")\n    return {"ok": True, "filename": dest.name}',
+     '    _atomic_write(dest, content)\n    return {"ok": True, "filename": dest.name, "item"',
+     '    dest.write_text(content, encoding="utf-8")\n    return {"ok": True, "filename": dest.name, "item"',
      'tools/serve.py'),
     ('fetch_and_patch: the title it adopts is escaped',
      '                    lines.append(f"{k}: {fm_quote(str(v))}" if k == "title"',
@@ -1054,8 +1100,10 @@ MUTATIONS = [
      '        log.info("wiki_save %s", rel)',
      'tools/serve.py'),
     ('client: a 5xx is not reported as a sign-out',
-     "      if (/^\\s*<(!doctype|html)/i.test(body) || resp.status >= 500) {\n        if (resp.status >= 500) {",
-     "      if (/^\\s*<(!doctype|html)/i.test(body) || resp.status >= 500) {\n        if (false) {",
+     # The HTML-body branch no longer ORs the status in; the 5xx test inside it is the
+     # guard, and without it an HTML 502 falls through to "you may have been signed out".
+     "        if (resp.status >= 500) {\n          throw new Error('HTTP ' + resp.status + ' from something in front of the '",
+     "        if (false) {\n          throw new Error('HTTP ' + resp.status + ' from something in front of the '",
      'tools/templates/base.html'),
     # raw/ writes bypass _atomic_write, so a root-owned file surfaces as a bare 500 with
     # the cause only in the traceback.
@@ -1204,10 +1252,8 @@ MUTATIONS = [
      'tools/templates/inbox.html'),
     # The poll PREPENDS arrivals, which otherwise appear regardless of the filter.
     ('inbox ui: rows the poll adds obey the filter',
-     '    // Newly inserted rows have to obey the filter that is already on, and applyFilters\n'
-     '    // owns the count. The old code here replaced the whole counter element\'s text, which\n'
-     '    // would delete the #item-count span it writes into.\n    applyFilters();',
-     '    ;',
+     '  applyFilters();\n  return true;\n}',
+     '  ;\n  return true;\n}',
      'tools/templates/inbox.html'),
     # A scan is 30+ requests in 15s, each for a path matching no route. One line apiece
     # buries a running ingest, and this project has already had its disk filled by its own
@@ -1243,8 +1289,8 @@ MUTATIONS = [
      '    return fwd.split(",")[0].strip() or peer',
      'tools/serve.py'),
     ('api key: the comparison is constant time',
-     '    if not hmac.compare_digest(auth[7:].strip(), push_key):',
-     '    if auth[7:].strip() != push_key:',
+     '    if not hmac.compare_digest(auth[7:].strip(), key):',
+     '    if auth[7:].strip() != key:',
      'tools/serve.py'),
     # A tool line is written whether the call succeeded or was REFUSED. Ambiguous until
     # the path became a link; a link ASSERTS the page exists, so it became a false claim.
@@ -1332,11 +1378,13 @@ MUTATIONS = [
     # wiped pasted text and reset wikified:true; two different articles from one site
     # collapsed into one file, destroying the first.
     ('inbox/add: a URL already in the reading list is not re-captured',
-     '        _dup = _find_existing_capture(url=url)\n        if _dup:',
-     '        _dup = _find_existing_capture(url=url)\n        if False:',
+     # Folded into _capture_article when the five doors became one, so the check the
+     # web form used to own now lives there and all five transports share it.
+     '    dup = _find_existing_capture(url=url) if url else None\n    if dup:',
+     '    dup = _find_existing_capture(url=url) if url else None\n    if False:',
      'tools/serve.py'),
     ('inbox/add: a capture that already holds text is never rewritten',
-     '            if _body.strip() or _wikified:',
+     '            if expect_body is not None and body.strip() != expect_body.strip():',
      '            if False:',
      'tools/serve.py'),
     ('inbox/add: identical pasted text is not saved twice',
@@ -1349,8 +1397,8 @@ MUTATIONS = [
      '    dest = RAW_DIR / name',
      'tools/serve.py'),
     ('inbox/add: a colliding URL capture gets its own filename',
-     '        base_name = _unique_raw_name(name or f"{slug}.md")',
-     '        base_name = name or f"{slug}.md"',
+     '    dest = RAW_DIR / _unique_raw_name(filename or f"{slug}.md")',
+     '    dest = RAW_DIR / (filename or f"{slug}.md")',
      'tools/serve.py'),
     # Over-normalizing merges two different articles, which loses the second as surely
     # as the overwrite did — so only known-meaningless parameters come off.
@@ -1404,8 +1452,8 @@ MUTATIONS = [
     # chose '2026 Senate Campaign'. Principle 4's worst case, renaming one violation
     # into another.
     ('summary: the refusal warns that the new heading must carry no date',
-     '        f"name must contain NO year and NO date',
-     '        f"name is up to you. ("'),
+     '            f"where <name> describes the SUBJECT and contains no year, no date and no "',
+     '            f"where <name> is up to you. ("'),
     # Every example was a slow-burning event — outbreak, election, trial — so a single
     # day's remark read as not qualifying, and the most consequential claim in a source
     # ended up as 224 characters on a city page with no page of its own.
@@ -1416,7 +1464,9 @@ MUTATIONS = [
      '        f"page is a PARTICIPANT in what happened rather than the subject of it, the event "',
      '        f"page is involved, the event "'),
     ('summary: the refusal names the moves',
-     '        f"  1. It is a standing feature of the subject → append_section(path, "',
+     # Re-ranked after an ingest created eleven new sections from one article:
+     # timeline first, append_section last.
+     '        f"  1. It is one entry in an unfolding sequence → add_timeline_entry(path, date, "',
      '        f"  1. Put it somewhere else. ("'),
     # The bottom row of the history view is either the page's first version or the oldest
     # one that survived pruning, and calling both "origin unknown" lied about the first.
@@ -1519,8 +1569,8 @@ MUTATIONS = [
      '        return {k: "queued" for k in keys}',
      'tools/job_queue.py'),
     ('in-flight: the listing reports the queue\'s answer per item',
-     '            "ingest":      _in_flight.get(f"ingest:{f.name}", ""),',
-     '            "ingest":      "",',
+     '        "ingest":      in_flight.get(f"ingest:{f.name}", ""),',
+     '        "ingest":      "",',
      'tools/serve.py'),
     ('in-flight: a queue failure costs the column, not the page',
      '    try:\n        _in_flight = job_queue.in_flight()\n    except Exception:\n        _in_flight = {}',
@@ -1742,7 +1792,7 @@ MUTATIONS = [
     # the fallback navigated the article tab away. A beacon's reply is a 1x1 GIF, so
     # there was never a message in it to wait for.
     ('save: a beacon is answered before the capture, not after it',
-     '        threading.Thread(target=_bg, daemon=True).start()',
+     '        threading.Thread(target=_bg, daemon=True, name=_BEACON_THREAD).start()',
      '        _bg()',
      'tools/serve.py'),
     # A tool call whose path swallowed the next JSON field was refused identically every

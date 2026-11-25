@@ -1448,7 +1448,10 @@ class CurateTierTest(unittest.TestCase):
     def test_the_duplicate_scan_sits_behind_the_WRITE_key(self):
         """Read-only: knowing which pages collide changes nothing, and it is the report you
         need before deciding whether a merge is even right."""
-        r = self.c.get("/api/mcp/curate/duplicates",
+        # Addressed OUTSIDE /curate/ deliberately: a route's address IS its tier, and
+        # under /curate/ this one was sent the curate key and checked against the write
+        # key — a tool that could never succeed.
+        r = self.c.get("/api/mcp/duplicates",
                        headers={"Authorization": "Bearer secret-mcp"})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:200])
         self.assertIn("groups", r.get_json())
@@ -1592,6 +1595,50 @@ class McpConfigJsonTest(unittest.TestCase):
         self.assertEqual(cfg["mcp_key"], "k")
         self.assertEqual(cfg["base_url"], "https://x.example")
         self.assertEqual(cfg["budget"], 123)
+
+
+class McpPathNormalisationTest(unittest.TestCase):
+    """`_mcp_path` validated one string and returned another.
+
+    Containment is decided by RESOLVING, which is why `wiki/../etc/passwd` is caught where
+    a prefix test on the raw string would pass it. But the raw string was then handed on,
+    and it differs from the resolved one for anything carrying `.` or `..` — so every
+    caller resolved it again for itself, and the check that passed and the write that
+    landed were describing the same file only by agreement. It returns the normalised
+    form now.
+    """
+    def setUp(self):
+        self.w = harness.TempWiki()
+        self.w.__enter__()
+        import serve
+        self.serve = serve
+        # REPO_ROOT too: _mcp_path resolves REPO_ROOT / path and contains it against
+        # WIKI_DIR, so rebinding only one of the pair makes every path "escape the wiki" —
+        # which would have passed the escape test for entirely the wrong reason.
+        self._saved = (serve.WIKI_DIR, serve.REPO_ROOT)
+        serve.WIKI_DIR, serve.REPO_ROOT = self.w.wiki, agent.REPO_ROOT
+
+    def tearDown(self):
+        self.serve.WIKI_DIR, self.serve.REPO_ROOT = self._saved
+        self.w.__exit__(None, None, None)
+
+    def test_a_dotted_path_comes_back_normalised(self):
+        got, err = self.serve._mcp_path("wiki/entities/../entities/a.md")
+        self.assertIsNone(err)
+        self.assertEqual(got, "wiki/entities/a.md")
+
+    def test_a_plain_path_is_unchanged(self):
+        got, err = self.serve._mcp_path("wiki/entities/a.md")
+        self.assertIsNone(err)
+        self.assertEqual(got, "wiki/entities/a.md")
+
+    def test_an_escape_is_still_refused(self):
+        for bad in ("wiki/../etc/passwd.md", "wiki/.history/entities/a.md", "", "raw/a.md",
+                    "wiki/entities/a.txt"):
+            with self.subTest(bad=bad):
+                got, err = self.serve._mcp_path(bad)
+                self.assertEqual(got, "")
+                self.assertIsNotNone(err)
 
 
 if __name__ == "__main__":

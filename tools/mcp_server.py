@@ -170,6 +170,11 @@ def load_server_config() -> dict:
     out = {}
     if isinstance(api, dict) and api.get("mcp_key"):
         out["mcp_key"] = str(api["mcp_key"]).strip()
+    # Without this the documented "running beside the server" fallback silently dropped
+    # the curation tier even with api.curate_key set -- and the symptom is three tools
+    # simply not being offered, which reads as "not built yet" rather than as a bug.
+    if isinstance(api, dict) and api.get("curate_key"):
+        out["curate_key"] = str(api["curate_key"]).strip()
     if isinstance(server, dict) and server.get("base_url"):
         out["base_url"] = str(server["base_url"]).strip()
     return out
@@ -480,7 +485,7 @@ def call_tool(client: Client, name: str, args: dict) -> str:
                 f"{r.get('autolink') or 'No links changed.'}\n\n"
                 f"Revert at {r.get('revert','')}" if r.get("ok") else json.dumps(r))
     if name == "find_duplicate_pages":
-        r = client.get("/api/mcp/curate/duplicates")
+        r = client.get("/api/mcp/duplicates")
         if not r.get("groups"):
             return "No duplicate-looking page titles found."
         head = (f"{r.get('groups_total', 0)} group(s), "

@@ -1177,7 +1177,16 @@ def page_history(p: Path) -> "list[dict]":
                                               tool.replace("-", " ") if tool else ""),
                      "text": f.read_text(encoding="utf-8", errors="replace")})
 
-    current_text = p.read_text(encoding="utf-8", errors="replace")
+    # **The page may be GONE, and that is the case this view matters most in.** A merge
+    # deletes the loser and snapshots its final content first, and `/api/mcp/curate/merge`
+    # advertises `/wiki/<loser>/history` as where that content lives — so reading the live
+    # page unconditionally made the one history that cannot be recovered any other way the
+    # one history that 404'd. A deleted page is the empty current version: the newest
+    # revision holds what it last said, stamped with the write that removed it.
+    _live = p.is_file()
+    current_text = p.read_text(encoding="utf-8", errors="replace") if _live else ""
+    if not _live and not revs:
+        return []        # no file and nothing recorded: there is no page to report on
 
     def _line_sections(text: str) -> list:
         """Section name in force at each line, None inside frontmatter and the lead.
@@ -1291,7 +1300,8 @@ def page_history(p: Path) -> "list[dict]":
                      "tool": revs[-1]["tool"],
                      "added": a, "removed": r,
                      "sections": _changed_sections(revs[-1]["text"], current_text),
-                     "size": len(current_text.encode("utf-8"))})
+                     "size": len(current_text.encode("utf-8")),
+                     "deleted": not _live})
     else:
         # No revisions at all: the page has been written exactly once and never changed
         # since — a created page whose autolink pass found nothing to link is the common

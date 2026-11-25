@@ -149,7 +149,15 @@
   <div class="wiki-topbar">
     <a href="/wiki/" style="color:var(--accent); text-decoration:none; font-size:22px; line-height:1;">‹</a>
     <span class="topbar-title" id="topbar-title">{{ title }}</span>
+    {#- A source page and the two generated pages cannot be saved — `wiki_save` refuses
+        them, and `/edit` now does too. Offering the button anyway hands you a textarea,
+        a paste and a rejection; the title says why instead. -#}
+    {% if not immutable %}
     <a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;" href="/wiki/{{ current_path }}/edit">Edit</a>
+    {% else %}
+    <span class="chat-about" style="background:var(--bg2);color:var(--text2);border:1px solid var(--border);margin-right:4px;cursor:help;"
+          title="{{ immutable }}">Read-only</span>
+    {% endif %}
     {% if current_path %}
     <a class="chat-about" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);margin-right:4px;"
        href="/wiki/{{ current_path }}/history">History</a>

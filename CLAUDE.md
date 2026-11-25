@@ -2585,6 +2585,25 @@ that did not start at the beginning. A big *deliberate* cut gets a flag
 (`acknowledge_shrink`) rather than a wall — `allow_shrink`'s bargain — which is acceptable
 precisely because every one of these writes is revertable.
 
+**The mid-thought test deliberately has no flag, and the asymmetry with
+`acknowledge_shrink` is the whole reasoning.** A flag saying *"I meant to stop there"* is
+exactly the flag a response that stopped involuntarily would set, because it cannot tell:
+`acknowledge_shrink` works because the caller knows something the server does not — that
+it intends a cut — and nothing is known here that the shape does not already say. So the
+escape is a different CALL rather than a louder claim, `replace_text`, which the refusal
+names and which succeeds. Principle 4 is satisfied without a switch that turns the check
+off. What it DID need was narrowing: a page whose last line is a heading ends on a bare
+word by construction — an empty trailing section, `## Sources` with the list injected by
+the server — so that shape is exempt, or the guard refuses a legitimate page for looking
+like a cut one.
+
+**`_mcp_path` validated one string and handed on another.** Containment is decided by
+RESOLVING, which is why `wiki/../etc/passwd` is caught where a prefix test would pass it —
+but the raw string was then returned, and it differs from the resolved one for anything
+carrying `.` or `..`, so every caller resolved it again for itself. Nothing was exploitable;
+what was missing is that **the check that passed and the write that landed described the
+same file only by agreement.** It returns the normalised form now.
+
 **And the editor's own one-get-one-write is not reproducible for a large page, for a reason
 that is physics rather than policy.** Asked *"Like I do when I use the editor"* — and the
 browser holds those 223,659 bytes: you change a paragraph and it posts all of them back
@@ -2768,6 +2787,40 @@ snapshotted under `write_reason("merge")`, so `/wiki/<loser>/history` still answ
 page that no longer exists. The page is still gone; what changes is that what it SAID is
 not. **Merges run before this kept no final state and nothing can recover them.**
 
+**And the URL that sentence advertises 404'd** (`_resolve_wiki_history_or_404`,
+`_history_page_text`, `page_history`'s `_live`). Found in the code review of the commit
+above, and it undercut the whole claim: `_resolve_wiki_page_or_404` aborts on a missing
+file and `page_history` opened the live page unconditionally, so **the one history that is
+the only copy of anything was the one history you could not open.** The snapshot was real
+on disk and unreachable through the address `/api/mcp/curate/merge` hands back. *A backstop
+nobody can reach is not a backstop*, and the fix had to be in both halves — capping one
+door and not the other is this file's own recurring shape.
+
+A deleted page is the **empty current version**: `page_history` reports it with `deleted:
+True` and size 0, the newest revision holds what the page last said, and `Revert` on that
+row puts the page back — through `_atomic_write`, so the undelete inherits the ownership
+handling like any other write. **The existence test moved rather than going away**: what
+stands in for "the file is there" is "a history directory for it is", so a typo in a URL
+still 404s instead of rendering as a page somebody deleted. And only the HISTORY tolerates
+a missing page — the page view, the editor and the preview still say it is gone, which a
+test pins, because a 200 there would claim a page exists.
+
+One captured-path trap closed on the way: `_history_dir_for` used the `HISTORY_DIR` this
+module **imported**, and `from agent import HISTORY_DIR` binds the VALUE. That was harmless
+while it only built a path to read and decides a **404** now, so a stale base would report
+"no history" for a page that has some — and every test in the new module would have passed
+against the real tree while proving nothing. It and the two traversal checks resolve it at
+call time (`_history_root`).
+
+**The Edit button was offered on every page the save route refuses** (`wiki_edit`,
+`immutable=`). Closing `wiki_save` against source and generated pages left the door's
+HANDLE in place: a source page handed you a textarea, your edit, and then the refusal —
+the same class as every "text typed into a box and lost" report here, arriving from the
+opposite direction. The refusal was correct and came *after* the work. The rule now holds
+at all three doors plus the route itself, since a hand-typed `/edit` must not reach an
+editor either, and the button is replaced by a `Read-only` marker carrying the reason: a
+control that is simply missing is a bug report waiting to be filed.
+
 **Two tools had to be extracted before a route could reach them, and CLAUDE.md had already
 said so.** `rename_page.py` was 205 lines of top-level script with NO functions and
 `find_duplicate_pages.py` 54 — the shape this file already recorded as the cause of a real
@@ -2785,6 +2838,14 @@ caller's flag names. So `rename_page` returns `suggested_path` and `title_unchan
 the CLI spells the command. A library that emitted CLI prose would be guessing at its
 caller's interface; one that emitted only the rule would be the constraint-not-the-call
 failure this file keeps recording.
+
+**And one of the two commands it spelled did not work** — the `title_unchanged` hint
+printed `rename_page.py <new> <new> --title "…"`, which `rename_page` refuses outright
+(*"destination already exists"*). Principle 4's own failure inside the function written to
+satisfy it, and the giveaway was there in the output: the same path twice. The rename has
+already happened by then; what is left is one frontmatter field, so the hint names the page
+to edit instead. **A copy-pasteable command is only better than a rule if somebody ran
+it.**
 
 **`api.curate_key` is a third tier, justified by blast radius rather than by taste.**
 Everything in the write tier touches ONE page and is revertable from that page's history.
@@ -3118,6 +3179,33 @@ mutation is applied**, not just at the end — without that, mutations in differ
 stack, and a guard whose removal nothing notices is reported CAUGHT on the strength of the
 previous mutation's failures. That shipped briefly and inflated one result; a mutation
 runner that lies about coverage is worse than not having one.
+
+**Thirty-two of its anchors had stopped matching, and that was invisible by design**
+(`tests/test_mutation_anchors.py`). A mutation whose `find` no longer appears is reported
+STALE and the run exits 1 — **but only if somebody runs it to the end**, which takes many
+minutes and gets slower with every test added, so in practice nobody does and the rot
+accumulates silently. Twenty had rotted before this round and twelve more were added by
+moving `rename_page.py`'s logic into `agent.py` and parameterising `/settings/mcp-key`;
+every one is a guard that could have been deleted with nothing objecting and nothing
+saying so.
+
+**That is this file's oldest shape in a fourth disguise.** The chromium launcher whose
+breakage made 65 tests SKIP; the module that could not import and was dropped from
+discovery; the zero-match pattern that printed `0 caught, 0 missed` and exited 0. In each,
+**the defect and its own symptom are the same thing**, and the only fix is to make the
+silent case loud — here by checking it in *milliseconds on every ordinary run* rather than
+in minutes on a run nobody starts. The new module asserts nothing about whether a guard is
+CAUGHT, which still needs the real runner; it asserts the precondition for that verdict
+meaning anything. It also pins two cheaper traps: a duplicate mutation name (the pattern
+argument is a substring match, so one name would select two) and a mutation whose
+replacement is textually identical to what it replaces — the no-op that reports MISSED and
+means nothing.
+
+The re-anchoring is worth reading for what it says about where code drifts: almost all of
+it was a guard **moved** (into `agent.rename_page`, into `_capture_article` when the five
+reading-list doors became one, into `_section_handback`) or a line **re-wrapped**, not a
+guard removed. An anchor is a dependency on a spelling, and the spelling is the first
+thing a refactor changes.
 
 **Never run two `mutate.py` processes at once, and never edit a tool file while one is
 running.** Each run snapshots every file it will touch at startup and restores from that

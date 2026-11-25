@@ -352,6 +352,14 @@ survivor, because provenance outlives the page; and **the old title plus its ali
 added as aliases of the survivor, so prose that said "GDP" still resolves after the page
 called GDP is gone. `--alias NAME` adds more.
 
+**A merge is undoable.** The loser's final content is snapshotted before the file is
+removed, so `/wiki/<loser>/history` still opens for a page that no longer exists — the
+newest row is what it last said, and Revert there puts the page back. That matters because
+a merge refuses only while the loser says something the survivor does not, and `--carry`
+decides where the rest goes: if it carried the wrong lines, the history is the only copy.
+Note the corollary for `prune_history.py --orphans`, which reports exactly these — pruning
+them throws away the undo for every merge you have done.
+
 **Several losers in one command**, because `find_duplicate_pages.py` reports groups and
 not all of them are pairs — Pacific Gas and Electric had five pages. Each is merged into
 the survivor in turn and a refusal on one does not stop the rest.

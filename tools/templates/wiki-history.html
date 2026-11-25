@@ -113,11 +113,22 @@
 {% block body %}
 <div class="page">
   <div class="hist-top">
-    <a href="/wiki/{{ current_path }}" style="color:var(--accent);text-decoration:none;font-size:22px;line-height:1;">‹</a>
+    {# A deleted page has nowhere to go back to, so the back arrow would 404. #}
+    {% if not deleted %}<a href="/wiki/{{ current_path }}" style="color:var(--accent);text-decoration:none;font-size:22px;line-height:1;">‹</a>{% endif %}
     <h1>History — {{ title }}</h1>
   </div>
 
   <div class="hist-wrap">
+  {# The page is gone — merged away, most likely. Say so at the top, because every row
+     below reads as the history of a page you could go and look at. The last version it
+     had is the newest row, and Revert on it puts the page back. #}
+  {% if deleted %}
+    <div class="hist-note" style="color:var(--danger);">
+      <strong>This page no longer exists.</strong>
+      It was deleted — a page merge is the usual reason. Everything it said is still here:
+      the newest row below is its final content, and Revert on it restores the page.
+    </div>
+  {% endif %}
   {% if revisions is not none %}
     <div class="hist-note">
       Each row is one version of this page: when it was written, what wrote it and from
@@ -131,7 +142,8 @@
     {% for r in revisions %}
     <div class="rev{% if r.current %} current-row{% endif %}">
       <div class="when">
-        {%- if r.current %}Current version{% if r.when %} — {{ r.when }}{% endif %}
+        {%- if r.current and r.deleted %}Deleted{% if r.when %} — {{ r.when }}{% endif %}
+        {%- elif r.current %}Current version{% if r.when %} — {{ r.when }}{% endif %}
         {%- elif r.original %}Original version{% if r.when %} — {{ r.when }}{% endif %}
         {%- elif r.earliest %}Earliest kept version
         {%- else %}{{ r.when }}{% endif -%}
@@ -180,7 +192,7 @@
           the old one better", and after a rewrite that restructured everything every line
           reads as changed, so the diff is the least useful view of exactly the write you
           most want to judge. -#}
-      {% if r.current %}<a href="/wiki/{{ current_path }}">View</a>
+      {% if r.current %}{% if not r.deleted %}<a href="/wiki/{{ current_path }}">View</a>{% endif %}
       {% else %}<a href="/wiki/{{ current_path }}/history/{{ r.id }}?view=full">Show</a>
       <a href="/wiki/{{ current_path }}/history/{{ r.id }}">Compare</a>{% endif %}
     </div>
@@ -270,7 +282,9 @@ async function copyDiff(btn) {
 }
 
 async function doRevert() {
-  if (!confirm('Replace the current page with this saved version?')) return;
+  var deleted = {{ 'true' if deleted else 'false' }};
+  if (!confirm(deleted ? 'Restore this page from this saved version?'
+                       : 'Replace the current page with this saved version?')) return;
   try {
     const d = await apiFetch('/api/wiki/{{ current_path }}/revert/{{ rev }}', {method: 'POST'});
     if (d.ok) location.href = '/wiki/{{ current_path }}';
