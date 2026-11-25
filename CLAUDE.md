@@ -2651,6 +2651,33 @@ module grows file handling. The generalisable form: **when a static check keeps 
 text that describes the behaviour, the behaviour is what wants asserting.** Reaching for
 grep a fourth time was the mistake, not the fourth pattern.
 
+**No: you cannot say "rewrite the Donald Trump page" and have it arrive in one get and
+one write, and asking that found a defect.** Three separate reasons, worth knowing before
+the write tools land:
+
+- **`_WIKI_READ_LIMIT` is a fixed 20,000 and does NOT scale with the caller's budget.**
+  Only the four REWRITE guards were threaded; the read cap was not. So a 223,659-byte page
+  comes back as an outline unless the caller pages through it with explicit offsets —
+  about twelve calls. That is deliberate rather than missed: `update_file` requires full
+  read coverage and paging is the only way to earn it.
+- **A whole-page rewrite of that page cannot be emitted in one response.** 223,659 chars is
+  ~56,000 output tokens. At the corrected default the page is NOT rewritable and the
+  93,637-char section IS, which is exactly the right split.
+- **`DEFAULT_BUDGET_TOKENS` shipped at 200,000, and that was a false claim.** It declares
+  ~800,000 characters in one response, which no model emits, and **four guards scale off
+  that number** — so it taught them to approve a rewrite that would run out of room. A
+  rewrite that stops early is precisely the silent condensation the shrink guards exist to
+  catch, and the page-level guard refuses a body cut over 40%, so **223KB truncated to
+  140KB is a 37% cut that slips UNDER it and reaches disk.** Corrected to 64,000. The
+  lesson generalises: **a client-declared limit the server cannot verify is a guard
+  switched off politely**, so the default has to be a number the client can actually meet
+  and a test has to pin the bound. `_atomic_write`'s snapshot is what makes any such write
+  revertable, and it is the only reason this was a near miss rather than a loss.
+
+The designed path for that page is section by section (`LOBOTOMY.md` §6b, `allow_shrink`,
+destination first), and the real repair is splitting the RATCHET section into its own page
+— which is several calls by nature, because it is several decisions.
+
 ### Reorganizing a page
 
 `update_section` refuses a rewrite that cuts a section by more than 40% (`_old_cmp >= 800

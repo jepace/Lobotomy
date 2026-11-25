@@ -459,8 +459,12 @@ Three things about it that are decisions rather than details:
 - **`--budget` is load-bearing, not tuning.** Four guards scale with what the caller can
   emit in one response, and all four used to read `llm.max_tokens` — right for the
   configured provider, wrong for this client, which was refused rewrites it can actually
-  perform on precisely the `RATCHET` sections nothing else can repair. The server clamps
-  an absurd value rather than trusting it.
+  perform on precisely the `RATCHET` sections nothing else can repair. It is **one
+  response**, not a context window: the default of 64,000 tokens makes a 93,637-char
+  section rewritable and a 223,659-char page correctly not. Declaring more than the client
+  can emit approves a rewrite that runs out of room, and a truncation to 63% of a page
+  slips under `update_file`'s 40% shrink refusal. The server clamps an absurd value but
+  cannot verify a plausible one.
 - **Read-only, deliberately.** The write tools are a separate, louder change; a test
   asserts none is exposed, so they cannot arrive by accident.
 

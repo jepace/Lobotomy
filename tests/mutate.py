@@ -35,6 +35,13 @@ RUNNER = REPO / "tests" / "run_all.py"
 # the mutation is reported as STALE rather than silently skipped: an anchor that stopped
 # matching means the code moved and the mutation is no longer testing what it claims.
 MUTATIONS = [
+    # The default shipped at 200,000 tokens, which claims ~800,000 chars in one response.
+    # Four guards scale off it, so the claim approves a rewrite that runs out of room, and
+    # a truncation to 63% of a page slips under update_file's 40% shrink refusal.
+    ("mcpkey: the client's declared budget is one it can emit",
+     "DEFAULT_BUDGET_TOKENS = 64_000",
+     "DEFAULT_BUDGET_TOKENS = 200_000",
+     "tools/mcp_server.py"),
     # A key file other accounts can read is strictly worse than the env var it replaced,
     # and the permission check is the whole argument for the change.
     ("mcpkey: a loose key file is refused",

@@ -75,6 +75,42 @@ class CallerBudgetTest(unittest.TestCase):
                 raise RuntimeError("boom")
         self.assertEqual(agent.output_budget_tokens(), before)
 
+    def test_the_clients_default_budget_is_one_it_can_actually_emit(self):
+        """Asked *"could I say rewrite the Donald Trump page and it would read the whole
+        thing and write it back?"* — and checking found this.
+
+        `DEFAULT_BUDGET_TOKENS` shipped at 200,000, which declares ~800,000 characters in
+        ONE RESPONSE. No model emits that. Four server-side guards scale off the number, so
+        the claim taught them to approve a rewrite that runs out of room — and a rewrite
+        that stops early is the silent condensation the shrink guards exist for.
+        `update_file` refuses a body cut over 40%, so a 223KB page truncated to 140KB (37%)
+        would slip UNDER it and reach disk.
+
+        The bound is what makes the declaration meaningful: a budget nothing checks is a
+        guard switched off politely. Pinned so raising it is a deliberate act with this
+        reasoning in front of whoever does it.
+        """
+        self.assertLessEqual(mcp_server.DEFAULT_BUDGET_TOKENS, 100_000,
+                             "the default claims more single-response output than any "
+                             "model has; four guards scale off it")
+        self.assertGreater(mcp_server.DEFAULT_BUDGET_TOKENS,
+                           agent.cfg_int("llm", "max_tokens", default=16384),
+                           "below the configured provider's budget the server is pointless")
+
+    def test_the_default_makes_the_ratchet_section_rewritable_and_not_the_whole_page(self):
+        """The two numbers that decide what this server can actually be asked to do.
+
+        The 93,637-char section must come back whole — that is the unlock, and the reason
+        the budget is a request parameter at all. The 223,659-char page must NOT, because
+        no single response can emit it, and a guard that said otherwise would be inviting
+        exactly the truncated rewrite above.
+        """
+        with agent.output_budget(mcp_server.DEFAULT_BUDGET_TOKENS):
+            self.assertTrue(agent._section_rewritable(93_637),
+                            "the section this server exists to repair is still refused")
+            self.assertFalse(agent._section_rewritable(223_659),
+                             "a whole-page rewrite of donald-trump.md is being approved")
+
     def test_an_absurd_budget_is_clamped_not_trusted(self):
         """A client knows its own limit; it does not get to switch a guard off by
         claiming an infinite one, because every threshold here scales with it."""

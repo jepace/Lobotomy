@@ -76,10 +76,21 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-#: What this client can emit in one response, in tokens. The default is deliberately far
-#: above `max_tokens`' 16,384: that is the whole reason the budget is a request parameter
-#: rather than a config read. Override with --budget when driving from a smaller model.
-DEFAULT_BUDGET_TOKENS = 200_000
+#: What this client can emit in ONE RESPONSE, in tokens — not its context window, and not
+#: what it can produce across a conversation.
+#:
+#: **The first value here was 200,000 and that was a false claim.** Four server-side guards
+#: scale off this number, so declaring a budget the client cannot actually emit teaches
+#: them to approve a rewrite that will run out of room — and a rewrite that stops early is
+#: exactly the silent condensation the shrink guards exist to catch. `update_file`'s guard
+#: refuses a body cut over 40%, so a 223KB page truncated to 140KB (a 37% cut) would slip
+#: UNDER it and reach disk.
+#:
+#: 64,000 is a current frontier model's single-response output ceiling, which makes the
+#: 93,637-char section that motivated all this genuinely rewritable (half of 256,000 chars)
+#: without claiming four times the headroom that exists. Lower it with --budget when
+#: driving from a smaller model; the server clamps, it cannot verify.
+DEFAULT_BUDGET_TOKENS = 64_000
 
 #: Seconds. A read of a 200KB page across the public internet is not instant, and the
 #: server may be mid-autolink; `agent`'s own guards make the work bounded, not fast.
